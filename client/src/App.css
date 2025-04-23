@@ -1,0 +1,1008 @@
+/* ========== Root Variables ========== */
+:root {
+  --primary: #b3dffc; /* baby blue */
+  --primary-dark: #91c9ef;
+  --background: #ffffff; /* white */
+  --text: #222;
+  --border: #ccc;
+  --radius: 10px;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ========== Global Reset ========== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Segoe UI", sans-serif;
+  background-color: var(--background);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ========== Layout Utilities ========== */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  padding: 1rem;
+  margin: 0 auto;
+}
+
+/* Grid layout helper */
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* ========== Spacing Utilities ========== */
+.p-1 {
+  padding: 1rem;
+}
+.p-2 {
+  padding: 2rem;
+}
+.m-1 {
+  margin: 1rem;
+}
+.m-2 {
+  margin: 2rem;
+}
+.mt-1 {
+  margin-top: 1rem;
+}
+.mb-1 {
+  margin-bottom: 1rem;
+}
+
+/* ========== Card Style ========== */
+.card {
+  background-color: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.5rem;
+}
+
+/* ========== Buttons ========== */
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  background-color: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s ease-in-out;
+}
+
+.btn:hover {
+  background-color: var(--primary-dark);
+}
+
+.btn-outline {
+  background: none;
+  border: 2px solid var(--primary);
+  color: var(--primary);
+}
+
+.btn-outline:hover {
+  background-color: var(--primary);
+  color: #fff;
+}
+
+/* ========== Forms ========== */
+input,
+select,
+textarea {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo {
+  font-weight: bold;
+  font-size: 1.25rem;
+  color: var(--primary);
+}
+.client-list-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* 3 cards per row */
+  gap: 1.5rem;
+  width: 80vw;
+  margin-left: calc(-50vw + 70%);
+  padding: 1rem 2rem;
+}
+
+.client-card {
+  background: #ffffff;
+  border: 1px solid #ccc;
+  padding: 16px;
+  max-height: 30vh;
+  overflow-y: scroll;
+  border-radius: 8px;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.client-title {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #222;
+}
+
+.scroll-box {
+  background: #f9f9f9;
+  padding: 10px;
+  margin: 8px 0;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.info-text {
+  padding: 20px;
+  font-style: italic;
+  color: #666;
+}
+.card {
+  background: #f9f9f9;
+  padding: 1rem;
+  margin: 0.5rem 0;
+  border-radius: 8px;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.05);
+}
+
+.note-entry {
+  padding: 0.5rem 0;
+}
+
+.note-date {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.note-body {
+  font-style: italic;
+}
+
+ul {
+  list-style: none;
+}
+/* Container for paginated list */
+.client-list-container {
+  width: 80vw;
+  margin: 0 auto;
+  display: block; /* stacked instead of flex */
+}
+
+/* Collapsed item - styled as a full-width bar */
+.client-bar {
+  height: 60px;
+  width: 800px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 1rem;
+  font-weight: bold;
+  font-size: 14px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Bar hover effect */
+.client-bar:hover {
+  opacity: 0.9;
+}
+
+/* Tier-based color coding */
+.tier-1 {
+  background-color: black;
+  color: lightgreen;
+}
+.tier-2 {
+  background-color: black;
+  color: lightskyblue;
+}
+.tier-3 {
+  background-color: black;
+  color: orange;
+}
+.tier-4 {
+  background-color: black;
+  color: red;
+}
+.tier-unknown {
+  background-color: lawngreen;
+  color: black;
+}
+
+/* Controls on right side */
+.client-bar .controls {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.client-bar .controls span {
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 5px;
+  transition: all 0.2s ease-in-out;
+}
+
+.client-bar .controls span:hover {
+  transform: scale(1.1);
+}
+
+/* Expanded card modal */
+.client-full-card {
+  position: fixed;
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 800px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background-color: white;
+  border: 2px solid #ccc;
+  border-radius: 10px;
+  padding: 2rem;
+  z-index: 1000;
+  box-shadow: 0px 5px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Controls inside modal */
+.client-full-card .controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Pagination buttons */
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+  gap: 1rem;
+}
+
+.pagination-controls button {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  border: none;
+  background-color: #0077cc;
+  color: white;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.pagination-controls button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.pagination-controls button:hover:not(:disabled) {
+  background-color: #005fa3;
+}
+.modal-card {
+  position: fixed;
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 70vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  background-color: white;
+  border: 2px solid #ccc;
+  border-radius: 10px;
+  padding: 2rem;
+  z-index: 1000;
+  box-shadow: 0px 5px 20px rgba(0, 0, 0, 0.2);
+}
+.action-button {
+  background-color: #eee;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+
+.action-button:hover {
+  background-color: #ddd;
+}
+
+.action-button.danger {
+  background-color: #ffdddd;
+  border-color: #cc0000;
+  color: #900;
+}
+
+.action-button.danger:hover {
+  background-color: #ffcccc;
+}
+.action-icons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.action-icons button {
+  background-color: #f4f4f4;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-icons button:hover {
+  background-color: #e0e0e0;
+}
+
+.action-icons button:focus {
+  outline: none;
+  box-shadow: 0 0 2px #999;
+}
+/* Base Styles */
+body {
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  color: #333;
+  background-color: #f8f9fa;
+  margin: 0;
+  padding: 0;
+}
+.dropzone {
+  border: 2px dashed #007bff;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.file-tray,
+.lead-summary {
+  margin-top: 20px;
+}
+
+.file-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px;
+  background: #f8f9fa;
+  margin: 5px 0;
+  border-radius: 5px;
+}
+
+.processing-bar {
+  background: #ffcc00;
+  padding: 10px;
+  border-radius: 5px;
+}
+
+.lead-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lead-card {
+  padding: 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 200px;
+}
+
+.lead-card.green {
+  background: #d4edda;
+}
+
+.lead-card.yellow {
+  background: #fff3cd;
+}
+
+.lead-card.red {
+  background: #f8d7da;
+}
+
+.modal {
+  position: fixed;
+  top: 20%;
+  left: 50%;
+  transform: translate(-50%, -20%);
+  background: white;
+  padding: 20px;
+  border-radius: 5px;
+}
+
+/* Grid System */
+.container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+.scheduled-upload-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Grid Layout for Scheduler */
+.scheduler-grid {
+  display: grid;
+  grid-template-columns: 4fr 1fr; /* 4/5 form, 1/5 panel */
+  gap: 20px;
+}
+
+/* 🎯 Left Side: Scheduling Form */
+.scheduler-form {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* 🎯 Right Side: Scheduled Leads Panel */
+.scheduled-leads-panel-container {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  overflow-y: auto; /* Allows scrolling if there are many items */
+  max-height: 600px; /* Prevents it from getting too large */
+}
+
+/* 📝 Scheduled Lead Item */
+.scheduled-lead-item {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 🛠️ Inspect & Delete Buttons */
+.scheduled-lead-controls {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.inspect-button,
+.delete-button {
+  background: #007bff;
+  color: #fff;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.inspect-button:hover {
+  background: #0056b3;
+}
+
+.delete-button {
+  background: #dc3545;
+}
+
+.delete-button:hover {
+  background: #b02a37;
+}
+
+/* 📋 Lead Count & Campaign Info */
+.lead-count {
+  font-weight: bold;
+  color: #333;
+}
+
+.campaign-info {
+  font-size: 14px;
+  color: #555;
+}
+
+/* 🔍 Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  width: 400px;
+  max-width: 90%;
+  text-align: center;
+}
+
+.close-modal {
+  background: #dc3545;
+  color: #fff;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.close-modal:hover {
+  background: #b02a37;
+}
+
+/* Flexbox Utility */
+.flex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Spacing Utilities */
+.m-0 {
+  margin: 0;
+}
+.mt-1 {
+  margin-top: 4px;
+}
+.mt-2 {
+  margin-top: 8px;
+}
+.mt-3 {
+  margin-top: 16px;
+}
+.mt-4 {
+  margin-top: 24px;
+}
+
+.mb-1 {
+  margin-bottom: 4px;
+}
+.mb-2 {
+  margin-bottom: 8px;
+}
+.mb-3 {
+  margin-bottom: 16px;
+}
+.mb-4 {
+  margin-bottom: 24px;
+}
+
+.p-0 {
+  padding: 0;
+}
+.px-1 {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.px-2 {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.px-3 {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.py-1 {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.py-2 {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.py-3 {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+/* Buttons */
+.button {
+  padding: 10px 16px;
+  background-color: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.button:hover {
+  background-color: #0056b3;
+}
+
+/* Card Layout */
+.card {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Table */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 8px;
+  border: 1px solid #ddd;
+}
+
+.table th {
+  background-color: #f4f4f4;
+  font-weight: bold;
+  text-align: left;
+}
+.dashboard-container {
+  display: flex;
+  height: 100vh;
+  gap: 20px;
+  padding: 20px;
+}
+
+/* Left panel: Lead List */
+.lead-list-container {
+  flex: 1;
+  max-height: 100vh;
+  overflow-y: auto;
+  background: #ffffff;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Right panel */
+.panel-container {
+  width: 400px; /* Adjust as needed */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Ensure individual cards in right panel do not stretch */
+.panel-container .grid-item {
+  height: 150px; /* Fixed height for each item */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.lead-list-container {
+  flex: 1;
+  max-height: 100vh;
+  overflow-y: auto;
+  background: #ffffff;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Lead Detail View */
+.lead-detail-container {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.lead-form label {
+  display: block;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+.lead-form input,
+.lead-form select {
+  width: 100%;
+  padding: 8px;
+  margin-top: 5px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+.button.primary {
+  background-color: #007bff;
+  color: white;
+}
+
+/* Button Container */
+.card.grid-item {
+  display: flex;
+  flex-direction: column; /* Stack buttons vertically */
+  align-items: center;
+  gap: 20px; /* Space between buttons */
+  padding: 20px; /* Padding inside the card */
+}
+
+/* Standard Button Styling */
+.button {
+  width: 100%;
+  max-width: 300px; /* Slightly larger buttons */
+  height: 50px; /* Taller buttons for better spacing */
+  font-size: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s ease, transform 0.2s ease;
+  border: none;
+  padding: 12px 0; /* Uniform padding inside buttons */
+  text-align: center;
+  margin: 4px;
+}
+
+/* Add some hover effects */
+.button:hover {
+  background-color: #0056b3;
+  color: white;
+  transform: translateY(-2px); /* Subtle lift on hover */
+}
+
+/* Active Button */
+.button.active {
+  background-color: #003f7f !important;
+  color: white;
+  font-weight: bold;
+  border: 2px solid #002a5c;
+}
+
+/* Lead Detail Container */
+.lead-detail-container {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  max-width: 600px;
+  margin: auto;
+}
+
+/* Grid Layout for Lead Details */
+.lead-form {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* Two columns */
+  gap: 16px;
+  margin-top: 10px;
+}
+
+/* Full-width fields for larger inputs */
+.lead-form .grid-item {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Label Styles */
+.lead-form label {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+/* Input and Select Styles */
+.lead-form input,
+.lead-form select {
+  width: 100%;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+}
+
+/* Actions Buttons */
+.actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+/* Button Styles */
+.button {
+  padding: 10px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.button.primary {
+  background-color: #007bff;
+  color: white;
+}
+
+.button.danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.button:hover {
+  opacity: 0.9;
+}
+
+/* Email Sender Form Styles */
+/* Email Sender Form Styles */
+.email-sender-container {
+  max-width: 500px;
+  margin: 20px auto;
+  padding: 20px;
+  border-radius: 10px;
+  background: #f9f9f9;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  text-align: center;
+  font-size: 1.5rem;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+/* Center Radio Button Group */
+.radio-group {
+  display: flex;
+  justify-content: center; /* Center horizontally */
+  align-items: center; /* Center vertically */
+  gap: 20px; /* Add spacing between radio buttons */
+  background: #fff;
+  padding: 15px;
+  border-radius: 5px;
+  text-align: center;
+}
+
+/* Ensure Labels and Inputs Align Properly */
+.radio-label {
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  gap: 5px; /* Space between radio button and text */
+}
+
+/* Adjust Radio Button Size */
+.radio-label input {
+  width: 18px;
+  height: 18px;
+}
+
+/* Make All Inputs, Selects, and File Upload the Same Size */
+.input-field,
+.file-input,
+select {
+  width: 100%;
+  max-width: 400px;
+  height: 45px; /* Uniform Height */
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  font-size: 1rem;
+  display: block;
+  margin: 0 auto;
+}
+
+/* File Input Styling */
+.file-input {
+  line-height: 45px;
+  cursor: pointer;
+}
+
+/* Radio Buttons Group */
+.radio-group {
+  display: flex;
+  justify-content: space-between;
+  background: #fff;
+  padding: 10px;
+  border-radius: 5px;
+}
+
+/* Standardize Labels */
+label {
+  font-weight: bold;
+  display: block;
+  margin-bottom: 5px;
+  text-align: left;
+}
+
+/* Make the Button Consistent */
+.send-button {
+  width: 100%;
+  max-width: 400px;
+  height: 45px;
+  padding: 10px;
+  background: #007bff;
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.3s;
+  display: block;
+  margin: 10px auto;
+}
+
+.send-button:hover {
+  background: #0056b3;
+}
+
+.message {
+  text-align: center;
+  font-weight: bold;
+  color: #d9534f;
+  margin-top: 10px;
+}
+/* Responsive */
+@media (max-width: 768px) {
+  .container {
+    grid-template-columns: 1fr;
+  }
+}
