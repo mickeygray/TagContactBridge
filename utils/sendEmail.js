@@ -3,13 +3,24 @@ require("dotenv").config();
 
 // 🔧 Create a reusable transporter based on the domain
 const getTransporter = (domain) => {
-  const apiKey =
-    domain === "WYNN" ? process.env.WYNN_API_KEY : process.env.TAXAD_API_KEY;
+  let apiKey;
+  switch ((domain || "").toUpperCase()) {
+    case "WYNN":
+      apiKey = process.env.WYNN_API_KEY;
+      break;
+    case "AMITY":
+      apiKey = process.env.AMITY_API_KEY;
+      break;
+    case "TAG":
+    default:
+      apiKey = process.env.TAXAD_API_KEY;
+      break;
+  }
 
   return nodemailer.createTransport({
     host: "smtp.sendgrid.net",
     port: 587,
-    secure: false,
+    secure: false, // TLS
     auth: {
       user: "apikey",
       pass: apiKey,
@@ -30,13 +41,14 @@ const getTransporter = (domain) => {
 const sendEmail = async ({ to, subject, text, html, domain }) => {
   const transporter = getTransporter(domain);
 
-  const fromAddress =
-    domain === "WYNN"
-      ? `"Wynn Tax Solutions" <${process.env.WYNN_EMAIL}>`
-      : `"Tax Advocate Group" <${process.env.TAG_EMAIL}>`;
-
+  const fromMap = {
+    TAG: `${process.env.TAG_EMAIL_NAME} <${process.env.TAG_EMAIL_ADDRESS}>`,
+    WYNN: `${process.env.WYNN_EMAIL_NAME} <${process.env.WYNN_EMAIL_ADDRESS}>`,
+    AMITY: `${process.env.AMITY_EMAIL_NAME} <${process.env.AMITY_EMAIL_ADDRESS}>`,
+  };
+  const from = fromMap[domain?.toUpperCase()] || fromMap.TAG;
   const mailOptions = {
-    from: fromAddress,
+    from,
     to,
     subject,
     text: text || "",

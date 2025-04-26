@@ -5,7 +5,8 @@ const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const inviteRoutes = require("./routes/invite");
 const listRoutes = require("./routes/list");
-const callRoutes = require("./routes/calls");
+const callRoutes = require("./routes/recording");
+const clientRoutes = require("./routes/clients");
 require("dotenv").config();
 
 const connectDB = require("./config/db");
@@ -31,10 +32,9 @@ app.use("/api/list", listRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invite", inviteRoutes);
 app.use("/api/emails", require("./routes/emails"));
-app.use("/api/rvms", require("./routes/rvms"));
-app.use("/api/messages", require("./routes/messages"));
+app.use("/api/texts", require("./routes/texts"));
 app.use("/api/schedule", require("./routes/schedule"));
-
+app.use("/api/clients", clientRoutes);
 // Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

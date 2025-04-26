@@ -1,7 +1,9 @@
 import React, { useState } from "react";
-import LogicsFileReader from "../tools/LogicsFileReader";
-import CallFetcher from "../tools/CallFetcher";
-import LexisAppendList from "../tools/LexisAppendList";
+import LogicsFileReader from "../tools/list managers/LogicsFileReader";
+import CallFetcher from "../tools/call monitor/CallFetcher";
+import LexisAppendList from "../tools/list managers/LexisAppendList";
+import PeriodContactsFilter from "../tools/list managers/PeriodContactsFilter";
+import ClientAnalysisList from "../tools/client review/ClientAnalysisList";
 
 const AgentDashboard = () => {
   const [activeTool, setActiveTool] = useState(null);
@@ -14,6 +16,10 @@ const AgentDashboard = () => {
         return <CallFetcher />;
       case "lexis":
         return <LexisAppendList />;
+      case "period":
+        return <PeriodContactsFilter />;
+      case "analysis":
+        <ClientAnalysisList />;
       default:
         return <p>Please select a tool from the right panel.</p>;
     }
@@ -51,6 +57,24 @@ const AgentDashboard = () => {
             onClick={() => setActiveTool("lexis")}
           >
             📋 Lexis Append List
+          </button>{" "}
+          <br />
+          <button
+            className={`button primary ${
+              activeTool === "period" ? "active" : ""
+            }`}
+            onClick={() => setActiveTool("period")}
+          >
+            📋 Period Contacts Filter
+          </button>
+          <br />
+          <button
+            className={`button primary ${
+              activeTool === "period" ? "active" : ""
+            }`}
+            onClick={() => setActiveTool("period")}
+          >
+            📋 Client Analysis List
           </button>
         </div>
       </div>

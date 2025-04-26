@@ -16,34 +16,6 @@ const ScheduleState = (props) => {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
 
   // Add new scheduled client
-  const addScheduledClient = async (clientData) => {
-    try {
-      const res = await axios.post("/api/schedule", clientData);
-      dispatch({ type: "ADD_SCHEDULED_CLIENT", payload: res.data });
-    } catch (error) {
-      console.error("❌ Error adding client:", error);
-    }
-  };
-
-  // Update scheduled client
-  const updateScheduledClient = async (id, updates) => {
-    try {
-      const res = await axios.put(`/api/schedule/${id}`, updates);
-      dispatch({ type: "UPDATE_SCHEDULED_CLIENT", payload: res.data });
-    } catch (error) {
-      console.error("❌ Error updating client:", error);
-    }
-  };
-
-  // Delete scheduled client
-  const deleteScheduledClient = async (id) => {
-    try {
-      await axios.delete(`/api/schedule/${id}`);
-      dispatch({ type: "DELETE_SCHEDULED_CLIENT", payload: id });
-    } catch (error) {
-      console.error("❌ Error deleting client:", error);
-    }
-  };
 
   // Fetch daily review clients (via cron-triggered backend route)
   const fetchDailyReviews = async () => {
@@ -66,9 +38,6 @@ const ScheduleState = (props) => {
         textQueue: state.textQueue,
         loading: state.loading,
         error: state.error,
-        addScheduledClient,
-        updateScheduledClient,
-        deleteScheduledClient,
         fetchDailyReviews,
       }}
     >

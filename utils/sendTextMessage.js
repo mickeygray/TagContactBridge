@@ -1,9 +1,8 @@
 // utils/sendTextMessage.js
-const axios = require("axios");
+const { sendTextMessageAPI } = require("../services/callRailService");
 
 const RATE_LIMIT_HOURLY = 150;
 const RATE_LIMIT_DAILY = 1000;
-
 let sentHour = 0;
 let sentDay = 0;
 let lastHourReset = Date.now();
@@ -11,46 +10,31 @@ let lastDayReset = Date.now();
 
 function resetLimits() {
   const now = Date.now();
-  if (now - lastHourReset > 60 * 60 * 1000) {
+  if (now - lastHourReset > 3600_000) {
     sentHour = 0;
     lastHourReset = now;
   }
-  if (now - lastDayReset > 24 * 60 * 60 * 1000) {
+  if (now - lastDayReset > 86_400_000) {
     sentDay = 0;
     lastDayReset = now;
   }
 }
 
 /**
- * @param {Object} opts
- * @param {string} opts.phoneNumber - E.164 recipient
- * @param {string} opts.trackingNumber - CallRail tracking # to display
- * @param {string} opts.message - Fully-rendered SMS body
+ * Sends one SMS via CallRail, with rate limiting.
  */
 async function sendTextMessage({ phoneNumber, trackingNumber, message }) {
   resetLimits();
-
   if (sentHour >= RATE_LIMIT_HOURLY || sentDay >= RATE_LIMIT_DAILY) {
     return { phoneNumber, status: "❌ Rate limit exceeded" };
   }
 
   try {
-    await axios.post(
-      `https://api.callrail.com/v3/a/${process.env.CALL_RAIL_ACCOUNT_ID}/text-messages.json`,
-      {
-        customer_phone_number: phoneNumber,
-        tracking_number: trackingNumber,
-        content: message,
-        company_id: process.env.CALL_RAIL_COMPANY_ID,
-      },
-      {
-        headers: {
-          Authorization: `Token token=${process.env.CALL_RAIL_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
+    await sendTextMessageAPI({
+      phoneNumber,
+      trackingNumber,
+      content: message,
+    });
     sentHour++;
     sentDay++;
     return { phoneNumber, status: "✅ Sent" };

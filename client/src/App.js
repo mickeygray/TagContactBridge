@@ -12,14 +12,14 @@ import ListState from "./context/list/ListState";
 import EmailState from "./context/email/EmailState";
 import ScheduleState from "./context/schedule/ScheduleState";
 import TextState from "./context/text/TextState";
-import RVMState from "./context/rvm/RVMState";
+import ClientState from "./context/client/ClientState";
 import ManagementDashboard from "./components/interface/ManagementDashboard";
 function App() {
   return (
     <AuthState>
       <AdminState>
         <ListState>
-          <RVMState>
+          <ClientState>
             <ScheduleState>
               <TextState>
                 <EmailState>
@@ -66,7 +66,7 @@ function App() {
                 </EmailState>
               </TextState>
             </ScheduleState>
-          </RVMState>
+          </ClientState>
         </ListState>
       </AdminState>
     </AuthState>

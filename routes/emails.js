@@ -1,344 +1,129 @@
 const express = require("express");
-const router = express.Router();
-const nodemailer = require("nodemailer");
 const fs = require("fs");
 const path = require("path");
 const hbs = require("handlebars");
+const sendEmail = require("../utils/sendEmail");
+const {
+  authMiddleware,
+  requireAdmin,
+  ensureOnline,
+} = require("../middleware/authMiddleware");
 
-// Configure SendGrid SMTP
-const transporter = nodemailer.createTransport({
-  host: "smtp.sendgrid.net", // SendGrid SMTP Server
-  port: 587, // Use 587 for TLS (recommended)
-  secure: false, // False for TLS, True for SSL (port 465)
-  auth: {
-    user: "apikey", // SendGrid requires "apikey" as the username
-    pass: process.env.TAXAD_API_KEY, // Use API key as the password
-  },
-});
+const router = express.Router();
 
-const transporter2 = nodemailer.createTransport({
-  host: "smtp.sendgrid.net", // SendGrid SMTP Server
-  port: 587, // Use 587 for TLS (recommended)
-  secure: false, // False for TLS, True for SSL (port 465)
-  auth: {
-    user: "apikey", // SendGrid requires "apikey" as the username
-    pass: process.env.WYNN_API_KEY, // Use API key as the password
-  },
-});
+// Protect all email routes
+router.use(authMiddleware, ensureOnline, requireAdmin);
 
-const transporter3 = nodemailer.createTransport({
-  host: "smtp.sendgrid.net", // SendGrid SMTP Server
-  port: 587, // Use 587 for TLS (recommended)
-  secure: false, // False for TLS, True for SSL (port 465)
-  auth: {
-    user: "apikey", // SendGrid requires "apikey" as the username
-    pass: process.env.AMITY_API_KEY, // Use API key as the password
-  },
-});
-
-// Read and compile the Handlebars template
-
-router.post("/taxadvocate", async (req, res) => {
-  const { subject, attachment, template, list } = req.body;
-
-  if (!list || !Array.isArray(list) || !subject || !template) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid input data." });
+/**
+ * Send one-off or bulk emails using Handlebars templates.
+ * POST /api/emails/send
+ * body: { list: [{email,name,cell,caseNumber,token}], subject, template, domain, attachment }
+ */
+router.post("/send", async (req, res, next) => {
+  const { list, subject, template, domain, attachment } = req.body;
+  if (!Array.isArray(list) || !subject || !template || !domain) {
+    return res.status(400).json({ message: "Missing required fields." });
   }
 
   try {
+    // Load and compile template
     const templatePath = path.join(
       __dirname,
       "../Templates",
       `${template}.hbs`
     );
-    const attachmentPath =
-      attachment !== "none"
-        ? path.join(__dirname, "../Templates", attachment)
-        : null;
-
-    if (!fs.existsSync(templatePath)) {
-      console.error(`Template not found: ${templatePath}`);
-      return res
-        .status(400)
-        .json({ success: false, message: "Template file missing." });
-    }
-
+    if (!fs.existsSync(templatePath)) throw new Error("Template not found");
     const source = fs.readFileSync(templatePath, "utf8");
-    const compiledTemplate = hbs.compile(source);
+    const compiled = hbs.compile(source);
 
-    for (const recipient of list) {
-      if (!recipient.email) continue;
+    // Send to each recipient
+    const results = await Promise.allSettled(
+      list.map(async (recipient) => {
+        const { email, name, cell, caseNumber, token } = recipient;
+        if (!email) throw new Error("Invalid recipient");
 
-      const { name, email, cell, caseID } = recipient;
+        // Build scheduler URL
+        const baseMap = {
+          TAG: "taxadvocategroup.com",
+          WYNN: "wynntaxsolutions.com",
+          AMITY: "amitytaxgroup.com",
+        };
+        const host = baseMap[domain] || baseMap.TAG;
+        const schedulerUrl = `https://${host}/schedule-my-call/${token}`;
 
-      // 🔍 Check if client already exists by email or cell
-      let existingClient = await Client.findOne({
-        $or: [{ email }, { cell }],
-      });
+        // Render HTML
+        const html = compiled({ name, cell, caseNumber, schedulerUrl });
 
-      let token = "";
-
-      if (!existingClient) {
-        // 🎟️ Create new client and generate token
-        token = crypto.randomBytes(20).toString("hex");
-        const tokenExpiresAt = new Date();
-        tokenExpiresAt.setDate(tokenExpiresAt.getDate() + 30);
-
-        const newClient = new Client({
-          name: name || "",
-          email,
-          cell,
-          caseNumber: caseID || "TEMP-" + Date.now(),
-          domain: "TAG",
-          token,
-          tokenExpiresAt,
-        });
-
-        await newClient.save();
-        console.log(`✅ Client created for ${email}`);
-      } else {
-        token = existingClient.token;
-        if (!token) {
-          // If existing client is missing token, create it
-          token = crypto.randomBytes(20).toString("hex");
-          const tokenExpiresAt = new Date();
-          tokenExpiresAt.setDate(tokenExpiresAt.getDate() + 30);
-
-          existingClient.token = token;
-          existingClient.tokenExpiresAt = tokenExpiresAt;
-          await existingClient.save();
+        // Prepare attachments
+        let attachments = [];
+        if (
+          attachment &&
+          fs.existsSync(path.join(__dirname, "../Templates", attachment))
+        ) {
+          attachments.push({
+            filename: attachment,
+            path: path.join(__dirname, "../Templates", attachment),
+          });
         }
-      }
 
-      // 🌐 Build scheduler URL
-      const schedulerUrl = `https://www.taxadvocategroup.com/schedule-my-call/${token}`;
-
-      // ✉️ Compile email content
-      const emailContent = compiledTemplate({
-        name,
-        email,
-        cell,
-        schedulerUrl,
-      });
-
-      const mailOptions = {
-        from: `"Tax Advocate Group" <${process.env.ADMIN_EMAIL}>`,
-        to: email,
-        subject: subject,
-        html: emailContent,
-        attachments:
-          attachmentPath && fs.existsSync(attachmentPath)
-            ? [{ filename: attachment, path: attachmentPath }]
-            : [],
-      };
-
-      try {
-        await transporter.sendMail(mailOptions);
-        console.log(`✅ Sent email to ${email}`);
-      } catch (error) {
-        console.error(`❌ Failed to send email to ${email}:`, error);
-      }
-    }
-
-    res.json({ success: true, message: "Emails processed successfully." });
-  } catch (error) {
-    console.error("❌ Error processing emails:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Error processing emails." });
-  }
-});
-
-router.post("/wynn", async (req, res) => {
-  const { subject, attachment, template, list } = req.body;
-
-  if (!list || !Array.isArray(list) || !subject || !template) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid input data." });
-  }
-
-  try {
-    const templatePath = path.join(
-      __dirname,
-      "../Templates",
-      `${template}.hbs`
+        // Send
+        await sendEmail({ to: email, subject, html, domain, attachments });
+        return { email, status: "sent" };
+      })
     );
-    const attachmentPath =
-      attachment !== "none"
-        ? path.join(__dirname, "../Templates", attachment)
-        : null;
 
-    if (!fs.existsSync(templatePath)) {
-      console.error(`Template not found: ${templatePath}`);
-      return res
-        .status(400)
-        .json({ success: false, message: "Template file missing." });
-    }
-
-    const source = fs.readFileSync(templatePath, "utf8");
-    const compiledTemplate = hbs.compile(source);
-
-    for (const recipient of list) {
-      if (!recipient.email) continue;
-
-      const { name, email, cell, senderEmailFull, senderName } = recipient;
-      /*
-      let client = await Client.findOne({
-        $or: [{ email }, { cell }],
-      });
-
-      let token = "";
-      let tokenExpiresAt = new Date();
-      tokenExpiresAt.setDate(tokenExpiresAt.getDate() + 30);
-
-      if (client) {
-        token = client.token || crypto.randomBytes(16).toString("hex");
-        client.token = token;
-        client.tokenExpiresAt = tokenExpiresAt;
-        await client.save();
-      } else {
-        token = crypto.randomBytes(16).toString("hex");
-
-        client = new Client({
-          name: name || "",
-          email,
-          cell,
-          caseNumber: caseID || "TEMP-" + Date.now(),
-          domain: "WYNN",
-          token,
-          tokenExpiresAt,
-        });
-
-        await client.save();
-        console.log(`✅ New Wynn client saved: ${email}`);
-      }
-
-      const scheduleUrl = `https://www.wynntaxsolutions.com/schedule-my-call/${token}`;
-      */
-      const emailContent = compiledTemplate({ name });
-
-      const mailOptions = {
-        from: `"${senderName} at Wynn Tax Soltuions" <${senderEmailFull}>`,
-        to: email,
-        subject,
-        html: emailContent,
-        attachments:
-          attachmentPath && fs.existsSync(attachmentPath)
-            ? [{ filename: attachment, path: attachmentPath }]
-            : [],
-      };
-
-      try {
-        await transporter2.sendMail(mailOptions);
-        console.log(`✅ Wynn email sent to ${email}`);
-      } catch (error) {
-        console.error(`❌ Failed to send Wynn email to ${email}:`, error);
-      }
-    }
-
-    res.json({ success: true, message: "Wynn emails processed successfully." });
-  } catch (error) {
-    console.error("❌ Error processing Wynn emails:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Error processing emails." });
+    res.json({ results });
+  } catch (err) {
+    next(err);
   }
 });
-router.post("/amity", async (req, res) => {
-  const { subject, attachment, template, list } = req.body;
 
-  if (!list || !Array.isArray(list) || !subject || !template) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid input data." });
-  }
-
-  try {
-    const templatePath = path.join(
-      __dirname,
-      "../Templates",
-      `${template}.hbs`
-    );
-    const attachmentPath =
-      attachment !== "none"
-        ? path.join(__dirname, "../Templates", attachment)
-        : null;
-
-    if (!fs.existsSync(templatePath)) {
-      console.error(`Template not found: ${templatePath}`);
-      return res
-        .status(400)
-        .json({ success: false, message: "Template file missing." });
-    }
-
-    const source = fs.readFileSync(templatePath, "utf8");
-    const compiledTemplate = hbs.compile(source);
-
-    for (const recipient of list) {
-      if (!recipient.email) continue;
-
-      const { name, email, cell, caseNumber, senderEmailFull, senderName } =
-        recipient;
-
-      let client = await Client.findOne({
-        $or: [{ email }, { cell }],
-      });
-
-      let token = "";
-      let tokenExpiresAt = new Date();
-      tokenExpiresAt.setDate(tokenExpiresAt.getDate() + 30);
-
-      if (client) {
-        token = client.token || crypto.randomBytes(16).toString("hex");
-        client.token = token;
-        client.tokenExpiresAt = tokenExpiresAt;
-        await client.save();
-      } else {
-        token = crypto.randomBytes(16).toString("hex");
-
-        client = new Client({
-          name: name || "",
-          email,
-          cell,
-          caseNumber: caseID || "TEMP-" + Date.now(),
-          domain: "AMITY",
-          token,
-          tokenExpiresAt,
-        });
-
-        await client.save();
-        console.log(`✅ New Amity client saved: ${email}`);
-      }
-
-      const scheduleUrl = `https://www.amitytaxgroup.com/schedule-my-call/${token}`;
-      const emailContent = compiledTemplate({ name, scheduleUrl });
-
-      const mailOptions = {
-        from: `"${senderName}" <${senderEmailFull}>`,
-        to: email,
-        subject,
-        html: emailContent,
-        attachments:
-          attachmentPath && fs.existsSync(attachmentPath)
-            ? [{ filename: attachment, path: attachmentPath }]
-            : [],
-      };
-
-      try {
-        await transporter3.sendMail(mailOptions);
-        console.log(`✅ Amity email sent to ${email}`);
-      } catch (error) {
-        console.error(`❌ Failed to send Amity email to ${email}:`, error);
-      }
-    }
-
-    res.json({ success: true, message: "Amity emails sent successfully." });
-  } catch (error) {
-    console.error("❌ Error processing Amity emails:", error);
-    res.status(500).json({ success: false, message: "Error sending emails." });
-  }
+/**
+ * Template management endpoints
+ */
+// List all templates
+router.get("/templates", (req, res) => {
+  const files = fs
+    .readdirSync(path.join(__dirname, "../Templates"))
+    .filter((f) => f.endsWith(".hbs"));
+  res.json({ templates: files });
 });
+
+// Get a single template
+router.get("/templates/:name", (req, res) => {
+  const name = req.params.name.endsWith(".hbs")
+    ? req.params.name
+    : `${req.params.name}.hbs`;
+  const filePath = path.join(__dirname, "../Templates", name);
+  if (!fs.existsSync(filePath))
+    return res.status(404).json({ message: "Not found" });
+  res.sendFile(filePath);
+});
+
+// Create/update a template (experiments)
+router.post("/templates/:name", (req, res) => {
+  const content = req.body.content;
+  if (typeof content !== "string")
+    return res.status(400).json({ message: "Invalid content" });
+
+  const name = req.params.name.endsWith(".hbs")
+    ? req.params.name
+    : `${req.params.name}.hbs`;
+  const filePath = path.join(__dirname, "../Templates", name);
+  fs.writeFileSync(filePath, content, "utf8");
+  res.json({ message: "Template saved" });
+});
+
+// Delete a template
+router.delete("/templates/:name", (req, res) => {
+  const name = req.params.name.endsWith(".hbs")
+    ? req.params.name
+    : `${req.params.name}.hbs`;
+  const filePath = path.join(__dirname, "../Templates", name);
+  if (!fs.existsSync(filePath))
+    return res.status(404).json({ message: "Not found" });
+  fs.unlinkSync(filePath);
+  res.json({ message: "Template deleted" });
+});
+
 module.exports = router;

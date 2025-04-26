@@ -1,5 +1,6 @@
 module.exports = {
   TAG: `
+  <div style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;">If you are returning documents, please send them to Processing@TaxAdvocateGroup.com</div>
 <table
   style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;"
 >
@@ -31,6 +32,7 @@ module.exports = {
 </table>
     `,
   WYNN: `
+   <div style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;">If you are returning documents, please send them to Processing@WynnTaxSolutions.com</div>
 <table
   style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;"
 >
@@ -65,6 +67,7 @@ module.exports = {
 </table>
     `,
   AMITY: `
+   <div style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;">If you are returning documents, please send them to Processing@AmityTaxGroup.com</div>
 <table
   style="width:100%; max-width:600px; margin-top:20px; border-top: 1px solid #ccc; padding-top: 10px;"
 >
