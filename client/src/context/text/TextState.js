@@ -1,13 +1,23 @@
 import React, { useReducer } from "react";
-import axios from "axios";
 import TextContext from "./textContext";
 import textReducer from "./textReducer";
+import { useApi } from "../../utils/api";
 
 const TextState = (props) => {
-  const initialState = {};
+  const initialState = {
+    sending: false,
+    successMessage: null,
+    errorMessage: null,
+  };
 
   const [state, dispatch] = useReducer(textReducer, initialState);
+  const api = useApi();
+  api.defaults.withCredentials = true;
 
+  /**
+   * Send one or more text messages via backend
+   * @param {Object} messagesPayload
+   */
   const sendTextMessage = async (messagesPayload) => {
     if (!messagesPayload) {
       dispatch({
@@ -17,13 +27,10 @@ const TextState = (props) => {
       return;
     }
 
-    console.log(messagesPayload);
-
+    dispatch({ type: "TEXT_SENDING" });
     try {
-      const response = await axios.post("/api/messages/", { messagesPayload });
-
+      const response = await api.post("/api/messages/", { messagesPayload });
       dispatch({ type: "TEXT_SENT", payload: response.data.message });
-
       console.log("✅ Text messages sent successfully:", response.data);
     } catch (error) {
       console.error("❌ Failed to send text messages:", error);
@@ -37,6 +44,9 @@ const TextState = (props) => {
   return (
     <TextContext.Provider
       value={{
+        sending: state.sending,
+        successMessage: state.successMessage,
+        errorMessage: state.errorMessage,
         sendTextMessage,
       }}
     >

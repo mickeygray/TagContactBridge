@@ -60,10 +60,10 @@ async function uploadCaseDocument({
 }
 
 /** Fetch raw activity array for a case */
-async function fetchActivities(domain, caseID) {
+async function fetchActivities(domain, caseNumber) {
   const { baseUrl, apiKey } = config[domain] || config.TAG;
   const resp = await axios.get(`${baseUrl}/cases/activity`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseID) },
+    params: { apikey: apiKey, CaseID: parseInt(caseNumber) },
   });
   return resp.data;
 }
@@ -74,23 +74,33 @@ async function fetchInvoices(domain, caseID) {
   const resp = await axios.get(`${baseUrl}/billing/caseinvoice`, {
     params: { apikey: apiKey, CaseID: parseInt(caseID) },
   });
+  console.log(resp.data, "invoiceData");
+  return JSON.parse(resp.data.data || "[]");
+}
+
+async function fetchTasks(domain, caseID) {
+  const { baseUrl, apiKey } = config[domain] || config.TAG;
+  const resp = await axios.get(`${baseUrl}/billing/caseinvoice`, {
+    params: { apikey: apiKey, CaseID: parseInt(caseID) },
+  });
+  console.log(resp.data, "taskData");
   return JSON.parse(resp.data.data || "[]");
 }
 
 /** Fetch raw payment array for a case */
-async function fetchPayments(domain, caseID) {
+async function fetchPayments(domain, caseNumber) {
   const { baseUrl, apiKey } = config[domain] || config.TAG;
   const resp = await axios.get(`${baseUrl}/billing/casepayment`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseID) },
+    params: { apikey: apiKey, CaseID: parseInt(caseNumber) },
   });
   return JSON.parse(resp.data.data || "[]");
 }
 
-async function fetchPastDueAmount(domain, caseID) {
+async function fetchBillingSummary(domain, caseNumber) {
   const configMap = {
     TAG: {
       baseUrl: process.env.TAG_LOGICS_API_URL,
-      apiKey: process.env.TAG_LOGICS_API_KEY,
+      apiKey: process.env.LOGICS_API_KEY,
     },
     WYNN: {
       baseUrl: process.env.WYNN_LOGICS_API_URL,
@@ -113,8 +123,9 @@ async function fetchPastDueAmount(domain, caseID) {
       },
     });
 
-    const data = JSON.parse(response.data.data || "{}");
-    return parseFloat(data.PastDue || "0");
+    const summary = response.data.data;
+    console.log(response.data);
+    return summary;
   } catch (error) {
     console.error(
       `❌ Error fetching PastDue for case #${caseNumber}:`,
@@ -147,8 +158,9 @@ module.exports = {
   uploadCaseDocument,
   postCaseFile,
   createZeroInvoice,
-  fetchPastDueAmount,
+  fetchBillingSummary,
   fetchActivities,
   fetchInvoices,
   fetchPayments,
+  fetchTasks,
 };

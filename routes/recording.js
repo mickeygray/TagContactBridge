@@ -5,7 +5,6 @@ const router = express.Router();
 const {
   authMiddleware,
   requireAdmin,
-  ensureOnline,
 } = require("../middleware/authMiddleware");
 
 router.get("/:callId", async (req, res) => {

@@ -4,18 +4,21 @@ const periodContactsSchema = new mongoose.Schema({
   createDateStage: {
     type: String,
     enum: [
-      "taxOrganizer",
       "update433a",
-      "taxDeadline",
       "penaltyAbatement",
-      "yearReview",
+      "taxOrganizer",
+      "taxDeadline",
+      "documentsSubmitted",
+      "filingDocuments",
+      "irsContact",
+      "irsGuidelines",
     ],
   },
   createDateClientIDs: {
     type: [String], // Just IDs; full logic runs from the client model
     default: [],
   },
-
+  filters: { type: Object },
   periodStartDate: {
     type: Date,
     required: true,

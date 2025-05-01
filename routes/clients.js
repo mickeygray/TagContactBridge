@@ -2,7 +2,6 @@ const express = require("express");
 const {
   authMiddleware,
   requireAdmin,
-  ensureOnline,
 } = require("../middleware/authMiddleware");
 const {
   createScheduledClientHandler,
@@ -12,10 +11,16 @@ const {
   upload,
 } = require("../controllers/clientController");
 
+const {
+  fetchActivities,
+  fetchInvoices,
+  fetchPayments,
+} = require("../services/logicsService");
+
 const router = express.Router();
 
 // Protect all client actions
-router.use(authMiddleware, ensureOnline);
+router.use(authMiddleware);
 
 // Upload a case document to Logics
 router.post(
@@ -33,7 +38,41 @@ router.put("/:id", updateScheduledClientHandler);
 
 // Delete scheduled client by ID
 router.delete("/:id", deleteScheduledClientHandler);
+router.post("/enrichClient", async (req, res) => {
+  const client = req.body;
 
+  try {
+    const activities = await fetchActivities(client.domain, client.caseNumber);
+    console.log(
+      `✅ Activities fetched for ${client.caseNumber}:`,
+      activities?.length
+    );
+
+    const invoices = await fetchInvoices(client.domain, client.caseNumber);
+    console.log(
+      `✅ Invoices fetched for ${client.caseNumber}:`,
+      invoices?.length
+    );
+
+    const payments = await fetchPayments("TAG", client.caseNumber);
+    console.log(
+      `✅ Payments fetched for ${client.caseNumber}:`,
+      payments?.length
+    );
+
+    const enrichedClient = { ...client, invoices, payments, activities };
+    lastError = false;
+    return res.json({
+      status: "completed",
+      enrichedClient,
+    });
+  } catch (err) {
+    console.error(
+      `❌ Error enriching CaseID ${client.caseNumber}:`,
+      err.message
+    );
+  }
+});
 router.post("/", async (req, res) => {
   try {
     const token = crypto.randomBytes(24).toString("hex");

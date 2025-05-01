@@ -16,6 +16,54 @@
   box-sizing: border-box;
 }
 
+.toast {
+  position: fixed;
+  top: 60px; /* height of your navbar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  /* styling… */
+}
+.toast-info {
+  background: #007bff;
+  color: #fff;
+}
+.toast-error {
+  background: #dc3545;
+  color: #fff;
+}
+.loading-overlay {
+  position: fixed;
+  top: 60px; /* beneath navbar */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 900;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #ccc;
+  border-top-color: #444;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Ensure main-content sits under the toast and overlay */
+.main-content {
+  margin-top: 60px; /* match navbar height */
+}
+
 body {
   font-family: "Segoe UI", sans-serif;
   background-color: var(--background);
@@ -157,6 +205,24 @@ label {
   margin-bottom: 0.5rem;
   color: #222;
 }
+/* keep radios on one line, tight spacing */
+.inline-group {
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.inline-label {
+  font-weight: 500;
+  margin-right: 0.5rem;
+  flex-shrink: 0;
+}
+
+.inline-group label {
+  margin: 0 0.5rem 0 0;
+  font-weight: normal;
+}
+
+/* reuse your existing form-control & card styles from before */
 
 .scroll-box {
   background: #f9f9f9;
@@ -989,6 +1055,7 @@ label {
   display: block;
   margin: 10px auto;
 }
+/* SmartSearchFilter.css */
 
 .send-button:hover {
   background: #0056b3;
@@ -999,6 +1066,144 @@ label {
   font-weight: bold;
   color: #d9534f;
   margin-top: 10px;
+}
+
+/* SmartSearchFilter.css */
+
+.smart-search-filter {
+  width: 50ch; /* ~50 characters total */
+  padding: 1rem;
+  background: #fff;
+  border-radius: 6px;
+}
+
+/* Grid layout for every row */
+.filter-row {
+  display: grid;
+  align-items: center;
+  column-gap: 0.5rem;
+}
+
+/* — Contact‐Age row (first) needs just 2 columns: label + dropdown */
+.filter-row:first-child {
+  grid-template-columns:
+    20ch /* label width */
+    10ch /* select width */;
+}
+
+/* — All other rows: 6 columns: checkbox, label, comparator, from, dash, to */
+.filter-row:not(:first-child) {
+  grid-template-columns:
+    1.5rem /* checkbox */
+    20ch /* label */
+    10ch /* comparator (now wide enough for “Range”) */
+    10ch /* from input */
+    1ch /* dash */
+    10ch /* to input */;
+}
+/* Checkbox lives in the first 1.5rem column */
+.filter-row:not(:first-child) input[type="checkbox"] {
+  margin: 0;
+  justify-self: center; /* center it in its grid cell */
+}
+
+/* Labels occupy the second column */
+.filter-label {
+  /* no explicit width here—grid is handling it */
+  font-weight: 500;
+  margin: 0;
+}
+
+/* Contact-Age select (first row) */
+.filter-row:first-child .filter-select {
+  width: 100%; /* fill its 10ch column */
+  padding: 0.25rem;
+}
+
+/* Other comparator selects */
+.filter-row:not(:first-child) .filter-select {
+  width: 100%; /* fill its 5ch column */
+  padding: 0.25rem;
+}
+
+/* Inputs fill their grid slots */
+.filter-input {
+  width: 100%;
+  padding: 0.25rem; /* same vertical padding as .filter-select */
+  font-size: 0.95rem; /* same font size */
+  border: 1px solid #ccc; /* same border */
+  border-radius: 4px; /* same rounding */
+  background: white; /* same background */
+  box-sizing: border-box; /* include border in width/height */
+  line-height: 2.2; /* match the select’s line-height */
+}
+
+/* Dash in its own 1ch slot */
+.filter-dash {
+  display: inline-block;
+  text-align: center;
+  font-weight: bold;
+}
+
+/* Form group (label + control) */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+/* Standard form control (inputs, selects) */
+.form-control {
+  width: 100%;
+  padding: 0.5rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+/* Utility margins */
+.mr-3 {
+  margin-right: 1rem;
+}
+.mt-3 {
+  margin-top: 1rem;
+}
+.mt-4 {
+  margin-top: 1.5rem;
+}
+
+.inline-group {
+  display: flex; /* switch on flexbox */
+  flex-direction: row; /* force horizontal layout */
+  align-items: center; /* vertical center */
+  gap: 1rem; /* space between items */
+  margin-bottom: 1rem; /* keep your spacing */
+}
+
+.inline-group label,
+.inline-group .inline-label {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+}
+
+.period-results-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem; /* space between columns */
+  margin-top: 1rem; /* overall spacing above */
+}
+
+.period-column {
+  /* optional styling for each column */
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.period-column h4 {
+  margin-bottom: 0.5rem;
 }
 /* Responsive */
 @media (max-width: 768px) {

@@ -3,6 +3,7 @@ import CollapsibleNote from "../../layout/CollapsibleNote";
 import ClientContext from "../../../context/client/clientContext";
 const ClientAnalysisCard = ({ client, setExpandedIndex }) => {
   const { activities, invoices, payments } = client;
+  console.log(client);
   const { postZeroInvoice } = useContext(ClientContext);
   const filteredActivities = activities.filter((a) => {
     const subject = a.Subject?.toLowerCase() || "";

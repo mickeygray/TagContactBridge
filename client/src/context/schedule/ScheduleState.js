@@ -1,8 +1,7 @@
-// context/schedule/ScheduleState.js
 import React, { useReducer } from "react";
-import axios from "axios";
 import ScheduleContext from "./scheduleContext";
 import scheduleReducer from "./scheduleReducer";
+import { useApi } from "../../utils/api";
 
 const ScheduleState = (props) => {
   const initialState = {
@@ -14,19 +13,23 @@ const ScheduleState = (props) => {
   };
 
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
+  const api = useApi();
+  api.defaults.withCredentials = true;
 
-  // Add new scheduled client
-
-  // Fetch daily review clients (via cron-triggered backend route)
+  /**
+   * Fetch today's review lists (emailQueue, textQueue, toReview) from backend
+   */
   const fetchDailyReviews = async () => {
+    dispatch({ type: "SCHEDULE_LOADING" });
     try {
-      const res = await axios.get("/api/schedule/review-today");
+      const res = await api.get("/api/schedule/review-today");
       dispatch({
         type: "SET_DAILY_REVIEW_LISTS",
         payload: res.data.reviewList,
       });
     } catch (error) {
       console.error("❌ Error fetching daily reviews:", error);
+      dispatch({ type: "SCHEDULE_ERROR", payload: error.message });
     }
   };
 

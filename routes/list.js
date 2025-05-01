@@ -4,16 +4,16 @@ const Client = require("../models/Client");
 const {
   authMiddleware,
   requireAdmin,
-  ensureOnline,
 } = require("../middleware/authMiddleware");
 const {
   postNCOA,
   buildSchedule,
   addCreateDateClients,
+  addNewReviewedClient,
 } = require("../controllers/listController");
 
 // Protect bulk-list operations
-router.use(authMiddleware, ensureOnline, requireAdmin);
+router.use(authMiddleware, requireAdmin);
 
 // Bulk import leads into both TAG & WYNN
 // POST /api/list/postNCOA
@@ -23,9 +23,10 @@ router.post("/postNCOA", postNCOA);
 // POST /api/list/addCreateDateClients
 router.post("/addCreateDateClients", addCreateDateClients);
 
+router.post("/addNewReviewedClients", addNewReviewedClient);
 // Placeholder: build marketing schedule list
 // GET /api/list/buildSchedule
-router.get("/buildPeriod", buildSchedule);
+router.post("/buildPeriod", buildSchedule);
 
 router.get("/reviewClients", async (req, res, next) => {
   try {

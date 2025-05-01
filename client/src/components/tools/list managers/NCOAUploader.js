@@ -10,7 +10,7 @@ const NCOAUploader = () => {
   const [error, setError] = useState("");
 
   // Context functions for processing data
-  const { postList } = useContext(ListContext);
+  const { postNCOAList } = useContext(ListContext);
 
   // File upload handler
   const handleFileUpload = (e) => {
@@ -123,7 +123,7 @@ const NCOAUploader = () => {
                   };
                 });
 
-                postList(uploadedData);
+                postNCOAList(uploadedData);
                 exportToCSV(contactData);
               }}
             >

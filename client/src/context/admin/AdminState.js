@@ -1,7 +1,7 @@
 import React, { useReducer } from "react";
-import axios from "axios";
 import AdminContext from "./adminContext";
 import adminReducer from "./adminReducer";
+import { useApi } from "../../utils/api";
 
 const AdminState = ({ children }) => {
   const initialState = {
@@ -11,45 +11,59 @@ const AdminState = ({ children }) => {
   };
 
   const [state, dispatch] = useReducer(adminReducer, initialState);
+  const api = useApi();
+  api.defaults.withCredentials = true;
 
   const getRequests = async () => {
     dispatch({ type: "ADMIN_LOADING" });
-    const res = await axios.get("/api/admin/requests", {
-      withCredentials: true,
-    });
-    dispatch({ type: "SET_REQUESTS", payload: res.data });
+    try {
+      const res = await api.get("/api/admin/requests");
+      dispatch({ type: "SET_REQUESTS", payload: res.data });
+    } catch (err) {
+      dispatch({ type: "ADMIN_ERROR" });
+    }
   };
 
   const getUsers = async () => {
     dispatch({ type: "ADMIN_LOADING" });
-    const res = await axios.get("/api/admin/users", { withCredentials: true });
-    dispatch({ type: "SET_USERS", payload: res.data });
+    try {
+      const res = await api.get("/api/admin/users");
+      dispatch({ type: "SET_USERS", payload: res.data });
+    } catch (err) {
+      dispatch({ type: "ADMIN_ERROR" });
+    }
   };
 
   const inviteUser = async (inviteData) => {
+    dispatch({ type: "ADMIN_LOADING" });
     try {
-      await axios.post("/api/invite", inviteData, { withCredentials: true });
-      alert("✅ Invite sent successfully");
+      await api.post("/api/invite", inviteData);
+      // optional: dispatch success message
     } catch (err) {
-      alert(
-        "❌ Error sending invite: " +
-          (err.response?.data?.message || err.message)
-      );
+      // optional: dispatch error message
+    } finally {
+      dispatch({ type: "ADMIN_DONE" });
     }
   };
 
   const deleteUser = async (id) => {
-    await axios.delete(`/api/admin/user/${id}`, { withCredentials: true });
-    getUsers();
+    dispatch({ type: "ADMIN_LOADING" });
+    try {
+      await api.delete(`/api/admin/user/${id}`);
+      getUsers();
+    } catch (err) {
+      // handle error
+    }
   };
 
   const logoutUser = async (id) => {
-    await axios.post(
-      `/api/admin/logout-user/${id}`,
-      {},
-      { withCredentials: true }
-    );
-    getUsers();
+    dispatch({ type: "ADMIN_LOADING" });
+    try {
+      await api.post(`/api/admin/logout-user/${id}`);
+      getUsers();
+    } catch (err) {
+      // handle error
+    }
   };
 
   return (

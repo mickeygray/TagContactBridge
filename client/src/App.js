@@ -1,76 +1,102 @@
-import React from "react";
+import React, { useContext } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+
+import MessageState from "./context/message/MessageState";
+import MessageContext from "./context/message/messageContext";
 import AuthState from "./context/auth/AuthState";
-import PrivateRoute from "./utils/PrivateRoute";
-import Login from "./components/auth/Login";
-import Register from "./components/auth/Register";
-import AdminPanel from "./components/interface/AdminPanel";
-import AgentDashboard from "./components/interface/AgentDashboard";
-import Navbar from "./components/layout/Navbar";
 import AdminState from "./context/admin/AdminState";
 import ListState from "./context/list/ListState";
-import EmailState from "./context/email/EmailState";
+import ClientState from "./context/client/ClientState";
 import ScheduleState from "./context/schedule/ScheduleState";
 import TextState from "./context/text/TextState";
-import ClientState from "./context/client/ClientState";
+import EmailState from "./context/email/EmailState";
+
+import Navbar from "./components/layout/Navbar";
+import Login from "./components/auth/Login";
+import Register from "./components/auth/Register";
+import PrivateRoute from "./utils/PrivateRoute";
+import AdminPanel from "./components/interface/AdminPanel";
 import ManagementDashboard from "./components/interface/ManagementDashboard";
-function App() {
+import AgentDashboard from "./components/interface/AgentDashboard";
+import Toast from "./components/layout/Toast";
+// AppContent is rendered within all providers so it can use MessageContext
+function AppContent() {
+  const { loading, message, error, clearMessage } = useContext(MessageContext);
+
   return (
-    <AuthState>
-      <AdminState>
-        <ListState>
-          <ClientState>
-            <ScheduleState>
-              <TextState>
-                <EmailState>
-                  <Router>
-                    <Navbar />
-                    <Routes>
-                      <Route path="/login" element={<Login />} />
-                      <Route path="/invite/:token" element={<Register />} />
+    <Router>
+      <Navbar />
 
-                      <Route
-                        path="/admin"
-                        element={
-                          <PrivateRoute requiredRole="admin">
-                            <AdminPanel />
-                          </PrivateRoute>
-                        }
-                      />
+      {message && (
+        <Toast
+          title={message.title}
+          message={message.text}
+          error={error}
+          onClose={clearMessage}
+        />
+      )}
 
-                      <Route
-                        path="/management"
-                        element={
-                          <PrivateRoute requiredRole="admin">
-                            <ManagementDashboard />
-                          </PrivateRoute>
-                        }
-                      />
-                      <Route
-                        path="/unauthorized"
-                        element={
-                          <div>You are not authorized to view this page.</div>
-                        }
-                      />
+      {loading && (
+        <div className="loading-overlay">
+          <div className="spinner" />
+        </div>
+      )}
 
-                      <Route
-                        path="/agent"
-                        element={
-                          <PrivateRoute>
-                            <AgentDashboard />
-                          </PrivateRoute>
-                        }
-                      />
-                    </Routes>
-                  </Router>
-                </EmailState>
-              </TextState>
-            </ScheduleState>
-          </ClientState>
-        </ListState>
-      </AdminState>
-    </AuthState>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/invite/:token" element={<Register />} />
+
+        <Route
+          path="/admin"
+          element={
+            <PrivateRoute requiredRole="admin">
+              <AdminPanel />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/management"
+          element={
+            <PrivateRoute requiredRole="admin">
+              <ManagementDashboard />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/unauthorized"
+          element={<div>You are not authorized to view this page.</div>}
+        />
+        <Route
+          path="/agent"
+          element={
+            <PrivateRoute>
+              <AgentDashboard />
+            </PrivateRoute>
+          }
+        />
+      </Routes>
+    </Router>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <MessageState>
+      <AuthState>
+        <AdminState>
+          <ListState>
+            <ClientState>
+              <ScheduleState>
+                <TextState>
+                  <EmailState>
+                    <AppContent />
+                  </EmailState>
+                </TextState>
+              </ScheduleState>
+            </ClientState>
+          </ListState>
+        </AdminState>
+      </AuthState>
+    </MessageState>
+  );
+}

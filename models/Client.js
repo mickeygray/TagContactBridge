@@ -2,8 +2,9 @@ const mongoose = require("mongoose");
 
 const clientSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  cell: { type: String, required: true, unique: true },
+  email: { type: String, default: "" },
+  cell: { type: String, default: "" },
+
   caseNumber: { type: String, required: true, unique: true },
   initialPayment: { type: Number },
   totalPayment: { type: Number },
@@ -20,10 +21,11 @@ const clientSchema = new mongoose.Schema({
       "penaltyAbatement",
       "taxOrganizer",
       "taxDeadline",
-      "yearReview",
-      "adserv",
+      "documentsSubmitted",
+      "filingDocuments",
+      "irsContact",
+      "irsGuidelines",
     ],
-    default: "prac",
   },
   status: {
     type: String,
@@ -35,12 +37,13 @@ const clientSchema = new mongoose.Schema({
   createDate: { type: String },
   invoiceCount: { type: Number },
   lastInvoiceAmount: { type: Number },
+  lastInvoiceDate: { type: Date },
   delinquentAmount: { type: Number, default: 0 },
   delinquentDate: { type: Date },
-  reviewDate: { type: Date },
+  reviewDates: { type: Array },
   lastContactDate: { type: Date },
   invoiceCountChangeDate: { type: Date },
-  contactedThisPeriod: { type: Boolean },
-  stagesRecieved: { type: Array },
+  stagesReceived: { type: Array },
 });
+
 module.exports = mongoose.model("Client", clientSchema);

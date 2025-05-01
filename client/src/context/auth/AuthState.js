@@ -1,7 +1,7 @@
 import React, { useReducer, useEffect } from "react";
-import axios from "axios";
 import AuthContext from "./authContext";
 import AuthReducer from "./authReducer";
+import { useApi } from "../../utils/api";
 
 const AuthState = ({ children }) => {
   const initialState = {
@@ -11,54 +11,61 @@ const AuthState = ({ children }) => {
   };
 
   const [state, dispatch] = useReducer(AuthReducer, initialState);
+  const api = useApi();
+  api.defaults.withCredentials = true;
 
+  // Load current user
   const loadUser = async () => {
     try {
-      const res = await axios.get("/api/auth/me", { withCredentials: true });
+      const res = await api.get("/api/auth/me");
       dispatch({ type: "LOGIN_SUCCESS", payload: res.data });
     } catch {
       dispatch({ type: "LOGOUT" });
     }
   };
 
+  // On mount and every 5 minutes, refresh user session
   useEffect(() => {
     loadUser();
+    const interval = setInterval(loadUser, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
+  // Auto-logout if server marks user offline
   useEffect(() => {
-    const interval = setInterval(() => {
-      loadUser();
-    }, 60000); // every 5 minutes
-
-    return () => clearInterval(interval); // cleanup
-  }, []);
-  useEffect(() => {
-    if (state.user && state.user.isOnline === false) {
+    if (state.user?.isOnline === false) {
       logout();
     }
   }, [state.user]);
 
-  console.log(state.user);
+  // Login action
   const login = async (email, password) => {
-    await axios.post(
-      "/api/auth/login",
-      { email, password },
-      { withCredentials: true }
-    );
-    loadUser();
+    try {
+      await api.post("/api/auth/login", { email, password });
+      await loadUser();
+    } catch (err) {
+      // errors handled by interceptor
+    }
   };
 
+  // Logout action
   const logout = async () => {
-    await axios.post("/api/auth/logout", {}, { withCredentials: true });
+    try {
+      await api.post("/api/auth/logout");
+    } catch {
+      // ignore errors
+    }
     dispatch({ type: "LOGOUT" });
   };
+
+  // Invite validation and completion
   const validateInvite = async (token) => {
-    const res = await axios.get(`/api/invite/${token}`);
-    return res.data; // should include email and role info
+    const res = await api.get(`/api/invite/${token}`);
+    return res.data;
   };
 
   const completeInvite = async (token, password) => {
-    await axios.post(`/api/invite/${token}`, { password });
+    await api.post(`/api/invite/${token}`, { password });
   };
 
   return (

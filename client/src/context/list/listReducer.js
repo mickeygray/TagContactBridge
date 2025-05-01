@@ -10,16 +10,32 @@ export default (state, action) => {
         ...state,
       };
 
-    case "SET_FILTERED_CLIENTS":
+    case "SET_PERIOD_RESULTS":
       return {
         ...state,
-        filteredClients: action.payload,
+        verified: action.payload.verified,
+        periodInfo: action.payload.periodInfo,
+        toReview: action.payload.toReview,
+        partial: action.payload.partial,
       };
-
+    case "CLEAR_REVIEW_CLIENTS":
+      return { ...state, reviewClients: [] };
     case "SET_REVIEW_CLIENTS":
       return {
         ...state,
         reviewClients: action.payload,
+      };
+    case "SAVE_REVIEW_CLIENT":
+      return {
+        ...state,
+        newClients: action.payload,
+      };
+    case "REMOVE_REVIEW_CLIENT":
+      return {
+        ...state,
+        reviewClients: state.reviewClients.filter(
+          (c) => c.caseNumber !== action.payload
+        ),
       };
     default:
       return state;

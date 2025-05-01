@@ -1,10 +1,10 @@
 const clientReducer = (state, action) => {
   switch (action.type) {
     // Set list of enriched clients
-    case "SET_CLIENT_LIST":
+    case "ENRICH_CLIENT":
       return {
         ...state,
-        enrichedClients: action.payload,
+        enrichedClient: action.payload,
       };
 
     // Add a newly scheduled client to state

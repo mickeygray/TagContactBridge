@@ -1,81 +1,144 @@
-import React, { useReducer } from "react";
+import React, { useReducer, useContext } from "react";
 import ListContext from "./listContext";
 import listReducer from "./listReducer";
-import axios from "axios";
-
+import { useApi } from "../../utils/api";
+import MessageContext from "../../context/message/messageContext";
 const ListState = (props) => {
-  const initialState = { filteredClients: [], reviewClients: [] };
+  const initialState = {
+    reviewClients: [],
+    newClients: [],
+    verified: [],
+    toReview: [],
+    partial: [],
+    periodInfo: null,
+  };
 
   const [state, dispatch] = useReducer(listReducer, initialState);
-
-  // 3️⃣ Remove from final list
-
+  const api = useApi();
+  api.defaults.withCredentials = true;
+  const { showMessage, showError } = useContext(MessageContext);
+  /**
+   * Post NCOA-formatted lists to backend
+   */
   const postNCOAList = async (formattedData) => {
     try {
-      const config = {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      };
-
-      const res = await axios.post(`/api/list/postNCOA`, formattedData, config);
-
+      const res = await api.post("/api/list/postNCOA", formattedData);
       dispatch({ type: "POST_LEADS", payload: res.data });
 
+      const sentCount = formattedData.length;
+      const postedCount = Array.isArray(res.data.results)
+        ? res.data.results.length
+        : sentCount;
+
+      showMessage(
+        "New Prospect Upload",
+        `Posted ${postedCount} of ${sentCount} new prospects.`
+      );
       console.log("Lists posted successfully:", res.data);
-      alert("All lists have been posted successfully!");
     } catch (error) {
-      console.error(
-        "Error posting lists:",
-        error.response?.data || error.message
+      const msg = error.response?.data?.message || error.message;
+      showError(
+        "New Prospect Upload",
+        `Failed to post ${formattedData.length} leads: ${msg}`,
+        error.response?.status
       );
     }
   };
-
+  /**
+   * Build the period contact list based on filters
+   */
   const buildPeriod = async (filters) => {
     try {
-      const res = await axios.post("/api/buildPeriod", filters);
-      dispatch({ type: "SET_FILTERED_CLIENTS", payload: res.data });
+      const res = await api.post("/api/list/buildPeriod", filters);
+      dispatch({ type: "SET_PERIOD_RESULTS", payload: res.data });
+      const {
+        periodInfo: { stage, periodSize, startDate },
+      } = res.data;
+      showMessage(
+        "Period Created",
+        `Stage “${stage}” — ${periodSize} clients scheduled starting ${new Date(
+          startDate
+        ).toLocaleString()}`,
+        200
+      );
     } catch (err) {
       console.error("❌ Failed to fetch period contacts", err);
     }
   };
 
+  /**
+   * Save create-date clients in bulk
+   */
   const addCreateDateClients = async (clientsArray) => {
     try {
-      const config = { headers: { "Content-Type": "application/json" } };
-      const res = await axios.post(
-        "/api/list/addCreateDateClients",
-        { clients: clientsArray },
-        config
+      const res = await api.post("/api/list/addCreateDateClients", {
+        clients: clientsArray,
+      });
+
+      // Expecting { added: [...], flagged: [...] }
+      const { added, reviewList } = res.data;
+
+      // Update context state
+      dispatch({ type: "CLEAR_REVIEW_CLIENTS" });
+      dispatch({ type: "SET_REVIEW_CLIENTS", payload: reviewList });
+
+      // Show summary toast
+      showMessage(
+        "Client Import",
+        `Saved ${added.length} clients; ${reviewList.length} flagged for review.`,
+        200
       );
-      dispatch({ type: "SET_CLIENT_LIST", payload: res.data });
-      console.log("✅ Create-date clients saved:", res.data);
+
+      // Return raw response for callers
+      return res.data;
     } catch (error) {
-      console.error(
-        "❌ Error saving create-date clients:",
-        error.response?.data || error.message
-      );
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message;
+      showError("Client Import", `Error saving clients: ${msg}`, status);
+      throw error;
     }
   };
-
+  const removeReviewClient = (client) => {
+    dispatch({ type: "REMOVE_REVIEW_CLIENT", payload: client.caseNumber });
+  };
+  /**
+   * Fetch all clients flagged 'inReview', sorted by reviewDate
+   */
   const fetchReviewClients = async () => {
     try {
-      const res = await axios.get("/api/list/reviewClients");
-      // expects the server to return clients sorted by reviewDate
+      const res = await api.get("/api/list/reviewClients");
+      dispatch({ type: "CLEAR_REVIEW_CLIENTS" });
       dispatch({ type: "SET_REVIEW_CLIENTS", payload: res.data });
     } catch (err) {
       console.error("❌ Failed to fetch review clients", err);
     }
   };
+
+  const addNewClientFromReviewList = async (client) => {
+    try {
+      // 1) create on the server
+      await api.post("/api/list/addNewReviewedClients", client);
+      // 2) remove it from reviewClients so it disappears from the UI
+      dispatch({ type: "REMOVE_REVIEW_CLIENT", payload: client._id });
+    } catch (err) {
+      throw err;
+    }
+  };
   return (
     <ListContext.Provider
       value={{
-        filteredClients: state.filteredClients,
-        buildPeriod,
+        verified: state.verified,
+        partial: state.partial,
+        toReview: state.toReview,
+        periodInfo: state.periodInfo,
+        reviewClients: state.reviewClients,
+        newClients: state.newClients,
         postNCOAList,
-        fetchReviewClients,
+        buildPeriod,
         addCreateDateClients,
+        removeReviewClient,
+        addNewClientFromReviewList,
+        fetchReviewClients,
       }}
     >
       {props.children}

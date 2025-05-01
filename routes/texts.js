@@ -3,13 +3,12 @@ const router = express.Router();
 const sendTextMessage = require("../utils/sendTextMessage");
 const {
   authMiddleware,
-  ensureOnline,
   requireAdmin,
 } = require("../middleware/authMiddleware");
 
 const { getStats } = require("../utils/textStats");
 // Protect it
-router.use(authMiddleware, ensureOnline, requireAdmin);
+router.use(authMiddleware, requireAdmin);
 
 router.post("/send", async (req, res, next) => {
   const { messagesPayload } = req.body;

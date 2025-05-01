@@ -1,158 +1,122 @@
-import React, { useContext, useState, useEffect } from "react";
-import ListContext from "../../../context/list/listContext";
-import ClientContext from "../../../context/client/clientContext";
-import ClientAnalysisCard from "./ClientAnalysisCard";
+// ClientAnalysisList.jsx
+import React, { useState, useEffect } from "react";
+import CombinedClientCard from "./CombinedClientCard";
 
-const CARDS_PER_PAGE = 9;
+const ITEMS_PER_PAGE = 9;
 
-const getTierColor = (status) => {
-  if (/TIER 1/i.test(status)) return "tier-1";
-  if (/TIER 2/i.test(status)) return "tier-2";
-  if (/TIER 3/i.test(status)) return "tier-3";
-  if (/TIER 4/i.test(status)) return "tier-4";
-  return "tier-unknown";
+const statusClass = (status) => {
+  switch (status) {
+    case "active":
+      return "tier-1";
+    case "partial":
+      return "tier-2";
+    case "inReview":
+      return "tier-3";
+    default:
+      return "tier-unknown";
+  }
 };
 
-const ClientAnalysisList = () => {
-  const {
-    reviewClients,
-    textQueue,
-    emailQueue,
-    fetchReviewClients,
-    fetchTextQueue,
-    fetchEmailQueue,
-  } = useContext(ListContext);
-  const { runClientEnrichment } = useContext(ClientContext);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [expandedIndex, setExpandedIndex] = useState(null);
+export default function ClientAnalysisList({ toReview, partial, verified }) {
   const [view, setView] = useState("review");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [expandedId, setExpandedId] = useState(null);
 
-  // Fetch initial data based on view
+  // Map our three buckets onto keys
+  const lists = {
+    review: toReview || [],
+    partial: partial || [],
+    verified: verified || [],
+  };
+
+  const sourceList = lists[view];
+
+  // Reset page & collapse whenever we switch lists
   useEffect(() => {
-    if (view === "review") fetchReviewClients();
-    else if (view === "text") fetchTextQueue();
-    else if (view === "email") fetchEmailQueue();
+    setCurrentPage(1);
+    setExpandedId(null);
   }, [view]);
 
-  // Determine list based on selected view
-  const sourceList =
-    view === "review"
-      ? reviewClients
-      : view === "text"
-      ? textQueue
-      : emailQueue;
-
-  if (!sourceList || sourceList.length === 0) {
-    return <p className="info-text">No clients in this list.</p>;
-  }
-
-  // Sort by reviewDate if review view, otherwise keep order
-  const sortedClients =
-    view === "review"
-      ? [...sourceList].sort((a, b) => {
-          const da = a.reviewDate ? new Date(a.reviewDate) : new Date(0);
-          const db = b.reviewDate ? new Date(b.reviewDate) : new Date(0);
-          return da - db;
-        })
-      : sourceList;
-
-  // Pagination
-  const startIdx = (currentPage - 1) * CARDS_PER_PAGE;
-  const visibleClients = sortedClients.slice(
-    startIdx,
-    startIdx + CARDS_PER_PAGE
-  );
-  const totalPages = Math.ceil(sortedClients.length / CARDS_PER_PAGE);
-
-  const handleExpand = (index) => {
-    setExpandedIndex(expandedIndex === index ? null : index);
-  };
-
-  const handleEnrichment = (sourceList) => {
-    runClientEnrichment(sourceList);
-  };
+  const totalPages = Math.max(1, Math.ceil(sourceList.length / ITEMS_PER_PAGE));
+  const start = (currentPage - 1) * ITEMS_PER_PAGE;
+  const visible = sourceList.slice(start, start + ITEMS_PER_PAGE);
 
   return (
     <div className="client-list-wrapper">
+      {/* View selector */}
       <div className="list-view-controls">
         <button
           className={view === "review" ? "active" : ""}
-          onClick={() => {
-            setView("review");
-            setCurrentPage(1);
-          }}
+          onClick={() => setView("review")}
         >
           Review Clients
         </button>
         <button
-          className={view === "text" ? "active" : ""}
-          onClick={() => {
-            setView("text");
-            setCurrentPage(1);
-          }}
+          className={view === "partial" ? "active" : ""}
+          onClick={() => setView("partial")}
         >
-          Text Queue
+          Partial Clients
         </button>
         <button
-          className={view === "email" ? "active" : ""}
-          onClick={() => {
-            setView("email");
-            setCurrentPage(1);
-          }}
+          className={view === "verified" ? "active" : ""}
+          onClick={() => setView("verified")}
         >
-          Email Queue
-        </button>
-        <button className="btn btn-primary" onClick={handleEnrichment}>
-          Run Client Analysis
+          Verified Clients
         </button>
       </div>
 
-      <div className="client-list-controls">
-        <button
-          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-          disabled={currentPage === 1}
-        >
-          Prev
-        </button>
-        <span>
-          Page {currentPage} of {totalPages}
-        </span>
-        <button
-          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-          disabled={currentPage === totalPages}
-        >
-          Next
-        </button>
-      </div>
+      {/* Empty state */}
+      {sourceList.length === 0 ? (
+        <p className="info-text">No clients in this list.</p>
+      ) : (
+        <>
+          {/* Pagination controls */}
+          <div className="client-list-controls">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              Prev
+            </button>
+            <span>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </button>
+          </div>
 
-      <div className="client-list-container">
-        {visibleClients.map((client, idx) => {
-          const globalIndex = startIdx + idx;
-          const isExpanded = expandedIndex === globalIndex;
-          const tierClass = getTierColor(client.status);
-
-          return (
-            <div key={client._id} className="client-entry">
-              <div className={`client-bar ${tierClass}`}>
-                <span>{client.name || client.caseNumber}</span>
-                <button onClick={() => handleExpand(globalIndex)}>
-                  {isExpanded ? "➖" : "➕"}
-                </button>
-              </div>
-              {isExpanded && (
-                <div className="modal-card">
-                  <ClientAnalysisCard
-                    client={client}
-                    setExpandedIndex={setExpandedIndex}
-                  />
+          {/* Card grid */}
+          <div className="client-list-container">
+            {visible.map((client) => {
+              const isOpen = expandedId === client._id;
+              return (
+                <div key={client._id} className="client-entry">
+                  <div className={`client-bar ${statusClass(client.status)}`}>
+                    <span>{client.name || client.caseNumber}</span>
+                    <button
+                      onClick={() => setExpandedId(isOpen ? null : client._id)}
+                    >
+                      {isOpen ? "➖" : "➕"}
+                    </button>
+                  </div>
+                  {isOpen && (
+                    <div className="analysis-card-wrapper">
+                      <CombinedClientCard
+                        client={client}
+                        close={() => setExpandedId(null)}
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
-};
-
-export default ClientAnalysisList;
+}

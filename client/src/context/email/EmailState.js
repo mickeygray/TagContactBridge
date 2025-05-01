@@ -1,7 +1,7 @@
 import React, { useReducer } from "react";
-import axios from "axios";
 import EmailContext from "./emailContext";
 import emailReducer from "./emailReducer";
+import { useApi } from "../../utils/api";
 
 const EmailState = ({ children }) => {
   const initialState = {
@@ -9,23 +9,23 @@ const EmailState = ({ children }) => {
     sending: false,
     successMessage: null,
     errorMessage: null,
+    stats: null, // Autodrop statistics
+    // templates: [],      // Uncomment when template CRUD is enabled
   };
 
   const [state, dispatch] = useReducer(emailReducer, initialState);
+  const api = useApi();
+  api.defaults.withCredentials = true;
 
-  // Prepare email data (for DropOrganizer)
-
-  // Send emails
-  const sendTaxAdEmails = async (emailPayload) => {
+  /**
+   * Send email drop for a given domain
+   * @param {string} domain (e.g. 'taxadvocate', 'wynn', 'amity')
+   * @param {Object} payload
+   */
+  const sendEmails = async (domain, emailPayload) => {
     dispatch({ type: "SENDING_EMAILS" });
-
-    console.log(emailPayload);
-
     try {
-      const response = await axios.post(
-        "/api/emails/taxadvocate",
-        emailPayload
-      );
+      const response = await api.post(`/api/emails/${domain}`, emailPayload);
       dispatch({ type: "EMAILS_SENT", payload: response.data.message });
     } catch (error) {
       console.error("Error sending emails:", error);
@@ -33,27 +33,50 @@ const EmailState = ({ children }) => {
     }
   };
 
-  const sendWynnEmails = async (emailPayload) => {
-    dispatch({ type: "SENDING_EMAILS" });
+  // Legacy helpers (optional)
+  // const sendTaxAdEmails = (payload) => sendEmails('taxadvocate', payload);
+  // const sendWynnEmails  = (payload) => sendEmails('wynn', payload);
+  // const sendAmityEmails = (payload) => sendEmails('amity', payload);
+
+  /**
+   * Fetch autodrop email queue statistics
+   */
+  const fetchEmailStats = async () => {
+    dispatch({ type: "EMAIL_STATS_LOADING" });
     try {
-      const response = await axios.post("/api/emails/wynn", emailPayload);
-      dispatch({ type: "EMAILS_SENT", payload: response.data.message });
+      const res = await api.get("/api/emails/stats");
+      dispatch({ type: "SET_EMAIL_STATS", payload: res.data });
     } catch (error) {
-      console.error("Error sending emails:", error);
-      dispatch({ type: "EMAILS_ERROR", payload: "Failed to send emails." });
+      console.error("Error fetching email stats:", error);
+      dispatch({ type: "EMAIL_STATS_ERROR", payload: "Failed to load stats." });
     }
   };
 
-  const sendAmityEmails = async (emailPayload) => {
-    dispatch({ type: "SENDING_EMAILS" });
-    try {
-      const response = await axios.post("/api/emails/amity", emailPayload);
-      dispatch({ type: "EMAILS_SENT", payload: response.data.message });
-    } catch (error) {
-      console.error("Error sending emails:", error);
-      dispatch({ type: "EMAILS_ERROR", payload: "Failed to send emails." });
-    }
-  };
+  /**
+   * TEMPLATE CRUD (commented out until enabled)
+   */
+  // const createTemplate = async (templateData) => {
+  //   dispatch({ type: 'TEMPLATE_LOADING' });
+  //   const res = await api.post('/api/emails/templates', templateData);
+  //   dispatch({ type: 'ADD_TEMPLATE', payload: res.data });
+  // };
+  // const getTemplates = async () => {
+  //   dispatch({ type: 'TEMPLATE_LOADING' });
+  //   const res = await api.get('/api/emails/templates');
+  //   dispatch({ type: 'SET_TEMPLATES', payload: res.data });
+  // };
+  // const updateTemplate = async (id, data) => {
+  //   const res = await api.put(`/api/emails/templates/${id}`, data);
+  //   dispatch({ type: 'UPDATE_TEMPLATE', payload: res.data });
+  // };
+  // const deleteTemplate = async (id) => {
+  //   await api.delete(`/api/emails/templates/${id}`);
+  //   dispatch({ type: 'DELETE_TEMPLATE', payload: id });
+  // };
+  // const previewTemplate = async (id, context) => {
+  //   const res = await api.post(`/api/emails/templates/${id}/preview`, context);
+  //   return res.data; // HTML or text preview
+  // };
 
   return (
     <EmailContext.Provider
@@ -62,9 +85,15 @@ const EmailState = ({ children }) => {
         sending: state.sending,
         successMessage: state.successMessage,
         errorMessage: state.errorMessage,
-        sendWynnEmails,
-        sendTaxAdEmails,
-        sendAmityEmails,
+        stats: state.stats,
+        sendEmails,
+        fetchEmailStats,
+        // Template CRUD:
+        // createTemplate,
+        // getTemplates,
+        // updateTemplate,
+        // deleteTemplate,
+        // previewTemplate,
       }}
     >
       {children}

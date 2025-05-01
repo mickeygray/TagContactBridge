@@ -6,13 +6,12 @@ const sendEmail = require("../utils/sendEmail");
 const {
   authMiddleware,
   requireAdmin,
-  ensureOnline,
 } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
 // Protect all email routes
-router.use(authMiddleware, ensureOnline, requireAdmin);
+router.use(authMiddleware, requireAdmin);
 
 /**
  * Send one-off or bulk emails using Handlebars templates.
