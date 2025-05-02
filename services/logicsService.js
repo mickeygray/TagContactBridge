@@ -34,7 +34,7 @@ async function postCaseFile(domain, payload) {
 }
 
 async function uploadCaseDocument({
-  caseID,
+  caseNumber,
   comment,
   fileCategoryID,
   fileBuffer,
@@ -47,7 +47,7 @@ async function uploadCaseDocument({
   const url =
     `https://taxag.irslogics.com/publicapi/2020-02-22/documents/casedocument` +
     `?apikey=${process.env.LOGICS_API_KEY}` +
-    `&CaseID=${caseID}` +
+    `&CaseID=${caseNumber}` +
     `&Comment=${encodeURIComponent(comment)}` +
     `&FileCategoryID=${fileCategoryID}`;
 
@@ -80,7 +80,7 @@ async function fetchInvoices(domain, caseID) {
 
 async function fetchTasks(domain, caseID) {
   const { baseUrl, apiKey } = config[domain] || config.TAG;
-  const resp = await axios.get(`${baseUrl}/billing/caseinvoice`, {
+  const resp = await axios.get(`${baseUrl}/task/task`, {
     params: { apikey: apiKey, CaseID: parseInt(caseID) },
   });
   console.log(resp.data, "taskData");
@@ -135,10 +135,10 @@ async function fetchBillingSummary(domain, caseNumber) {
   }
 }
 
-async function createZeroInvoice(domain, caseID) {
+async function createZeroInvoice(domain, caseNumber) {
   const { baseUrl, apiKey } = config[domain] || config.TAG;
   const payload = {
-    caseID: parseInt(caseID),
+    caseID: parseInt(caseNumber),
     invoiceTypeID: 7,
     quantity: 1,
     unitPrice: 0,

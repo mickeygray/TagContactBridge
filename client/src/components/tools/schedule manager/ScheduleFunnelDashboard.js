@@ -1,71 +1,70 @@
 import React, { useContext, useState } from "react";
 import ScheduleContext from "../../../context/schedule/scheduleContext";
-import ScheduleForm from "./ScheduleForm";
-import ScheduleUpdater from "./ScheduleUpdater"; // New component
+import NewClientCreationForm from "./NewClientCreationForm";
+import DailyScheduleManager from "./DailyScheduleManager";
+import ClientAnalysisList from "../client review/ClientAnalysisList";
 
 const ScheduleFunnelDashboard = () => {
-  const {
-    textQueue,
-    emailQueue,
-    toReview,
-    dailySchedule,
-    periodContacts,
-    updateDailySchedule,
-  } = useContext(ScheduleContext);
-  const [viewMode, setViewMode] = useState("form"); // 'form', 'review', or 'updater'
+  const { textQueue, emailQueue, toReview } = useContext(ScheduleContext);
+  const [selectedQueue, setSelectedQueue] = useState("email");
 
-  const renderContent = () => {
-    switch (viewMode) {
-      case "form":
+  const renderQueue = () => {
+    switch (selectedQueue) {
+      case "text":
+        return <ClientAnalysisList title="📱 Text Queue" clients={textQueue} />;
+      case "review":
         return (
-          <>
-            <h2 className="mb-4">🧭 Client Scheduling Funnel</h2>
-            <ScheduleForm />
-          </>
+          <ClientAnalysisList title="🚨 Needs Review" clients={toReview} />
         );
-      case "updater":
-        return (
-          <>
-            <h2 className="mb-4">⚙️ Schedule & Contacts Updater</h2>
-            <ScheduleUpdater
-              dailySchedule={dailySchedule}
-              periodContacts={periodContacts}
-              updateDailySchedule={updateDailySchedule}
-            />
-          </>
-        );
+      case "email":
       default:
-        return null;
+        return (
+          <ClientAnalysisList title="📨 Email Queue" clients={emailQueue} />
+        );
     }
   };
 
   return (
-    <div className="container">
-      <div className="mb-3">
-        <button
-          className={`btn btn-${viewMode === "form" ? "primary" : "outline"}`}
-          onClick={() => setViewMode("form")}
-        >
-          Add New Client
-        </button>
-        <button
-          className={`btn btn-${
-            viewMode === "review" ? "primary" : "outline"
-          } ml-2"`}
-          onClick={() => setViewMode("review")}
-        >
-          View Today's Lists
-        </button>
-        <button
-          className={`btn btn-${
-            viewMode === "updater" ? "primary" : "outline"
-          } ml-2"`}
-          onClick={() => setViewMode("updater")}
-        >
-          Schedule Updater
-        </button>
+    <div className="schedule-dashboard-container">
+      <div className="top-panels">
+        <div className="panel-left">
+          <NewClientCreationForm />
+        </div>
+        <div className="panel-right">
+          <DailyScheduleManager />
+        </div>
       </div>
-      {renderContent()}
+
+      <div className="bottom-panel">
+        <div className="queue-toggle-buttons mb-4">
+          <button
+            className={`btn ${
+              selectedQueue === "email" ? "btn-primary" : "btn-outline"
+            }`}
+            onClick={() => setSelectedQueue("email")}
+          >
+            📨 Email Queue
+          </button>
+          <button
+            className={`btn ${
+              selectedQueue === "text" ? "btn-primary" : "btn-outline"
+            } ml-2`}
+            onClick={() => setSelectedQueue("text")}
+          >
+            📱 Text Queue
+          </button>
+          <button
+            className={`btn ${
+              selectedQueue === "review" ? "btn-primary" : "btn-outline"
+            } ml-2`}
+            onClick={() => setSelectedQueue("review")}
+          >
+            🚨 Review Queue
+          </button>
+        </div>
+
+        {renderQueue()}
+      </div>
     </div>
   );
 };

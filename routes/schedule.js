@@ -8,7 +8,7 @@ const crypto = require("crypto");
 const hbs = require("handlebars");
 const fs = require("fs");
 const path = require("path");
-const contactCampaignMap = require("../utils/contactCampaignMap");
+const contactCampaignMap = require("../libraries/contactCampaignMap");
 const PeriodContacts = require("../models/PeriodContacts");
 const DailySchedule = require("../models/DailySchedule");
 const {
@@ -874,9 +874,9 @@ const runTextDrop = async () => {
 };
 
 // ⏰ Run daily at 7 AM
-cron.schedule("0 3 * * 1-5", refreshReviewList);
-cron.schedule("0,30 10-16 * * 1-5", runTextDrop);
-cron.schedule("0 9 * * 1-5", runEmailDrop);
+//cron.schedule("0 3 * * 1-5", refreshReviewList);
+//cron.schedule("0,30 10-16 * * 1-5", runTextDrop);
+//cron.schedule("0 9 * * 1-5", runEmailDrop);
 // GET /api/scheduledmessages/review
 router.get("/review-today", (req, res) => {
   res.json(reviewList);

@@ -44,6 +44,7 @@ const clientSchema = new mongoose.Schema({
   lastContactDate: { type: Date },
   invoiceCountChangeDate: { type: Date },
   stagesReceived: { type: Array },
+  stagePieces: { type: [String], default: [] },
 });
 
 module.exports = mongoose.model("Client", clientSchema);

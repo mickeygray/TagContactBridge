@@ -18,6 +18,14 @@ export default (state, action) => {
         toReview: action.payload.toReview,
         partial: action.payload.partial,
       };
+    case "CLEAR_PERIOD":
+      return {
+        ...state,
+        verified: [],
+        periodInfo: null,
+        toReview: [],
+        partial: [],
+      };
     case "CLEAR_REVIEW_CLIENTS":
       return { ...state, reviewClients: [] };
     case "SET_REVIEW_CLIENTS":

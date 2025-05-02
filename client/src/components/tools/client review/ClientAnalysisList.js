@@ -1,40 +1,24 @@
 // ClientAnalysisList.jsx
 import React, { useState, useEffect } from "react";
-import CombinedClientCard from "./CombinedClientCard";
+import SingleClientCard from "./SingleClientCard";
 
 const ITEMS_PER_PAGE = 9;
 
-const statusClass = (status) => {
-  switch (status) {
-    case "active":
-      return "tier-1";
-    case "partial":
-      return "tier-2";
-    case "inReview":
-      return "tier-3";
-    default:
-      return "tier-unknown";
-  }
-};
-
-export default function ClientAnalysisList({ toReview, partial, verified }) {
+export default function ClientAnalysisList({
+  toReview = [],
+  partial = [],
+  verified = [],
+  periodInfo,
+}) {
   const [view, setView] = useState("review");
   const [currentPage, setCurrentPage] = useState(1);
-  const [expandedId, setExpandedId] = useState(null);
 
-  // Map our three buckets onto keys
-  const lists = {
-    review: toReview || [],
-    partial: partial || [],
-    verified: verified || [],
-  };
-
+  const lists = { review: toReview, partial, verified };
   const sourceList = lists[view];
 
-  // Reset page & collapse whenever we switch lists
+  // whenever we switch tabs, reset pagination
   useEffect(() => {
     setCurrentPage(1);
-    setExpandedId(null);
   }, [view]);
 
   const totalPages = Math.max(1, Math.ceil(sourceList.length / ITEMS_PER_PAGE));
@@ -45,32 +29,23 @@ export default function ClientAnalysisList({ toReview, partial, verified }) {
     <div className="client-list-wrapper">
       {/* View selector */}
       <div className="list-view-controls">
-        <button
-          className={view === "review" ? "active" : ""}
-          onClick={() => setView("review")}
-        >
+        <button className="btn btn-danger" onClick={() => setView("review")}>
           Review Clients
         </button>
-        <button
-          className={view === "partial" ? "active" : ""}
-          onClick={() => setView("partial")}
-        >
+        <button className="btn btn-warning" onClick={() => setView("partial")}>
           Partial Clients
         </button>
-        <button
-          className={view === "verified" ? "active" : ""}
-          onClick={() => setView("verified")}
-        >
+        <button className="btn btn-primary" onClick={() => setView("verified")}>
           Verified Clients
         </button>
       </div>
 
       {/* Empty state */}
-      {sourceList.length === 0 ? (
+      {visible.length === 0 ? (
         <p className="info-text">No clients in this list.</p>
       ) : (
         <>
-          {/* Pagination controls */}
+          {/* Pagination */}
           <div className="client-list-controls">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -89,31 +64,15 @@ export default function ClientAnalysisList({ toReview, partial, verified }) {
             </button>
           </div>
 
-          {/* Card grid */}
+          {/* Cards */}
           <div className="client-list-container">
-            {visible.map((client) => {
-              const isOpen = expandedId === client._id;
-              return (
-                <div key={client._id} className="client-entry">
-                  <div className={`client-bar ${statusClass(client.status)}`}>
-                    <span>{client.name || client.caseNumber}</span>
-                    <button
-                      onClick={() => setExpandedId(isOpen ? null : client._id)}
-                    >
-                      {isOpen ? "➖" : "➕"}
-                    </button>
-                  </div>
-                  {isOpen && (
-                    <div className="analysis-card-wrapper">
-                      <CombinedClientCard
-                        client={client}
-                        close={() => setExpandedId(null)}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {visible.map((client) => (
+              <SingleClientCard
+                key={client._id}
+                client={client}
+                periodInfo={periodInfo}
+              />
+            ))}
           </div>
         </>
       )}

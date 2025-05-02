@@ -1,9 +1,11 @@
 import React, { useState, useContext } from "react";
-import ScheduleContext from "../../../context/schedule/scheduleContext";
+import ClientContext from "../../../context/client/clientContext";
 
-const ScheduleForm = () => {
-  const { addScheduledClient } = useContext(ScheduleContext);
+const NewClientCreationForm = () => {
+  const { addScheduledClient, processReviewedClient, newClient } =
+    useContext(ClientContext);
   const [inputFocused, setInputFocused] = useState(false);
+
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -11,8 +13,8 @@ const ScheduleForm = () => {
     caseNumber: "",
     initialPayment: "",
     secondPaymentDate: "",
-    domain: "TAG", // TAG or WYNN
-    alertAdserv: false, // ✅ NEW field
+    domain: "TAG",
+    alertAdserv: false,
   });
 
   const handleChange = (e) => {
@@ -31,12 +33,13 @@ const ScheduleForm = () => {
     const newClient = {
       ...formData,
       saleDate: today,
-      stage: "prac", // Starting stage
+      stage: "prac",
       status: "active",
     };
 
-    addScheduledClient(newClient);
+    addScheduledClient(newClient); // now posts to /api/clients
 
+    // Reset form
     setFormData({
       name: "",
       email: "",
@@ -49,11 +52,32 @@ const ScheduleForm = () => {
     });
   };
 
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      email: "",
+      cell: "",
+      caseNumber: "",
+      initialPayment: "",
+      secondPaymentDate: "",
+      domain: "TAG",
+      alertAdserv: false,
+    });
+  };
+  const handleReviewedAction = async (client, action) => {
+    try {
+      processReviewedClient(client, action);
+      // you might dispatch or re-fetch your list here…
+      alert(`Action "${action}" applied.`);
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to apply "${action}".`);
+    }
+  };
+
   return (
     <form className="card p-4 mb-4" onSubmit={handleSubmit}>
-      <h3 className="text-xl font-semibold mb-2">
-        📅 Add New Client to Schedule
-      </h3>
+      <h3 className="text-xl font-semibold mb-2">➕ New Client Creation</h3>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <input
@@ -120,7 +144,6 @@ const ScheduleForm = () => {
         </select>
       </div>
 
-      {/* ✅ Alert Adserv checkbox */}
       <div className="mt-4">
         <label className="inline-flex items-center">
           <input
@@ -135,10 +158,66 @@ const ScheduleForm = () => {
       </div>
 
       <button type="submit" className="button primary mt-4">
-        ➕ Add Client & Send Prac Email
+        📤 Submit & Trigger Email
       </button>
+      {newClient && (
+        <div className="card p-4 mb-4 border-yellow-400 bg-yellow-50">
+          {newClient.status !== "inReview" ? (
+            <>
+              <h4 className="font-bold text-green-800">
+                ✅ Client added and Practitioner Email sent!
+              </h4>
+              <button className="button secondary mt-2" onClick={resetForm}>
+                Add another client
+              </button>
+            </>
+          ) : (
+            <>
+              <h4 className="font-bold text-red-700 mb-2">
+                🚨 Client flagged for review
+              </h4>
+              <p className="mb-2">
+                <strong>Reason:</strong>{" "}
+                {newClient.reviewMessage || "Needs manual review"}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => handleReviewedAction("prac")}
+                >
+                  Re‑send Prac Email
+                </button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => handleReviewedAction("433a")}
+                >
+                  Send 433(a) Email
+                </button>
+                <button
+                  className="btn btn-sm btn-warning"
+                  onClick={() => handleReviewedAction("delay")}
+                >
+                  Delay 60 days
+                </button>
+                <button
+                  className="btn btn-sm btn-info"
+                  onClick={() => handleReviewedAction("partial")}
+                >
+                  Mark Partial
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => handleReviewedAction("inactive")}
+                >
+                  Mark Inactive
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </form>
   );
 };
 
-export default ScheduleForm;
+export default NewClientCreationForm;

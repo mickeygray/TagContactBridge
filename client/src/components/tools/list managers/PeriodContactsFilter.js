@@ -14,7 +14,8 @@ const STAGE_OPTIONS = [
 ];
 
 export default function PeriodContactsFilter() {
-  const { buildPeriod, toReview, partial, verified } = useContext(ListContext);
+  const { buildPeriod, toReview, partial, verified, periodInfo, clearPeriod } =
+    useContext(ListContext);
 
   const [stage, setStage] = useState("");
   const [prospectReceived, setProspectReceived] = useState("");
@@ -95,11 +96,25 @@ export default function PeriodContactsFilter() {
       >
         Apply Filters
       </button>
-      <ClientAnalysisList
-        verified={verified}
-        partial={partial}
-        toReview={toReview}
-      />
+      <button
+        className="btn btn-danger mt-3"
+        disabled={!periodInfo}
+        onClick={() => clearPeriod()}
+      >
+        Period Analysis Complete
+      </button>
+      <div>
+        <br />
+        <br />
+        {periodInfo !== null && (
+          <ClientAnalysisList
+            periodInfo={periodInfo}
+            verified={verified}
+            partial={partial}
+            toReview={toReview}
+          />
+        )}
+      </div>
     </div>
   );
 }

@@ -6,12 +6,16 @@ const clientReducer = (state, action) => {
         ...state,
         enrichedClient: action.payload,
       };
-
+    case "CLEAR_ENRICHMENT":
+      return {
+        ...state,
+        enrichedClient: null,
+      };
     // Add a newly scheduled client to state
     case "ADD_SCHEDULED_CLIENT":
       return {
         ...state,
-        scheduledClients: [...state.scheduledClients, action.payload],
+        newClient: action.payload,
       };
 
     // Update an existing scheduled client

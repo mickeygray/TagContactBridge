@@ -124,6 +124,10 @@ const ListState = (props) => {
       throw err;
     }
   };
+
+  const clearPeriod = () => {
+    dispatch({ type: "CLEAR_PERIOD" });
+  };
   return (
     <ListContext.Provider
       value={{
@@ -136,6 +140,7 @@ const ListState = (props) => {
         postNCOAList,
         buildPeriod,
         addCreateDateClients,
+        clearPeriod,
         removeReviewClient,
         addNewClientFromReviewList,
         fetchReviewClients,

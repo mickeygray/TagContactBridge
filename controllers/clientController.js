@@ -1,119 +1,169 @@
+// controllers/clientController.js
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 const multer = require("multer");
-const { uploadCaseDocument } = require("../services/logicsService");
+const hbs = require("handlebars");
+const Client = require("../models/Client");
+const sendEmail = require("../utils/sendEmail");
+const interactions = require("../utils/singleClientInteractions");
+const { addAndVerifyNewClient } = require("../utils/bulkAddClientsChecks");
+const signatures = require("../libraries/emailSignatures"); // 🆕 import
 
 const upload = multer();
 
+/**
+ * POST /api/clients/uploadDocument
+ */
 async function uploadDocumentHandler(req, res, next) {
   try {
     const {
-      caseID,
+      caseNumber,
       comment = "Uploaded from mailer list",
       fileCategoryID = 1,
     } = req.body;
-    const file = req.file;
-    if (!file || !caseID) {
+    if (!req.file || !caseNumber) {
       return res.status(400).json({ error: "File and CaseID are required." });
     }
-    const data = await uploadCaseDocument({
-      caseID,
+
+    const data = await interactions.uploadDocument({
+      caseNumber,
       comment,
       fileCategoryID,
-      fileBuffer: file.buffer,
-      filename: file.originalname,
-      contentType: file.mimetype,
+      fileBuffer: req.file.buffer,
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    });
+
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/clients/enrichClient
+ */
+async function enrichClientHandler(req, res, next) {
+  try {
+    const client = req.body;
+    const { domain, caseNumber } = client;
+    if (!caseNumber) {
+      return res.status(400).json({ message: "Missing caseNumber" });
+    }
+
+    const enrichedData = await interactions.enrichClient(domain, caseNumber);
+
+    console.log(Object.keys(enrichedData), "enrichedData");
+    res.json({
+      status: "completed",
+      enrichedClient: { ...client, ...enrichedData },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/clients/zeroInvoice
+ */
+async function zeroInvoiceHandler(req, res, next) {
+  try {
+    const { domain = "TAG", caseNumber } = req.body;
+    if (!caseNumber) {
+      return res.status(400).json({ message: "Missing caseNumber" });
+    }
+    const data = await interactions.zeroInvoice(domain, caseNumber);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+async function reinsertToPeriodHandler(req, res, next) {
+  try {
+    const { clientID, periodID } = req.body;
+    if (!clientID) {
+      return res.status(400).json({ message: "Missing clientID" });
+    }
+    // Fetch either the specified period, or your “active” period if you prefer:
+    const period = periodID
+      ? await PeriodContacts.findById(periodID)
+      : await PeriodContacts.findOne({ isActive: true });
+
+    if (!period) {
+      return res.status(404).json({ message: "No active period found" });
+    }
+
+    // Only add if not already present
+    const strId = clientID.toString();
+    if (!period.createDateClientIDs.map(String).includes(strId)) {
+      period.createDateClientIDs.push(clientID);
+      await period.save();
+    }
+
+    return res.json({ success: true, period });
+  } catch (err) {
+    next(err);
+  }
+}
+/**
+ * POST /api/clients/createTask
+ */
+async function createTaskHandler(req, res, next) {
+  try {
+    const { domain = "TAG", caseNumber, subject, comments, dueDate } = req.body;
+    const data = await interactions.createTaskForClient({
+      domain,
+      caseNumber,
+      subject,
+      comments,
+      dueDate,
     });
     res.json({ success: true, data });
   } catch (err) {
     next(err);
   }
 }
-async function enrichClientsHandler(req, res, next) {
+
+/**
+ * POST /api/clients/createActivity
+ */
+async function createActivityHandler(req, res, next) {
   try {
-    const list = req.body.clientList;
-    if (!Array.isArray(list))
-      return res.status(400).json({ message: "Invalid input" });
-
-    const enriched = [];
-    let lastErr = false;
-
-    for (const c of list) {
-      const caseID = c["Case #"] || c.caseID;
-      if (!caseID) {
-        enriched.push({ ...c, status: "error", reason: "Missing CaseID" });
-        continue;
-      }
-      try {
-        const activities = await logics.fetchActivities("TAG", caseID);
-        await wait(300);
-        const invoices = await logics.fetchInvoices("TAG", caseID);
-        await wait(300);
-        const payments = await logics.fetchPayments("TAG", caseID);
-
-        enriched.push({
-          ...c,
-          activities,
-          invoices,
-          payments,
-          status: "success",
-        });
-        lastErr = false;
-      } catch (err) {
-        enriched.push({
-          ...c,
-          status: "error",
-          reason: err.response?.data?.message || err.message,
-        });
-        if (lastErr) {
-          return res.status(429).json({
-            status: "halted",
-            message: "Two consecutive errors. Try again later.",
-            enrichedClients: enriched,
-          });
-        }
-        lastErr = true;
-        await wait(5000);
-      }
-    }
-
-    res.json({ status: "completed", enrichedClients: enriched });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/** POST /api/clients/zeroInvoice */
-async function zeroInvoiceHandler(req, res, next) {
-  try {
-    const { caseID } = req.body;
-    if (!caseID) return res.status(400).json({ message: "Missing CaseID" });
-
-    const data = await logics.createZeroInvoice("TAG", caseID);
+    const { domain = "TAG", caseNumber, subject, comment } = req.body;
+    const data = await interactions.createActivityForClient({
+      domain,
+      caseNumber,
+      subject,
+      comment,
+    });
     res.json({ success: true, data });
   } catch (err) {
     next(err);
   }
 }
 
+/**
+ * CRUD: Create a new scheduled client
+ * POST /api/clients
+ */
 async function createScheduledClientHandler(req, res, next) {
   try {
-    const { caseNumber, domain = "TAG", name, email, cell, ...rest } = req.body;
+    const {
+      caseNumber,
+      domain = "TAG",
+      name,
+      email = "",
+      cell = "",
+      ...rest
+    } = req.body;
+
+    // 60‑day token
     const token = crypto.randomBytes(24).toString("hex");
-    const tokenExpiresAt = new Date();
-    tokenExpiresAt.setDate(tokenExpiresAt.getDate() + 60);
+    const tokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
-    const caseID = parseInt(caseNumber, 10);
-    let invoiceCount = 0;
-    let lastInvoiceAmount = 0;
-
-    try {
-      const invoices = await logics.fetchInvoices(domain, caseID);
-      invoiceCount = invoices.length;
-      lastInvoiceAmount = invoices.at(-1)?.Amount || 0;
-    } catch (warnErr) {
-      console.warn("⚠️ Could not fetch invoices:", warnErr.message);
-    }
-
-    const newClient = new Client({
+    // base object
+    const baseClient = {
       caseNumber,
       domain,
       name,
@@ -121,33 +171,145 @@ async function createScheduledClientHandler(req, res, next) {
       cell,
       token,
       tokenExpiresAt,
-      invoiceCount,
-      lastInvoiceAmount,
       saleDate: new Date(),
+      stagesReceived: ["prac"],
+      stagePieces: ["prac email 1"],
+      status: "active",
+      contactedThisPeriod: false,
+      activeInStage: true,
+      lastContactDate: new Date(),
       ...rest,
-    });
-    await newClient.save();
+    };
 
-    // Send initial practitioner-call email
-    const tplPath = path.join(__dirname, "../Templates/prac-call.hbs");
-    const source = fs.readFileSync(tplPath, "utf8");
-    const compiled = hbs.compile(source);
-    const host =
-      domain === "WYNN" ? "wynntaxsolutions.com" : "taxadvocategroup.com";
-    const html = compiled({
+    // run checks
+    const client = await addAndVerifySingleClient(baseClient);
+
+    if (client.status === "inReview") {
+      // send back for manual review
+      return res.status(202).json({
+        message: "Client needs review before being scheduled.",
+        client,
+      });
+    }
+
+    // save and send prac email 1
+    const saved = await new Client(client).save();
+    const tokenURL = `https://${
+      domain === "WYNN" ? "wynntaxsolutions.com" : "taxadvocategroup.com"
+    }/schedule-my-call/${token}`;
+
+    // load & render HBS
+    const tpl = fs.readFileSync(
+      path.join(
+        __dirname,
+        "../Templates/client contact emails/Prac Email 1.hbs"
+      ),
+      "utf8"
+    );
+    const html = hbs.compile(tpl)({
       name,
       caseNumber,
-      link: `https://${host}/schedule-my-call/${token}`,
+      tokenURL,
+      number: signatures[domain].number,
+      signature: signatures[domain].html,
     });
 
     await sendEmail({
-      to: email,
+      to: saved.email,
       subject: "Let’s Schedule Your Practitioner Call",
+      html,
+      domain: saved.domain,
+    });
+
+    res.status(201).json(saved);
+  } catch (err) {
+    next(err);
+  }
+}
+
+//
+// 2️⃣ Process a client that was flagged for review
+//
+// controllers/clientController.js
+async function processReviewedClientHandler(req, res, next) {
+  try {
+    const { client, action } = req.body;
+
+    if (!client) return res.status(404).json({ message: "Not found" });
+
+    const domain = client.domain;
+    let stagePiece, tplPath, subject;
+
+    switch (action) {
+      case "prac":
+        stagePiece = "Prac Email 1";
+        tplPath = path.join(
+          __dirname,
+          "../Templates/client contact emails/Prac Email 1.hbs"
+        );
+        subject = "Let’s Schedule Your Practitioner Call";
+        client.stagesReceived.push("prac");
+        client.stagePieces.push(stagePiece);
+        break;
+
+      case "433a":
+        stagePiece = "433a Email 1";
+        tplPath = path.join(
+          __dirname,
+          "../Templates/client contact emails/433a Email 1.hbs"
+        );
+        subject = "Your 433(a) Update";
+        client.stagesReceived.push("f433a");
+        client.stagePieces.push(stagePiece);
+        break;
+
+      case "delay":
+        client.createDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+        client.status = "active";
+        client.reviewDate = null;
+        await client.save();
+        return res.json({ message: "Client delayed 60 days", client });
+
+      case "inactive":
+      case "partial":
+        client.status = action;
+        client.reviewDate = null;
+        await client.save();
+        return res.json({
+          message: `Client status set to "${action}"`,
+          client,
+        });
+
+      default:
+        return res.status(400).json({ message: "Invalid action" });
+    }
+
+    // For "prac" or "433a", compile & send the email
+    const source = fs.readFileSync(tplPath, "utf8");
+    const compiled = hbs.compile(source);
+    const tokenURL = `https://${
+      domain === "WYNN" ? "wynntaxsolutions.com" : "taxadvocategroup.com"
+    }/schedule-my-call/${client.token}`;
+
+    const html = compiled({
+      name: client.name,
+      caseNumber: client.caseNumber,
+      tokenURL,
+      number: signatures[domain].number,
+      signature: signatures[domain].html,
+    });
+
+    await sendEmail({
+      to: client.email,
+      subject,
       html,
       domain,
     });
 
-    res.status(201).json(newClient);
+    client.lastContactDate = new Date();
+    await client.save();
+
+    res.json({ message: `${action} email sent`, client });
   } catch (err) {
     next(err);
   }
@@ -156,16 +318,6 @@ async function createScheduledClientHandler(req, res, next) {
 /**
  * PUT /api/clients/:id
  */
-async function updateScheduledClientHandler(req, res, next) {
-  try {
-    const updated = await Client.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    res.json(updated);
-  } catch (err) {
-    next(err);
-  }
-}
 
 /**
  * DELETE /api/clients/:id
@@ -178,12 +330,16 @@ async function deleteScheduledClientHandler(req, res, next) {
     next(err);
   }
 }
+
 module.exports = {
   uploadDocumentHandler,
+  enrichClientHandler,
   zeroInvoiceHandler,
-  enrichClientsHandler,
-  deleteScheduledClientHandler,
-  updateScheduledClientHandler,
+  createTaskHandler,
+  createActivityHandler,
+  reinsertToPeriodHandler,
   createScheduledClientHandler,
+  processReviewedClientHandler,
+  deleteScheduledClientHandler,
   upload, // multer middleware
 };

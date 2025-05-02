@@ -18,11 +18,11 @@ const getTransporter = (domain) => {
   }
 
   return nodemailer.createTransport({
-    host: "smtp.sendgrid.net",
-    port: 587,
+    host: process.env.SENDGRID_GATEWAY,
+    port: process.env.SENDGRID_PORT,
     secure: false, // TLS
     auth: {
-      user: "apikey",
+      user: process.env.SENDGRID_USER,
       pass: apiKey,
     },
   });

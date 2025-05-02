@@ -53,6 +53,7 @@ async function buildSchedule(req, res, next) {
       domain, // optional domain filter
       stage, // campaign stage name
     } = req.body;
+    console.log(req.body);
 
     const daysToMs = (d) => d * 24 * 60 * 60 * 1000;
 
@@ -267,7 +268,7 @@ async function buildSchedule(req, res, next) {
       periodInfo: {
         id: newPeriod._id,
         startDate: newPeriod.periodStartDate,
-        stage: newPeriod.creatDateStage,
+        stage,
         periodSize: newPeriod.createDateClientIDs.length,
       },
       verified,
