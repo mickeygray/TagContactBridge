@@ -113,7 +113,19 @@ const ListState = (props) => {
       console.error("❌ Failed to fetch review clients", err);
     }
   };
-
+  const addClientToPeriod = async (client, periodId) => {
+    try {
+      await api.post(`/api/list/${periodId}/clients`, {
+        clientId: client._id,
+      });
+      dispatch({
+        type: "ADD_CLIENT_TO_PERIOD",
+        payload: { periodId, clientId: client._id },
+      });
+    } catch (err) {
+      throw err;
+    }
+  };
   const addNewClientFromReviewList = async (client) => {
     try {
       // 1) create on the server
@@ -123,6 +135,10 @@ const ListState = (props) => {
     } catch (err) {
       throw err;
     }
+  };
+
+  const skipClient = (client) => {
+    dispatch({ type: "SKIP_CLIENT", payload: client._id });
   };
 
   const clearPeriod = () => {
@@ -139,6 +155,8 @@ const ListState = (props) => {
         newClients: state.newClients,
         postNCOAList,
         buildPeriod,
+        addClientToPeriod,
+        skipClient,
         addCreateDateClients,
         clearPeriod,
         removeReviewClient,

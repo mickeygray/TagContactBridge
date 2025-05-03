@@ -17,6 +17,7 @@ export default function PeriodContactsFilter() {
   const { buildPeriod, toReview, partial, verified, periodInfo, clearPeriod } =
     useContext(ListContext);
 
+  console.log(toReview);
   const [stage, setStage] = useState("");
   const [prospectReceived, setProspectReceived] = useState("");
   const [otherFilters, setOtherFilters] = useState({});

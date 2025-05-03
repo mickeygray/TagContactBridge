@@ -4,6 +4,7 @@ const {
   fetchInvoices,
   fetchBillingSummary,
   fetchActivities,
+  fetchTasks,
 } = require("../services/logicsService");
 const Client = require("../models/Client");
 
@@ -42,7 +43,38 @@ function getLastInvoiceDate(invoices = []) {
   if (!times.length) return null;
   return new Date(Math.max(...times));
 }
+function getThreeBusinessDaysAgo(from = new Date()) {
+  const OFFSETS = { 1: 5, 2: 5, 3: 5, 4: 3, 5: 3 };
+  // from.getDay(): 0=Sun,1=Mon…6=Sat
+  const offset = OFFSETS[from.getDay()] ?? 3;
+  return new Date(from.getTime() - offset * 24 * 60 * 60 * 1000);
+}
 
+// Agents whose keyword notes we treat specially
+const approvedAgents = [
+  "Eva Gray",
+  "Phil Olson",
+  "Bruce Allen",
+  "Eli Hayes",
+  "Kassy Burton",
+  "Jonathan Haro",
+  "Dani Pearson",
+  "Jake Wallace",
+];
+
+// Keywords to look for in notes
+const keywords = ["swc", "a/s", "cci", "spoke", "call", "message"];
+
+// Patterns that should trigger a do-not-contact review
+const stopPatterns = [
+  /do not (contact|call|text)/i,
+  /no a\/s/i,
+  /no adserv/i,
+  /no additional service/i,
+  /client hung up/i,
+  /does not want to (be )?contacted/i,
+  /opt out/i,
+];
 /**
  * 1️⃣ processInvoices
  *    • fetch & seed invoiceCount, lastInvoiceAmount, initialPayment
@@ -52,7 +84,7 @@ function getLastInvoiceDate(invoices = []) {
 async function processInvoices(client) {
   let invoices;
   try {
-    invoices = await fetchInvoices(client.domain, client.caseNumber);
+    invoices = await fetchInvoices(client.domain, parseInt(client.caseNumber));
   } catch (err) {
     stampReview(
       client,
@@ -72,7 +104,7 @@ async function processInvoices(client) {
 
   // derive cutoff
   const lastInvoiceDate = getLastInvoiceDate(invoices);
-  client.sinceDate = lastInvoiceDate;
+  client.sinceDate = client.sinceDate ?? lastInvoiceDate;
   client.lastInvoiceDate = lastInvoiceDate;
 
   const count = invoices.length;
@@ -118,13 +150,16 @@ async function flagAndUpdateDelinquent(client, maxTotalPayments = null) {
 
   let summary;
   try {
-    summary = await fetchBillingSummary(client.domain, client.caseNumber);
+    summary = await fetchBillingSummary(
+      client.domain,
+      parseInt(client.caseNumber)
+    );
   } catch (err) {
     stampReview(
       client,
       `[Billing] fetch error (${err.message}), flagging review`
     );
-    client.status = "inReview";
+
     return client;
   }
 
@@ -134,7 +169,6 @@ async function flagAndUpdateDelinquent(client, maxTotalPayments = null) {
   // ❗ Past‐due check
   if (pastDue > 0) {
     stampReview(client, `[Billing] PastDue=${pastDue} → flagging review`);
-    client.status = "inReview";
   }
 
   // ▶️ Now handle total‑payment vs threshold
@@ -145,33 +179,21 @@ async function flagAndUpdateDelinquent(client, maxTotalPayments = null) {
     client.totalPayment = paidAmount;
   }
   // On subsequent runs:
-  else if (paidAmount > 50000) {
-    // record the mismatch
+
+  // if it dropped — refund suspicion
+  if (paidAmount < prevPaid) {
     stampReview(
       client,
-      `[Billing] totalPayment mismatch ${prevPaid}->${paidAmount}`
+      `[Billing] paid amount decreased (${prevPaid}->${paidAmount}), possible refund`
     );
-
-    // if it dropped — refund suspicion
-    if (paidAmount < prevPaid) {
-      stampReview(
-        client,
-        `[Billing] paid amount decreased (${prevPaid}->${paidAmount}), possible refund`
-      );
-      client.status = "inReview";
-    }
-    // if above your max threshold
-    if (maxTotalPayments != null && paidAmount > maxTotalPayments) {
-      stampReview(
-        client,
-        `[Billing] paid amount ${paidAmount} exceeds maxTotalPayments=${maxTotalPayments}`
-      );
-      client.status = "inReview";
-    }
-
-    // always overwrite to newest
-    client.totalPayment = paidAmount;
   }
+  // if above your max threshold
+  if (paidAmount > 50000) {
+    stampReview(client, `[Billing] paid amount ${paidAmount} exceeds 50000`);
+  }
+
+  // always overwrite to newest
+  client.totalPayment = paidAmount;
 
   return client;
 }
@@ -181,48 +203,110 @@ async function flagAndUpdateDelinquent(client, maxTotalPayments = null) {
  *    • flags any “status changed” (outside 1s of conversion)
  *      occurring after client.sinceDate
  */
-async function reviewClientContact(client) {
+async function checkClientActivities(client) {
   const cutoff = client.sinceDate;
   if (!cutoff) return client;
 
   let activities;
   try {
-    activities = await fetchActivities(client.domain, client.caseNumber);
+    activities = await fetchActivities(
+      client.domain,
+      parseInt(client.caseNumber)
+    );
   } catch (err) {
-    stampReview(client, `[Activity] fetch error, flagging review`);
-    client.status = "inReview";
+    // API failure ⇒ immediate review
+    stampReview(client, `[Activity] fetch error: ${err.message}`);
     return client;
   }
 
   if (!Array.isArray(activities) || activities.length === 0) {
-    stampReview(client, `[Activity] no activities, flagging review`);
-    client.status = "inReview";
+    stampReview(client, `[Activity] no activities found`);
     return client;
   }
 
-  // find any “converted from prospect” times
-  const convTs = activities
+  // 1️⃣ Gather conversion timestamps (to skip adjacent status‑changed)
+  const convTimes = activities
     .filter((a) => /converted from prospect/i.test(`${a.Subject} ${a.Comment}`))
     .map((a) => new Date(a.CreatedDate).getTime());
 
-  const threshold = 1000;
+  const cutoffMs = cutoff.getTime();
+  const sinceDateMs = client.sinceDate;
+  const nowMs = Date.now();
+
+  // 2️⃣ “status changed” outside conversion window
   for (const a of activities) {
     const ts = new Date(a.CreatedDate).getTime();
-    if (ts <= cutoff.getTime()) continue;
+    if (ts <= cutoffMs) continue;
     const txt = `${a.Subject} ${a.Comment}`.toLowerCase();
     if (!txt.includes("status changed")) continue;
-    // skip if near a conversion event
-    if (convTs.some((c) => Math.abs(c - ts) <= threshold)) {
-      continue;
-    }
+    // skip if within conversionWindowMs of a conversion event
+    if (convTimes.some((c) => Math.abs(c - ts) <= 1000)) continue;
+
+    // genuine status change ⇒ review
+    const when = new Date(ts).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    if (new Date(a.CreatedDate) < new Date(client.sinceDate)) continue;
     stampReview(
       client,
-      `[Activity] genuine status change at ${new Date(ts).toISOString()}`
+      `[Activity] status change message ${a.Subject} on ${when} `
     );
-    client.status = "inReview";
+    return client;
+  }
+
+  // 3️⃣ “converted to prospect” downgrade (anytime)
+  if (
+    activities.some(
+      (a) =>
+        /converted to prospect/i.test(`${a.Subject} ${a.Comment}`) &&
+        new Date(a.CreatedDate) > new Date(client.sinceDate)
+    )
+  ) {
+    stampReview(client, `[Activity] converted to prospect`);
+    return client;
+  }
+
+  // 4️⃣ Keyword note by approved agent within last 3 business days + no future task
+  for (const a of activities) {
+    const ts = new Date(a.CreatedDate).getTime();
+    if (ts < sinceDateMs) continue;
+    if (!approvedAgents.includes(a.CreatedBy)) continue;
+    const txt = `${a.Subject} ${a.Comment}`.toLowerCase();
+    if (!keywords.some((kw) => txt.includes(kw))) continue;
+
+    let tasks = [];
+    try {
+      tasks = await fetchTasks(client.domain, parseInt(client.caseNumber));
+    } catch {
+      tasks = [];
+    }
+    const hasFuture =
+      Array.isArray(tasks) &&
+      tasks.some((t) => new Date(t.DueDate).getTime() > nowMs);
+    if (!hasFuture) {
+      stampReview(
+        client,
+        `[Activity] keyword note by ${a.CreatedBy} without future task`
+      );
+      return client;
+    }
     break;
   }
 
+  // 5️⃣ Explicit “do-not-contact” patterns
+  for (const a of activities) {
+    const txt = `${a.Subject} ${a.Comment}`;
+    if (stopPatterns.some((rx) => rx.test(txt))) {
+      stampReview(client, `[Activity] do-not-contact language detected`);
+      return client;
+    }
+  }
+
+  // ❗ No flags → leave unchanged
   return client;
 }
 
@@ -230,38 +314,85 @@ async function reviewClientContact(client) {
  * Bulk‐verify a list of fresh clients.
  * Returns { added, reviewList }.
  */
-async function addVerifiedClientsAndReturnReviewList(rawClients) {
-  const toSave = [];
-  const reviewList = [];
+async function addVerifiedClientsAndReturnUpdatedLists(freshClients) {
+  const toReview = [];
+  const partial = [];
+  const verified = [];
+  const bulkOps = [];
 
-  for (const data of rawClients) {
+  for (const data of freshClients) {
+    // clone incoming data
     let client = { ...data };
-
-    // 1️⃣ invoices → sets client.sinceDate
+    console.log(client);
+    // 1️⃣ Invoice processing (also stamps client.sinceDate & may flag)
     client = await processInvoices(client);
 
-    // 2️⃣ delinquent
+    // 2️⃣ Delinquent check (since client.sinceDate)
     client = await flagAndUpdateDelinquent(client);
 
-    // 3️⃣ activity
-    client = await reviewClientContact(client);
+    // 3️⃣ Activity review (since client.sinceDate)
+    client = await checkClientActivities(client);
 
-    if (client.status === "inReview") {
-      reviewList.push(client);
+    // 4️⃣ Three‐strike & status/partial logic
+    const today = new Date().toISOString().slice(0, 10);
+    const dates = Array.isArray(client.reviewDates)
+      ? Array.from(new Set(client.reviewDates))
+      : [];
+    const strikeCnt = dates.length;
+
+    if (strikeCnt >= 3) {
+      // reset their stamps and force review
+      client.reviewDates = [];
+      client.reviewMessages.push(
+        `[Review Warning] ${client.caseNumber} has exceeded three reviews. Manual follow-up required.`
+      );
+      client.status = "inReview";
+      toReview.push(client);
+    } else if (client.status === "partial") {
+      partial.push(client);
+    } else if (
+      Array.isArray(client.reviewMessages) &&
+      client.reviewMessages.length
+    ) {
+      // any other flagged message
+      toReview.push(client);
     } else {
-      toSave.push(client);
+      // no flags today → good to go
+      verified.push(client);
     }
+
+    // 5️⃣ Persist all inspection fields in one bulkWrite
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: client._id },
+        update: {
+          $set: {
+            status: client.status,
+            reviewDates: client.reviewDates,
+            reviewMessages: client.reviewMessages,
+            invoiceCount: client.invoiceCount,
+            lastInvoiceAmount: client.lastInvoiceAmount,
+            lastInvoiceDate: client.lastInvoiceDate,
+            totalPayment: client.totalPayment,
+            delinquentAmount: client.delinquentAmount,
+            delinquentDate: client.delinquentDate,
+          },
+        },
+      },
+    });
   }
 
-  const added = toSave.length ? await Client.insertMany(toSave) : [];
+  if (bulkOps.length) {
+    await Client.bulkWrite(bulkOps);
+  }
 
-  return { added, reviewList };
+  return { toReview, partial, verified };
 }
 
 module.exports = {
   stampReview,
   processInvoices,
   flagAndUpdateDelinquent,
-  reviewClientContact,
-  addVerifiedClientsAndReturnReviewList,
+  checkClientActivities,
+  addVerifiedClientsAndReturnUpdatedLists,
 };

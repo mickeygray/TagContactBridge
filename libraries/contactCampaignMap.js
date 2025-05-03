@@ -1,4 +1,4 @@
-const contactCampaignMap = {
+module.exports = {
   // 🔹 NEW CLIENTS
   saleDate: {
     prac: {

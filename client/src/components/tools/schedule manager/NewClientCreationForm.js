@@ -176,10 +176,12 @@ const NewClientCreationForm = () => {
               <h4 className="font-bold text-red-700 mb-2">
                 🚨 Client flagged for review
               </h4>
-              <p className="mb-2">
-                <strong>Reason:</strong>{" "}
-                {newClient.reviewMessage || "Needs manual review"}
-              </p>
+              {newClient.reviewMessages &&
+                newClient.reviewMessages.map((m, i) => (
+                  <p>
+                    <strong>Reason {i + 1}:</strong> {m}
+                  </p>
+                ))}
               <div className="flex flex-wrap gap-2">
                 <button
                   className="btn btn-sm btn-primary"

@@ -80,7 +80,7 @@ const ClientState = (props) => {
    */
   const processReviewedClient = async (client, action) => {
     try {
-      const res = await api.put(`/api/clients/${id}`, { client, action });
+      const res = await api.post(`/api/clients/review`, { client, action });
       dispatch({ type: "UPDATE_SCHEDULED_CLIENT", payload: res.data });
     } catch (error) {
       console.error("❌ Error updating scheduled client:", error);

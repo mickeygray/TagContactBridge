@@ -3,16 +3,6 @@ const mongoose = require("mongoose");
 const periodContactsSchema = new mongoose.Schema({
   createDateStage: {
     type: String,
-    enum: [
-      "update433a",
-      "penaltyAbatement",
-      "taxOrganizer",
-      "taxDeadline",
-      "documentsSubmitted",
-      "filingDocuments",
-      "irsContact",
-      "irsGuidelines",
-    ],
   },
   createDateClientIDs: {
     type: [String], // Just IDs; full logic runs from the client model

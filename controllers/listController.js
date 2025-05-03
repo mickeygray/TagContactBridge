@@ -134,46 +134,57 @@ async function buildSchedule(req, res, next) {
       } = client;
 
       // reset any old message
-      delete client.reviewMessage;
-
+      const reviewMessages = [];
       // 1️⃣ Must have a createDate
       if (!createDate) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: missing createDate`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: missing createDate`
+        );
         return client;
       }
 
       // 2️⃣ Reviewed too recently?
       if (hasRecentReview(reviewDates)) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: reviewed within last 3 business days.`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: reviewed within last 3 business days.`
+        );
         return client;
       }
 
       // 3️⃣ If they’ve already seen this stage and we’re not re-sending it, skip
       if (prospectReceived === false && stagesReceived.includes(stage)) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: already received stage '${stage}'`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: already received stage '${stage}'`
+        );
         return client;
       }
 
       // 4️⃣ Already flagged delinquent?
       if (delinquentAmount > 0) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: already delinquent`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: already delinquent`
+        );
         return client;
       }
 
       // 5️⃣ “Three-strikes” rule
       if (reviewDates.length >= 3) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: 3+ prior reviewDates`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: 3+ prior reviewDates`
+        );
         return client;
       }
 
       // 6️⃣ Already in any active period?
       if (excludedIds.has(String(_id))) {
-        client.reviewMessage = `[buildSchedule] Skipping ${caseNumber}: already in a period`;
+        reviewMessages.push(
+          `[buildSchedule] Skipping ${caseNumber}: already in a period`
+        );
         return client;
       }
 
       // ✅ passed all redundancy checks
-      return client;
+      return { ...client, reviewMessages };
     }
 
     // 4️⃣ Resolve “maxTotalPayments” if the user passed either a number or an object
@@ -225,6 +236,8 @@ async function buildSchedule(req, res, next) {
     // 6️⃣ Fire it
     const rawClients = await Client.find(baseQuery).lean();
     // 5️⃣ Fetch matching clients
+
+    console.log(rawClients, "RAWWWWW");
     const annotated = rawClients.map((c) =>
       redundancyFilter(c, { prospectReceived, stage })
     );
@@ -255,11 +268,10 @@ async function buildSchedule(req, res, next) {
     }
     // 8️⃣ Upsert your PeriodContacts document
     const newPeriod = await PeriodContacts.create({
-      creatDateStage: stage,
+      createDateStage: req.body.stage,
       periodStartDate: getNext3AM(), // tomorrow
       filters: req.body, // snapshot
       createDateClientIDs: verified.map((v) => v._id),
-      isActive: true,
     });
 
     // 9️⃣ Respond to the front end
@@ -319,9 +331,35 @@ async function addNewReviewedClient(req, res, next) {
   }
 }
 
+async function addClientToPeriodHandler(req, res, next) {
+  try {
+    const { periodId } = req.params;
+    const { clientId } = req.body;
+
+    const period = await PeriodContacts.findById(periodId);
+    if (!period) {
+      return res.status(404).json({ message: "Period not found" });
+    }
+
+    // avoid duplicates
+    if (!period.createDateClientIDs.some((id) => id.toString() === clientId)) {
+      period.createDateClientIDs.push(clientId);
+      await period.save();
+    }
+
+    res.json({
+      message: `Client ${clientId} added to period ${periodId}`,
+      periodIds: period.createDateClientIDs,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   postNCOA,
   addCreateDateClients,
   buildSchedule,
   addNewReviewedClient,
+  addClientToPeriodHandler,
 };

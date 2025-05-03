@@ -13,7 +13,9 @@ export const NewClientReviewCard = ({ client }) => {
 
   const handleAdd = async () => {
     try {
-      await addNewClientFromReviewList(client);
+      const { reviewDates, reviewMessages, ...newClient } = client;
+      newClient.status = "active";
+      await addNewClientFromReviewList(newClient);
       showMessage(
         "New Client Review",
         `Client ${client.caseNumber} added successfully.`,
@@ -49,11 +51,12 @@ export const NewClientReviewCard = ({ client }) => {
           {client.domain}
         </p>
 
-        {client.reviewMessage && (
-          <p>
-            <strong>Reason:</strong> {client.reviewMessage}
-          </p>
-        )}
+        {client.reviewMessages &&
+          client.reviewMessages.map((m, i) => (
+            <p>
+              <strong>Reason {i + 1}:</strong> {m}
+            </p>
+          ))}
         <div className="card-actions">
           <button onClick={handleAdd} className="btn btn-sm btn-success">
             Add Anyway
@@ -79,7 +82,7 @@ const NewClientReviewList = () => {
   if (!reviewClients || reviewClients.length === 0) {
     return null;
   }
-
+  console.log(reviewClients);
   return (
     <div className="mt-4">
       <h4>⚠️ Clients Needing Review</h4>

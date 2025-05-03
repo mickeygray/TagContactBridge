@@ -25,7 +25,7 @@ router.put(
 );
 // scheduled-client CRUD
 router.post("/", ctrl.createScheduledClientHandler);
-router.put("/:id", ctrl.processReviewedClientHandler);
+router.post("/review", ctrl.processReviewedClientHandler);
 router.delete("/:id", ctrl.deleteScheduledClientHandler);
 
 module.exports = router;

@@ -15,6 +15,7 @@ export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
   const handleAddToPeriod = async () => {
     try {
       await addClientToPeriod(client, periodInfo.id);
+      skipClient(client);
       showMessage(
         "Period",
         `Added ${client.caseNumber} to the current period.`,
@@ -32,6 +33,7 @@ export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
   const handleDelete = async () => {
     try {
       await deleteClient(client._id);
+      skipClient(client);
       showMessage("Client", `Deleted client ${client.caseNumber}.`, 200);
     } catch (err) {
       showError(
@@ -50,6 +52,7 @@ export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
   const handleUpdateStatus = async (newStatus) => {
     try {
       await updateClientStatus(client._id, newStatus);
+      skipClient(client);
       showMessage("Status", `Set ${client.caseNumber} to "${newStatus}".`, 200);
     } catch (err) {
       showError(
@@ -77,11 +80,12 @@ export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
           <strong>Domain:</strong> {client.domain}
         </p>
 
-        {client.reviewMessage && (
-          <p>
-            <strong>Reason:</strong> {client.reviewMessage}
-          </p>
-        )}
+        {client.reviewMessages &&
+          client.reviewMessages.map((m, i) => (
+            <p>
+              <strong>Reason {i + 1}:</strong> {m}
+            </p>
+          ))}
 
         <div className="card-actions">
           <button onClick={handleAnalyze} className="btn btn-sm btn-info">

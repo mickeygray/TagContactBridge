@@ -33,6 +33,14 @@ const ScheduleState = (props) => {
     }
   };
 
+  const buildDailySchedule = async () => {
+    const res = await api.post("/api/schedule/build");
+    dispatch({
+      type: "SET_DAILY_REVIEW_LISTS",
+      payload: res.data,
+    });
+  };
+
   return (
     <ScheduleContext.Provider
       value={{
@@ -42,6 +50,7 @@ const ScheduleState = (props) => {
         loading: state.loading,
         error: state.error,
         fetchDailyReviews,
+        buildDailySchedule,
       }}
     >
       {props.children}

@@ -11,6 +11,8 @@ const path = require("path");
 const contactCampaignMap = require("../libraries/contactCampaignMap");
 const PeriodContacts = require("../models/PeriodContacts");
 const DailySchedule = require("../models/DailySchedule");
+
+const ctrl = require("../controllers/scheduleController");
 const {
   authMiddleware,
   requireAdmin,
@@ -884,4 +886,6 @@ router.get("/review-today", (req, res) => {
 router.get("/email-today", (req, res) => {
   res.json(results);
 });
+
+router.post("/build", ctrl.buildDailySchedule);
 module.exports = router;
