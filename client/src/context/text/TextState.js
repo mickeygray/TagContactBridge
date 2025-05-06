@@ -29,7 +29,7 @@ const TextState = (props) => {
 
     dispatch({ type: "TEXT_SENDING" });
     try {
-      const response = await api.post("/api/messages/", { messagesPayload });
+      const response = await api.post("/api/texts/send", { messagesPayload });
       dispatch({ type: "TEXT_SENT", payload: response.data.message });
       console.log("✅ Text messages sent successfully:", response.data);
     } catch (error) {

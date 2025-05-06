@@ -9,18 +9,22 @@ const {
 const { getStats } = require("../utils/textStats");
 // Protect it
 router.use(authMiddleware, requireAdmin);
-
 router.post("/send", async (req, res, next) => {
   const { messagesPayload } = req.body;
   if (!Array.isArray(messagesPayload)) {
-    return res.status(400).json({ message: "Invalid payload" });
+    return res
+      .status(400)
+      .json({ message: "Invalid payload – expected messagesPayload array" });
   }
-  const stats = getStats();
+
   try {
-    // Fire off all sends in parallel (or with a small concurrency cap)
-    const results = await Promise.all(messagesPayload.map(sendTextMessage));
-    const stats = getStats();
-    res.json({ results, stats });
+    const results = [];
+    // send them one by one (you can parallelize with Promise.all, but let's keep it simple)
+    for (const msg of messagesPayload) {
+      const outcome = await sendTextMessage(msg);
+      results.push(outcome);
+    }
+    return res.json({ results });
   } catch (err) {
     next(err);
   }

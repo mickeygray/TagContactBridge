@@ -1,7 +1,7 @@
 import React, { useState, useContext } from "react";
 import { csv } from "csvtojson";
 import TextContext from "../../../context/text/textContext";
-import ListContext from "../../../context/list/listContext";
+
 const predefinedMessages = [
   {
     name: "Payment Reminder",
@@ -47,274 +47,151 @@ const predefinedMessages = [
 
 const TextMessageSender = () => {
   const { sendTextMessage } = useContext(TextContext);
-  const { contactList } = useContext(ListContext);
-  const [useContactList, setUseContactList] = useState(false);
 
   const [uploadedList, setUploadedList] = useState([]);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [sending, setSending] = useState(false);
-  const [message, setMessage] = useState("");
-  const normalizeContactList = () => {
-    return contactList
-      .map((entry) => {
-        const name = entry.name || entry.Name || entry["Full Name"] || "Client";
+  const [feedback, setFeedback] = useState("");
 
-        const formattedName = name
-          .split("(")[0]
-          .trim()
-          .split(" ")[0]
-          .toLowerCase()
-          .replace(/\b\w/g, (char) => char.toUpperCase());
-
-        return {
-          name: formattedName,
-          phoneNumber:
-            entry.cell ||
-            entry.Cell ||
-            entry.home ||
-            entry.Home ||
-            entry.WorkPhone ||
-            "",
-          pastDueAmount:
-            parseFloat(
-              entry.lastInvoiceAmount || entry["Last Invoice Amount"]
-            ) || "",
-        };
-      })
-      .filter((e) => e.phoneNumber);
-  };
-
-  // ✅ **Handle CSV Upload**
-  // ✅ Format name properly: Sentence Case & Remove Extra Data
-  const formatName = (name) => {
-    return name
-      .split("(")[0] // Remove everything after "("
+  // Format first name properly
+  const formatName = (name) =>
+    name
+      .split("(")[0]
       .trim()
-      .split(" ")[0] // Get only the first word (assumed first name)
+      .split(" ")[0]
       .toLowerCase()
-      .replace(/\b\w/g, (char) => char.toUpperCase()); // Capitalize first letter
-  };
+      .replace(/\b\w/g, (c) => c.toUpperCase());
 
-  // ✅ Handle CSV Upload
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
-    reader.onload = async (e) => {
+    reader.onload = async (ev) => {
       try {
-        const cleanedContent = e.target.result.replace(/\u0000/g, "");
-        const jsonData = await csv().fromString(cleanedContent);
-
-        const processedData = jsonData.map((row) => {
-          const rowTrimmed = Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [
-              key.replace(/\s+/g, "").toLowerCase(), // Normalize key
-              value,
-            ])
-          );
-
-          return {
-            name: formatName(rowTrimmed.name || ""), // ✅ Format name
-            phoneNumber: rowTrimmed.cell?.trim() || "",
-            pastDueAmount: rowTrimmed.pastdueamount
-              ? parseFloat(rowTrimmed.pastdueamount).toFixed(2) // ✅ Ensure two decimal places
-              : "",
-          };
-        });
-
-        const filteredData = processedData.filter((entry) => entry.phoneNumber);
-        setUploadedList(filteredData);
-      } catch (error) {
-        console.error("Error processing CSV:", error);
-        alert("Error processing the uploaded file.");
+        const content = ev.target.result.replace(/\u0000/g, "");
+        const rows = await csv().fromString(content);
+        const processed = rows
+          .map((row) => {
+            const name = formatName(row["Name"] || row.name || "");
+            const phone = (row["Cell"] || row.cell || "")
+              .trim()
+              .replace(/\D/g, "");
+            const pastDue = row["PastDue"] || row.pastdueamount || "";
+            return phone
+              ? { name, phoneNumber: phone, pastDueAmount: pastDue }
+              : null;
+          })
+          .filter(Boolean);
+        setUploadedList(processed);
+        setFeedback(`✅ Loaded ${processed.length} contacts`);
+      } catch (err) {
+        console.error(err);
+        setFeedback("❌ Failed to parse CSV");
       }
     };
-
     reader.readAsText(file);
   };
 
-  // ✅ **Set Message from Dropdown**
   const handleSelectMessage = (e) => {
-    const selected = predefinedMessages.find(
-      (msg) => msg.name === e.target.value
-    );
-    if (!selected) return;
-
-    setSelectedMessage(selected);
-
-    // If no uploaded list, fall back to contactList and normalize
-    if (uploadedList.length === 0 && contactList.length > 0) {
-      const normalized = contactList
-        .map((entry) => {
-          const name =
-            entry.name || entry.Name || entry["Full Name"] || "Client";
-
-          const formattedName = name
-            .split("(")[0]
-            .trim()
-            .split(" ")[0]
-            .toLowerCase()
-            .replace(/\b\w/g, (char) => char.toUpperCase());
-
-          return {
-            name: formattedName,
-            phoneNumber:
-              entry.cell ||
-              entry.Cell ||
-              entry.home ||
-              entry.Home ||
-              entry.WorkPhone ||
-              "",
-            pastDueAmount:
-              parseFloat(
-                entry.lastInvoiceAmount || entry["Last Invoice Amount"]
-              ) || "",
-          };
-        })
-        .filter((e) => e.phoneNumber);
-
-      setUploadedList(normalized); // now "uploadedList" holds a fully usable fallback list
-    }
+    const msg = predefinedMessages.find((m) => m.name === e.target.value);
+    setSelectedMessage(msg || null);
   };
 
-  // ✅ **Generate Message Preview**
-  const generatePreviewMessage = (recipient) => {
-    let message = selectedMessage.text;
-
-    // Replace {name} placeholder if name exists
-    message = message.replace("{name}", recipient.name || "");
-
-    // Replace {pastDueAmount} placeholder if pastDueAmount exists
-    message = message.replace(
-      "{pastDueAmount}",
-      recipient.pastDueAmount ? `$${recipient.pastDueAmount}` : ""
-    );
-
-    return message;
+  const generateMessage = ({ name, pastDueAmount }) => {
+    return selectedMessage.text
+      .replace("{name}", name)
+      .replace("{pastDueAmount}", pastDueAmount ? `$${pastDueAmount}` : "");
   };
 
-  // ✅ **Handle Send Messages (Calls `sendTextMessage`)**
-  const handleSendTextMessages = async () => {
+  const handleSend = async () => {
     if (!selectedMessage) {
-      setMessage("⚠️ Please select a message.");
+      setFeedback("⚠️ Please select a text template");
       return;
     }
-
-    const baseList =
-      uploadedList.length > 0 ? uploadedList : normalizeContactList();
-
-    if (baseList.length === 0) {
-      setMessage("⚠️ No recipients found.");
+    if (uploadedList.length === 0) {
+      setFeedback("⚠️ Upload at least one contact first");
       return;
     }
 
     setSending(true);
-    setMessage("");
-
-    const messagesPayload = baseList.map((recipient) => ({
-      trackingNumber: selectedMessage.trackingNumber,
-      phoneNumber: recipient.phoneNumber,
-      message: generatePreviewMessage(recipient),
-    }));
-
+    setFeedback("");
     try {
-      await sendTextMessage(messagesPayload);
-      setMessage("✅ Messages sent successfully.");
-    } catch (error) {
-      console.error("❌ Error sending messages:", error);
-      setMessage("❌ An error occurred while sending messages.");
+      const payload = uploadedList.map((r) => ({
+        trackingNumber: selectedMessage.trackingNumber,
+        phoneNumber: r.phoneNumber,
+        message: generateMessage(r),
+      }));
+      await sendTextMessage(payload);
+      setFeedback("✅ Messages sent successfully");
+      setUploadedList([]); // clear after send
+      setSelectedMessage(null);
+    } catch (err) {
+      console.error(err);
+      setFeedback("❌ Error sending messages");
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <div className="card text-sender-container">
-      <h3 className="title">📩 Bulk Text Message Sender</h3>
-      {/* ✅ Choose List Source */}
-      {contactList.length > 0 && (
-        <div className="form-group radio-group">
-          <h4>📂 Choose List Source:</h4>
-          <label>
-            <input
-              type="radio"
-              checked={!useContactList}
-              onChange={() => setUseContactList(false)}
-            />{" "}
-            Use Uploaded List
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={useContactList}
-              onChange={() => setUseContactList(true)}
-            />{" "}
-            Use Contact List ({contactList.length} entries)
-          </label>
-        </div>
-      )}
+    <div className="card p-4 text-sender-container">
+      <h3 className="text-xl font-semibold mb-4">📩 Bulk Text Sender</h3>
 
-      {/* Upload CSV */}
-      <div className="form-group">
-        <label>📂 Upload CSV File:</label>
+      {/* CSV Upload */}
+      <div className="form-group mb-4">
+        <label className="block mb-2">📂 Upload CSV:</label>
         <input
           type="file"
           accept=".csv"
           onChange={handleFileUpload}
-          className="file-input"
+          className="input"
         />
       </div>
 
-      {/* Select Predefined Message */}
-      <div className="form-group">
-        <label>✍️ Select Message:</label>
-        <select onChange={handleSelectMessage} className="input-field">
-          <option value="">Select a Message</option>
-          {predefinedMessages.map((msg) => (
-            <option key={msg.name} value={msg.name}>
-              {msg.name}
+      {/* Message Selector */}
+      <div className="form-group mb-4">
+        <label className="block mb-2">✍️ Select Template:</label>
+        <select
+          value={selectedMessage?.name || ""}
+          onChange={handleSelectMessage}
+          className="input"
+        >
+          <option value="">-- Choose a Message --</option>
+          {predefinedMessages.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.name}
             </option>
           ))}
         </select>
       </div>
 
-      {/* Message Preview */}
-      {/* ✅ Message Preview */}
-      <div className="preview-section">
-        <h4>🔍 Message Preview</h4>
-        {(() => {
-          const baseList = useContactList
-            ? normalizeContactList()
-            : uploadedList.length > 0
-            ? uploadedList
-            : normalizeContactList();
-
-          return baseList.length > 0 ? (
-            <ul>
-              {baseList.slice(0, 5).map((recipient, index) => (
-                <li key={index}>
-                  <strong>{recipient.name}:</strong>{" "}
-                  {generatePreviewMessage(recipient)}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No recipients available.</p>
-          );
-        })()}
-      </div>
+      {/* Preview first 5 */}
+      {uploadedList.length > 0 && selectedMessage && (
+        <div className="preview-section mb-4">
+          <h4 className="font-semibold mb-2">🔍 Preview</h4>
+          <ul className="list-disc pl-5">
+            {uploadedList.slice(0, 5).map((r, i) => (
+              <li key={i}>
+                <strong>{r.name}:</strong> {generateMessage(r)}
+              </li>
+            ))}
+            {uploadedList.length > 5 && (
+              <li>…and {uploadedList.length - 5} more</li>
+            )}
+          </ul>
+        </div>
+      )}
 
       {/* Send Button */}
       <button
-        className="button primary send-button"
-        onClick={handleSendTextMessages}
-        disabled={sending}
+        className="button primary"
+        onClick={handleSend}
+        disabled={sending || !selectedMessage || uploadedList.length === 0}
       >
-        {sending ? "🚀 Sending Messages..." : "📨 Send Messages"}
+        {sending ? "🚀 Sending…" : "📨 Send Messages"}
       </button>
 
-      {message && <p className="message">{message}</p>}
+      {feedback && <p className="mt-3 text-sm">{feedback}</p>}
     </div>
   );
 };

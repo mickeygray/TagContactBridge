@@ -50,6 +50,21 @@ const assignContactMethodAndStagePiece = async (
     );
     return clients
       .map((client) => {
+        if (client.autoPOA) {
+          console.log(`[processClientList] Auto‑POA for ${client.caseNumber}`);
+          client.contactType = "email";
+          client.stagePiece = "POA Email 1";
+          client.stagesReceived = [
+            ...new Set([...(client.stagesReceived || []), "poa"]),
+          ];
+          client.stagePieces = [
+            ...new Set([...(client.stagePieces || []), "POA Email 1"]),
+          ];
+          client.contactedThisPeriod = false;
+          // clear the flag so we don’t re‑apply
+          delete client.autoPOA;
+          return client;
+        }
         if (client.contactedThisPeriod) {
           console.log(
             `[processClientList] Skipping ${
@@ -338,11 +353,9 @@ async function buildDailySchedule(req, res) {
     // ✅ Final response
     return res.status(200).json({
       message: "Daily schedule built",
-      counts: {
-        emailQueue: emailQueue.length,
-        textQueue: textQueue.length,
-        review: toReview.length,
-      },
+      emailQueue,
+      textQueue,
+      toReview,
     });
   } catch (err) {
     //console.error("❌ Error in buildDailySchedule:", err);

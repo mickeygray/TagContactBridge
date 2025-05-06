@@ -236,13 +236,16 @@ async function checkClientActivities(client) {
   // 2️⃣ “status changed” outside conversion window
   for (const a of activities) {
     const ts = new Date(a.CreatedDate).getTime();
-    if (ts <= cutoffMs) continue;
-    const txt = `${a.Subject} ${a.Comment}`.toLowerCase();
-    if (!txt.includes("status changed")) continue;
-    // skip if within conversionWindowMs of a conversion event
-    if (convTimes.some((c) => Math.abs(c - ts) <= 1000)) continue;
+    if (ts <= cutoff.getTime()) continue;
 
-    // genuine status change ⇒ review
+    const raw = `${a.Subject || ""} ${a.Comment || ""}`;
+    if (!/status changed/i.test(raw)) continue;
+    if (convTimes.some((c) => Math.abs(c - ts) <= CONVERSION_WINDOW_MS)) {
+      continue;
+    }
+
+    // parse out the new status
+    const m = raw.match(STATUS_CHANGE_RE);
     const when = new Date(ts).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
@@ -250,12 +253,49 @@ async function checkClientActivities(client) {
       hour: "numeric",
       minute: "2-digit",
     });
-    if (new Date(a.CreatedDate) < new Date(client.sinceDate)) continue;
-    stampReview(
+
+    if (m) {
+      const newStatus = m[2].trim();
+
+      // — Tier 5 or Non‑Collectible → delete
+      if (/Tier\s*5/i.test(newStatus) || /Non-Collectible/i.test(newStatus)) {
+        await Client.deleteOne({ caseNumber: client.caseNumber });
+        return { deleted: true, caseNumber: client.caseNumber };
+      }
+
+      // — Tier 1 → POA update for saleDate clients; review for createDate clients
+      if (/Tier\s*1/i.test(newStatus)) {
+        const isSaleClient = !!client.saleDate && !client.createDate;
+        if (isSaleClient) {
+          // tag them so the scheduler knows this came via Tier1
+          client.autoPOA = true;
+
+          // still record their “poa” stage so you can see it on the client object
+          client.stage = "poa";
+          client.stagesReceived = [
+            ...new Set([...(client.stagesReceived || []), "poa"]),
+          ];
+          client.stagePieces = [
+            ...new Set([...(client.stagePieces || []), "POA Email 1"]),
+          ];
+
+          // bump lastContactDate so your window logic picks them up
+          client.lastContactDate = new Date();
+          return client;
+        }
+        // …else fall back to review
+        return stampReview(
+          client,
+          `[Activity] Tier 1 status change on ${when}`
+        );
+      }
+    }
+
+    // — any other status changed → generic review
+    return stampReview(
       client,
-      `[Activity] status change message ${a.Subject} on ${when} `
+      `[Activity] status changed (“${a.Subject}”) on ${when}`
     );
-    return client;
   }
 
   // 3️⃣ “converted to prospect” downgrade (anytime)

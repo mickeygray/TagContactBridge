@@ -53,6 +53,25 @@
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
+.single-client-card {
+  width: 700px;
+  max-width: 100%;
+  background-color: #ffffff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin: 12px 0; /* vertical spacing only */
+  margin-left: 0; /* flush to the left edge */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.single-client-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
 
 @keyframes spin {
   to {
@@ -74,6 +93,118 @@ body {
 a {
   text-decoration: none;
   color: inherit;
+}
+/* Form container */
+.client-form {
+  max-width: 640px;
+  margin: 1.5rem auto;
+  padding: 1rem;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Form title */
+.client-form__title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+/* Grid layout for fields */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+/* Individual field wrapper */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+/* Inputs & selects */
+.form-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 0.25rem;
+  font-size: 0.95rem;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+}
+
+/* Submit button */
+.form-submit {
+  background-color: #2563eb;
+  color: #ffffff;
+  padding: 0.75rem 1.25rem;
+  border: none;
+  border-radius: 0.25rem;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+/* Notification cards */
+.notification-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid;
+}
+.notification-card--success {
+  background-color: #d1fae5;
+  border-color: #10b981;
+}
+.notification-card--warning {
+  background-color: #fef3c7;
+  border-color: #f59e0b;
+}
+
+/* Notification titles */
+.notification-card__title {
+  margin: 0 0 0.75rem;
+  font-weight: 700;
+}
+
+/* Action buttons container */
+.notification-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Buttons inside notifications */
+.action-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.action-button--primary {
+  background-color: #2563eb;
+  color: #ffffff;
+}
+.action-button--secondary {
+  background-color: #6b7280;
+  color: #ffffff;
+}
+.action-button--warning {
+  background-color: #f59e0b;
+  color: #ffffff;
+}
+.action-button--info {
+  background-color: #3b82f6;
+  color: #ffffff;
+}
+.action-button--danger {
+  background-color: #dc2626;
+  color: #ffffff;
 }
 
 /* ========== Layout Utilities ========== */

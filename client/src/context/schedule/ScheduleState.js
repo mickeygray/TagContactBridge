@@ -19,19 +19,6 @@ const ScheduleState = (props) => {
   /**
    * Fetch today's review lists (emailQueue, textQueue, toReview) from backend
    */
-  const fetchDailyReviews = async () => {
-    dispatch({ type: "SCHEDULE_LOADING" });
-    try {
-      const res = await api.get("/api/schedule/review-today");
-      dispatch({
-        type: "SET_DAILY_REVIEW_LISTS",
-        payload: res.data.reviewList,
-      });
-    } catch (error) {
-      console.error("❌ Error fetching daily reviews:", error);
-      dispatch({ type: "SCHEDULE_ERROR", payload: error.message });
-    }
-  };
 
   const buildDailySchedule = async () => {
     const res = await api.post("/api/schedule/build");
@@ -49,7 +36,6 @@ const ScheduleState = (props) => {
         textQueue: state.textQueue,
         loading: state.loading,
         error: state.error,
-        fetchDailyReviews,
         buildDailySchedule,
       }}
     >

@@ -14,14 +14,22 @@ const NewClientCreationForm = () => {
     initialPayment: "",
     secondPaymentDate: "",
     domain: "TAG",
-    alertAdserv: false,
+    autoPoa: false,
   });
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+    let fieldValue;
+    if (type === "checkbox") {
+      fieldValue = checked;
+    } else if (name === "autoPoa") {
+      fieldValue = value === "true";
+    } else {
+      fieldValue = value;
+    }
     setFormData((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : value,
+      [name]: fieldValue,
     }));
   };
 
@@ -48,7 +56,7 @@ const NewClientCreationForm = () => {
       initialPayment: "",
       secondPaymentDate: "",
       domain: "TAG",
-      alertAdserv: false,
+      autoPOA: false,
     });
   };
 
@@ -61,7 +69,7 @@ const NewClientCreationForm = () => {
       initialPayment: "",
       secondPaymentDate: "",
       domain: "TAG",
-      alertAdserv: false,
+      autoPoa: false,
     });
   };
   const handleReviewedAction = async (client, action) => {
@@ -74,148 +82,175 @@ const NewClientCreationForm = () => {
       alert(`Failed to apply "${action}".`);
     }
   };
-
   return (
-    <form className="card p-4 mb-4" onSubmit={handleSubmit}>
-      <h3 className="text-xl font-semibold mb-2">➕ New Client Creation</h3>
+    <form className="client-form" onSubmit={handleSubmit}>
+      <h3 className="client-form__title">➕ New Client Creation</h3>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <input
-          type="text"
-          name="name"
-          placeholder="Full Name"
-          value={formData.name}
-          onChange={handleChange}
-          required
-          className="input"
-        />
-        <input
-          type="email"
-          name="email"
-          placeholder="Email Address"
-          value={formData.email}
-          onChange={handleChange}
-          required
-          className="input"
-        />
-        <input
-          type="text"
-          name="cell"
-          placeholder="Cell Number"
-          value={formData.cell}
-          onChange={handleChange}
-          required
-          className="input"
-        />
-        <input
-          type="text"
-          name="caseNumber"
-          placeholder="Case Number"
-          value={formData.caseNumber}
-          onChange={handleChange}
-          required
-          className="input"
-        />
-        <input
-          type="number"
-          name="initialPayment"
-          placeholder="Initial Payment"
-          value={formData.initialPayment}
-          onChange={handleChange}
-          className="input"
-        />
-        <input
-          type={inputFocused ? "date" : "text"}
-          name="secondPaymentDate"
-          value={formData.secondPaymentDate}
-          onFocus={() => setInputFocused(true)}
-          onChange={handleChange}
-          placeholder="Second Payment Date"
-          className="input"
-        />
-        <select
-          name="domain"
-          value={formData.domain}
-          onChange={handleChange}
-          className="input"
-        >
-          <option value="TAG">Tax Advocate Group</option>
-          <option value="WYNN">Wynn Tax Solutions</option>
-        </select>
-      </div>
-
-      <div className="mt-4">
-        <label className="inline-flex items-center">
+      <div className="form-grid">
+        <label className="form-field">
+          Full Name
           <input
-            type="checkbox"
-            name="alertAdserv"
-            checked={formData.alertAdserv}
+            type="text"
+            name="name"
+            value={formData.name}
             onChange={handleChange}
-            className="mr-2"
+            required
+            className="form-input"
           />
-          🚨 Alert Adserv
+        </label>
+
+        <label className="form-field">
+          Email Address
+          <input
+            type="email"
+            name="email"
+            value={formData.email}
+            onChange={handleChange}
+            required
+            className="form-input"
+          />
+        </label>
+
+        <label className="form-field">
+          Cell Number
+          <input
+            type="text"
+            name="cell"
+            value={formData.cell}
+            onChange={handleChange}
+            required
+            className="form-input"
+          />
+        </label>
+
+        <label className="form-field">
+          Case Number
+          <input
+            type="text"
+            name="caseNumber"
+            value={formData.caseNumber}
+            onChange={handleChange}
+            required
+            className="form-input"
+          />
+        </label>
+
+        <label className="form-field">
+          Initial Payment
+          <input
+            type="number"
+            name="initialPayment"
+            value={formData.initialPayment}
+            onChange={handleChange}
+            className="form-input"
+          />
+        </label>
+
+        <label className="form-field">
+          Second Payment Date
+          <input
+            type={inputFocused ? "date" : "text"}
+            name="secondPaymentDate"
+            value={formData.secondPaymentDate}
+            onFocus={() => setInputFocused(true)}
+            onChange={handleChange}
+            className="form-input"
+          />
+        </label>
+
+        <label className="form-field">
+          Client Tier
+          <select
+            name="autoPoa"
+            value={formData.autoPoa}
+            onChange={handleChange}
+            className="form-input"
+          >
+            <option value="false">Active Client</option>
+            <option value="true">Tier 1</option>
+          </select>
+        </label>
+
+        <label className="form-field">
+          Domain
+          <select
+            name="domain"
+            value={formData.domain}
+            onChange={handleChange}
+            className="form-input"
+          >
+            <option value="TAG">Tax Advocate Group</option>
+            <option value="WYNN">Wynn Tax Solutions</option>
+          </select>
         </label>
       </div>
 
-      <button type="submit" className="button primary mt-4">
+      <button type="submit" className="form-submit">
         📤 Submit & Trigger Email
       </button>
-      {newClient && (
-        <div className="card p-4 mb-4 border-yellow-400 bg-yellow-50">
-          {newClient.status !== "inReview" ? (
-            <>
-              <h4 className="font-bold text-green-800">
-                ✅ Client added and Practitioner Email sent!
-              </h4>
-              <button className="button secondary mt-2" onClick={resetForm}>
-                Add another client
-              </button>
-            </>
-          ) : (
-            <>
-              <h4 className="font-bold text-red-700 mb-2">
-                🚨 Client flagged for review
-              </h4>
-              {newClient.reviewMessages &&
-                newClient.reviewMessages.map((m, i) => (
-                  <p>
-                    <strong>Reason {i + 1}:</strong> {m}
-                  </p>
-                ))}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => handleReviewedAction("prac")}
-                >
-                  Re‑send Prac Email
-                </button>
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => handleReviewedAction("433a")}
-                >
-                  Send 433(a) Email
-                </button>
-                <button
-                  className="btn btn-sm btn-warning"
-                  onClick={() => handleReviewedAction("delay")}
-                >
-                  Delay 60 days
-                </button>
-                <button
-                  className="btn btn-sm btn-info"
-                  onClick={() => handleReviewedAction("partial")}
-                >
-                  Mark Partial
-                </button>
-                <button
-                  className="btn btn-sm btn-danger"
-                  onClick={() => handleReviewedAction("inactive")}
-                >
-                  Mark Inactive
-                </button>
-              </div>
-            </>
-          )}
+
+      {newClient && newClient.status !== "inReview" && (
+        <div className="notification-card notification-card--success">
+          <h4 className="notification-card__title">
+            ✅ Client added and Practitioner Email sent!
+          </h4>
+          <button
+            type="button"
+            className="action-button action-button--secondary"
+            onClick={resetForm}
+          >
+            Add another client
+          </button>
+        </div>
+      )}
+
+      {newClient && newClient.status === "inReview" && (
+        <div className="notification-card notification-card--warning">
+          <h4 className="notification-card__title">
+            🚨 Client flagged for review
+          </h4>
+          {newClient.reviewMessages?.map((m, i) => (
+            <p key={i}>
+              <strong>Reason {i + 1}:</strong> {m}
+            </p>
+          ))}
+          <div className="notification-card__actions">
+            <button
+              type="button"
+              className="action-button action-button--primary"
+              onClick={() => handleReviewedAction("prac")}
+            >
+              Re‑send Prac Email
+            </button>
+            <button
+              type="button"
+              className="action-button action-button--primary"
+              onClick={() => handleReviewedAction("433a")}
+            >
+              Send 433(a) Email
+            </button>
+            <button
+              type="button"
+              className="action-button action-button--warning"
+              onClick={() => handleReviewedAction("delay")}
+            >
+              Delay 60 days
+            </button>
+            <button
+              type="button"
+              className="action-button action-button--info"
+              onClick={() => handleReviewedAction("partial")}
+            >
+              Mark Partial
+            </button>
+            <button
+              type="button"
+              className="action-button action-button--danger"
+              onClick={() => handleReviewedAction("inactive")}
+            >
+              Mark Inactive
+            </button>
+          </div>
         </div>
       )}
     </form>
