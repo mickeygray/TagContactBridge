@@ -19,6 +19,19 @@ export default (state, action) => {
         // if you have other lists (e.g. “hold”, “archived”), filter them here too
       };
     }
+    case "PARSE_ZEROS":
+      return {
+        ...state,
+        zeroInvoiceList: action.payload,
+        loading: false,
+        error: null,
+      };
+    case "LIST_ERROR":
+      return {
+        ...state,
+        error: action.payload,
+        loading: false,
+      };
     case "SET_PERIOD_RESULTS":
       return {
         ...state,
@@ -57,6 +70,13 @@ export default (state, action) => {
     case "ADD_CLIENT_TO_PERIOD":
       return {
         ...state,
+      };
+    case "PROSPECT_DIALER":
+      return {
+        ...state,
+        prospectDialerList: action.payload,
+        loading: false,
+        error: null,
       };
     default:
       return state;

@@ -4,9 +4,13 @@ const {
 } = require("../utils/bulkAddClientsChecks");
 const Client = require("../models/Client");
 const PeriodContacts = require("../models/PeriodContacts");
+const settlementOfficers = require("../libraries/settlementOfficers");
 const {
   addVerifiedClientsAndReturnUpdatedLists,
 } = require("../utils/newPeriodContactChecks");
+const { validatePhone } = require("../services/validationService");
+const ValidatedPhone = require("../models/ValidatedPhone");
+
 /**
  * Bulk import leads into both TAG and WYNN Logics
  * POST /api/list/postNCOA
@@ -355,11 +359,114 @@ async function addClientToPeriodHandler(req, res, next) {
     next(err);
   }
 }
+async function parseZeroInvoices(req, res, next) {
+  try {
+    const rawClients = req.body.clients;
+    if (!Array.isArray(rawClients) || rawClients.length === 0) {
+      return res.status(400).json({ message: "No clients provided." });
+    }
+
+    const zeroInvoices = [];
+
+    for (const client of rawClients) {
+      let invoices;
+      try {
+        invoices = await logicsService.fetchInvoices(
+          client.domain,
+          client.caseNumber
+        );
+      } catch (err) {
+        console.error(
+          `[Invoice] fetch error for ${client.caseNumber}: ${err.message}`
+        );
+        continue; // skip this client on fetch error
+      }
+
+      if (!Array.isArray(invoices)) continue;
+      const officerMap = settlementOfficers[client.domain] || {};
+      for (const inv of invoices) {
+        const amount = inv.UnitPrice ?? inv.Amount ?? 0;
+        if (amount === 0) {
+          const id = parseInt(inv.CreatedBy);
+          const settlementOfficer = officerMap[id] || `NO SO MATCH FOUND`;
+
+          zeroInvoices.push({
+            caseNumber: client.caseNumber,
+            settlementOfficer,
+            date: inv.CreatedDate,
+            description: inv.Description || "",
+          });
+        }
+      }
+    }
+
+    return res.json({ zeroInvoices });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function buildDialerList(req, res, next) {
+  try {
+    const rawClients = req.body.clients; // [{ name, cell, caseNumber, domain }]
+    const validations = [];
+
+    // 1) Process sequentially so we can attach name+cell to each result
+    for (const client of rawClients) {
+      const phone = client.cell;
+      try {
+        const apiResult = await validatePhone(phone);
+
+        validations.push({
+          name: client.name,
+          caseNumber: client.caseNumber,
+          phone,
+          ...apiResult,
+        });
+        console.log(validations.length);
+      } catch (err) {
+        // on error, still attach the phone & name
+        console.log(err);
+      }
+    }
+    console.log(validations);
+    console.log(`Got ${validations.length} validation results`);
+
+    // 2) Keep only the “clean” ones
+    const clean = validations.filter(
+      (v) =>
+        v.national_dnc === "N" &&
+        v.state_dnc === "N" &&
+        v.iscell === "Y" &&
+        !["disconnected", "invalid-phone", "ERROR"].includes(v.status)
+    );
+
+    console.log(`Filtered down to ${clean.length} dialable numbers`);
+
+    // 3) Save the phones for future skipping
+    const docs = clean.map((v) => ({ phone: v.phone }));
+    try {
+      await ValidatedPhone.insertMany(docs, { ordered: false });
+    } catch (e) {
+      if (e.code !== 11000) throw e; // ignore duplicate key errors
+    }
+
+    // 4) Return the full clean list (with name, caseNumber, phone, API fields)
+    return res.json({ dialerList: clean });
+  } catch (err) {
+    console.error("buildDialerList error:", err);
+    next(err);
+  }
+}
+
+// 7) build final list
 
 module.exports = {
   postNCOA,
+  parseZeroInvoices,
   addCreateDateClients,
   buildSchedule,
   addNewReviewedClient,
+  buildDialerList,
   addClientToPeriodHandler,
 };

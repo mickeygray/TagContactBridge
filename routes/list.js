@@ -11,6 +11,8 @@ const {
   addCreateDateClients,
   addClientToPeriodHandler,
   addNewReviewedClient,
+  parseZeroInvoices,
+  buildDialerList,
 } = require("../controllers/listController");
 
 // Protect bulk-list operations
@@ -23,6 +25,8 @@ router.post("/postNCOA", postNCOA);
 // Bulk add clients based on createDate (placeholder)
 // POST /api/list/addCreateDateClients
 router.post("/addCreateDateClients", addCreateDateClients);
+
+router.post("/parseZeros", parseZeroInvoices);
 
 router.post("/addNewReviewedClients", addNewReviewedClient);
 // Placeholder: build marketing schedule list
@@ -39,5 +43,5 @@ router.get("/reviewClients", async (req, res, next) => {
     next(err);
   }
 });
-
+router.post("/validate", buildDialerList);
 module.exports = router;

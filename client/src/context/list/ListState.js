@@ -8,6 +8,7 @@ const ListState = (props) => {
     reviewClients: [],
     newClients: [],
     verified: [],
+    zeroInvoiceList: [],
     toReview: [],
     partial: [],
     periodInfo: null,
@@ -144,6 +145,37 @@ const ListState = (props) => {
   const clearPeriod = () => {
     dispatch({ type: "CLEAR_PERIOD" });
   };
+
+  const parseZeros = async (clients) => {
+    try {
+      const res = await api.post("/api/list/parseZeros", { clients });
+      dispatch({
+        type: "PARSE_ZEROS",
+        payload: res.data.zeroInvoices,
+      });
+    } catch (err) {
+      dispatch({
+        type: "LIST_ERROR",
+        payload: err.response?.data?.message || err.message,
+      });
+    }
+  };
+  // New: prospectDialerBuilder
+  const buildDialerList = async (clients) => {
+    // dispatch({ type: "SET_LOADING" });
+    try {
+      const res = await api.post("/api/list/validate", { clients });
+      dispatch({
+        type: "PROSPECT_DIALER",
+        payload: res.data.dialerList,
+      });
+    } catch (err) {
+      dispatch({
+        type: "LIST_ERROR",
+        payload: err.response?.data?.message || err.message,
+      });
+    }
+  };
   return (
     <ListContext.Provider
       value={{
@@ -153,8 +185,12 @@ const ListState = (props) => {
         periodInfo: state.periodInfo,
         reviewClients: state.reviewClients,
         newClients: state.newClients,
+        zeroInvoiceList: state.zeroInvoiceList,
+        prospectDialerList: state.prospectDialerList,
         postNCOAList,
         buildPeriod,
+        parseZeros,
+        buildDialerList,
         addClientToPeriod,
         skipClient,
         addCreateDateClients,
