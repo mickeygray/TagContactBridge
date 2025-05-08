@@ -20,15 +20,12 @@ export default function SingleClientCard({ client, periodInfo }) {
   return (
     <div className="single-client-card">
       {isEnriched && enrichedClient ? (
-        <ClientAnalysisCard
-          client={enrichedClient}
-          onHide={handleBack} // you’ll need to add an “onBack” prop to your analysis card
-        />
+        <ClientAnalysisCard client={enrichedClient} onHide={handleBack} />
       ) : (
         <ClientCrudCard
           client={client}
           onAnalyze={handleAnalyze}
-          periodInfo={periodInfo} // pass this into your “Analyze” button handler
+          periodInfo={periodInfo}
         />
       )}
     </div>

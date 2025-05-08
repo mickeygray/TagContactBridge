@@ -14,6 +14,12 @@ const scheduleReducer = (state, action) => {
         loading: true,
       };
 
+    case "SKIP CLIENT":
+      return {
+        ...state,
+        toReview: state.toReview.filter((c) => c.caseNumber !== action.payload),
+      };
+
     case "CLEAR_LOADING":
       return {
         ...state,

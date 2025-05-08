@@ -3,6 +3,7 @@
 const Client = require("../models/Client");
 const PeriodContacts = require("../models/PeriodContacts");
 const contactCampaignMap = require("../libraries/contactCampaignMap");
+const textMessageLibrary = require("../libraries/textMessageLibrary");
 const DailySchedule = require("../models/DailySchedule");
 const {
   addVerifiedClientsAndReturnUpdatedLists,
@@ -363,6 +364,187 @@ async function buildDailySchedule(req, res) {
   }
 }
 
+async function refreshDailySchedule(req, res, next) {
+  try {
+    // helper to get local YYYY‑MM‑DD
+    const today = (() => {
+      const now = new Date();
+      const offset = now.getTimezoneOffset() * 60000;
+      return new Date(now - offset).toISOString().split("T")[0];
+    })();
+
+    const date = req.query.date || today;
+
+    const schedule = await DailySchedule.findOne({ date }).lean();
+    if (!schedule) {
+      return res.status(404).json({ message: `No schedule found for ${date}` });
+    }
+
+    return res.json({
+      emailQueue: schedule.emailQueue,
+      textQueue: schedule.textQueue,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateDailySchedule(req, res, next) {
+  try {
+    const { pace } = req.body;
+    if (pace == null || typeof pace !== "number") {
+      return res.status(400).json({ message: "Invalid or missing `pace`" });
+    }
+
+    // compute local YYYY‑MM‑DD
+    const today = (() => {
+      const now = new Date();
+      const offset = now.getTimezoneOffset() * 60000;
+      return new Date(now - offset).toISOString().split("T")[0];
+    })();
+
+    // find & update only the pace field
+    const updated = await DailySchedule.findOneAndUpdate(
+      { date: today },
+      { pace },
+      { new: true, select: "date pace" }
+    ).lean();
+
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ message: `No schedule found for ${today}` });
+    }
+
+    return res.json({
+      pace: updated.pace,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function sendDailyText(req, res, next) {
+  try {
+    const date = req.body.date || getTodayDateString();
+    const schedule = await DailySchedule.findOne({ date }).lean();
+    if (!schedule) {
+      return res.status(404).json({ message: `No schedule for ${date}` });
+    }
+
+    const results = [];
+    for (const recip of schedule.textQueue) {
+      const { cell, name, caseNumber, domain, token, stagePiece } = recip;
+      if (!cell) {
+        results.push({ caseNumber, error: "Missing phone" });
+        continue;
+      }
+      if (!["TAG", "WYNN", "AMITY"].includes(domain)) {
+        results.push({ caseNumber, error: `Invalid domain "${domain}"` });
+        continue;
+      }
+
+      const libEntry = textMessageLibrary[stagePiece];
+      if (!libEntry) {
+        results.push({
+          caseNumber,
+          error: `No text template for ${stagePiece}`,
+        });
+        continue;
+      }
+
+      // interpolate message
+      let body = libEntry.message
+        .replace(/\{name\}/g, name)
+        .replace(/\{caseNumber\}/g, caseNumber)
+        .replace(/\{token\}/g, token);
+
+      const from = libEntry[domain];
+      const msgObj = {
+        to: cell,
+        from,
+        body,
+      };
+
+      const outcome = await sendTextMessage(msgObj);
+      results.push({ caseNumber, cell, ...outcome });
+    }
+
+    res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function sendDailyEmail(req, res, next) {
+  try {
+    const date = req.body.date || getTodayDateString();
+    const schedule = await DailySchedule.findOne({ date }).lean();
+    if (!schedule) {
+      return res.status(404).json({ message: `No schedule for ${date}` });
+    }
+
+    const results = await Promise.allSettled(
+      schedule.emailQueue.map(async (recip) => {
+        const { email, name, caseNumber, domain, token, stagePiece } = recip;
+        // validate
+        if (!email) throw new Error("Missing email");
+        if (!["TAG", "WYNN", "AMITY"].includes(domain)) {
+          throw new Error(`Invalid domain "${domain}"`);
+        }
+
+        // load & compile template
+        const tplPath = path.join(
+          __dirname,
+          "../Templates/clientcontact",
+          `${stagePiece}.hbs`
+        );
+        if (!fs.existsSync(tplPath)) throw new Error("Template not found");
+        const source = fs.readFileSync(tplPath, "utf8");
+        const compiled = hbs.compile(source);
+
+        // build scheduler URL
+        const hostMap = {
+          TAG: "taxadvocategroup.com",
+          WYNN: "wynntaxsolutions.com",
+          AMITY: "amitytaxgroup.com",
+        };
+        const host = hostMap[domain];
+        const schedulerUrl = `https://${host}/schedule-my-call/${token}`;
+
+        const html = compiled({ name, caseNumber, schedulerUrl, token });
+
+        // attachments
+        const atts = [];
+        for (const filename of attachmentsMapping[stagePiece] || []) {
+          const p = path.join(__dirname, "../Templates/attachments", filename);
+          if (fs.existsSync(p)) atts.push({ filename, path: p });
+        }
+
+        const subject = emailSubjects[stagePiece] || "Update from Tax Team";
+
+        await sendEmail({
+          to: email,
+          subject,
+          html,
+          domain,
+          attachments: atts,
+        });
+
+        return { caseNumber, email, status: "sent" };
+      })
+    );
+
+    res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   buildDailySchedule,
+  refreshDailySchedule,
+  updateDailySchedule,
+  sendDailyEmail,
+  sendDailyText,
 };

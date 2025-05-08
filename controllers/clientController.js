@@ -5,13 +5,36 @@ const crypto = require("crypto");
 const multer = require("multer");
 const hbs = require("handlebars");
 const Client = require("../models/Client");
+const DailySchedule = require("../models/DailySchedule"); // your daily schedule model
+const PeriodContacts = require("../models/PeriodContacts");
 const sendEmail = require("../utils/sendEmail");
 const interactions = require("../utils/singleClientInteractions");
-const { addAndVerifyNewClient } = require("../utils/bulkAddClientsChecks");
+
 const signatures = require("../libraries/emailSignatures"); // 🆕 import
 
 const upload = multer();
+async function purgeFromScheduleAndPeriod(clientId, caseNumber) {
+  // 1) From every DailySchedule document, pull out any contact with this caseNumber
+  await DailySchedule.updateMany(
+    {},
+    {
+      $pull: {
+        emailQueue: { caseNumber },
+        textQueue: { caseNumber },
+      },
+    }
+  );
 
+  // 2) From every PeriodContacts document, pull out this clientId string
+  await PeriodContacts.updateMany(
+    {},
+    {
+      $pull: {
+        createDateClientIDs: clientId.toString(),
+      },
+    }
+  );
+}
 /**
  * POST /api/clients/uploadDocument
  */
@@ -272,12 +295,27 @@ async function processReviewedClientHandler(req, res, next) {
 
       case "inactive":
       case "partial":
+        // set status, clear for review
         client.status = action;
         client.reviewDate = null;
         await client.save();
+
+        // remove from today's schedule & current period
+        await purgeFromScheduleAndPeriod(client._id, client.caseNumber);
+
         return res.json({
-          message: `Client status set to "${action}"`,
+          message: `Client status set to "${action}" and purged from schedule/period.`,
           client,
+        });
+
+      case "delete":
+        // completely delete the client record
+        await Client.deleteOne({ _id: client._id });
+        // also purge any schedule/period links
+        await purgeFromScheduleAndPeriod(client._id, client.caseNumber);
+
+        return res.json({
+          message: "Client deleted and purged from schedule/period.",
         });
 
       default:

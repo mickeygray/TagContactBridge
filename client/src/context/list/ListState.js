@@ -114,33 +114,6 @@ const ListState = (props) => {
       console.error("❌ Failed to fetch review clients", err);
     }
   };
-  const addClientToPeriod = async (client, periodId) => {
-    try {
-      await api.post(`/api/list/${periodId}/clients`, {
-        clientId: client._id,
-      });
-      dispatch({
-        type: "ADD_CLIENT_TO_PERIOD",
-        payload: { periodId, clientId: client._id },
-      });
-    } catch (err) {
-      throw err;
-    }
-  };
-  const addNewClientFromReviewList = async (client) => {
-    try {
-      // 1) create on the server
-      await api.post("/api/list/addNewReviewedClients", client);
-      // 2) remove it from reviewClients so it disappears from the UI
-      dispatch({ type: "REMOVE_REVIEW_CLIENT", payload: client._id });
-    } catch (err) {
-      throw err;
-    }
-  };
-
-  const skipClient = (client) => {
-    dispatch({ type: "SKIP_CLIENT", payload: client._id });
-  };
 
   const clearPeriod = () => {
     dispatch({ type: "CLEAR_PERIOD" });
@@ -176,6 +149,10 @@ const ListState = (props) => {
       });
     }
   };
+
+  const removeClientFromUploadList = (client) => {
+    dispatch({ type: "SKIP CLIENT", payload: client.caseNumber });
+  };
   return (
     <ListContext.Provider
       value={{
@@ -191,12 +168,9 @@ const ListState = (props) => {
         buildPeriod,
         parseZeros,
         buildDialerList,
-        addClientToPeriod,
-        skipClient,
         addCreateDateClients,
         clearPeriod,
-        removeReviewClient,
-        addNewClientFromReviewList,
+        removeClientFromUploadList,
         fetchReviewClients,
       }}
     >

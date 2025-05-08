@@ -1,63 +1,41 @@
 // CrudClientCard.jsx
 import React, { useContext } from "react";
+import ClientContext from "../../../context/client/clientContext";
+import ScheduleContext from "../../../context/schedule/scheduleContext";
 import ListContext from "../../../context/list/listContext";
 import MessageContext from "../../../context/message/messageContext";
 
-export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
-  const { addClientToPeriod, deleteClient, skipClient, updateClientStatus } =
-    useContext(ListContext);
+export default function CrudClientCard({ client, onAnalyze, isDaily }) {
+  const { processReviewedClient } = useContext(ClientContext);
+  const { skipDailyClientProcessing, refreshDailyQueues } =
+    useContext(ScheduleContext);
+  const { removeClientFromUploadList } = useContext(ListContext);
   const { showMessage, showError } = useContext(MessageContext);
 
-  const handleAnalyze = () => {
-    onAnalyze(client);
-  };
-
-  const handleAddToPeriod = async () => {
-    try {
-      await addClientToPeriod(client, periodInfo.id);
-      skipClient(client);
-      showMessage(
-        "Period",
-        `Added ${client.caseNumber} to the current period.`,
-        200
-      );
-    } catch (err) {
-      showError(
-        "Period",
-        `Failed to add ${client.caseNumber}: ${err.message}`,
-        err.response?.status
-      );
+  const handleSkip = () => {
+    if (isDaily) {
+      skipDailyClientProcessing(client);
+      showMessage("Client", `Skipped for today: ${client.caseNumber}`, 200);
+      // after skip, refresh the daily list
+      refreshDailyQueues();
+    } else {
+      removeClientFromUploadList(client);
+      showMessage("Client", `Won’t add: ${client.caseNumber}`, 200);
     }
   };
 
-  const handleDelete = async () => {
+  const handleReview = async (action, label) => {
     try {
-      await deleteClient(client._id);
-      skipClient(client);
-      showMessage("Client", `Deleted client ${client.caseNumber}.`, 200);
+      await processReviewedClient(client, action);
+      showMessage("Client", `${label} applied to ${client.caseNumber}`, 200);
+      // immediately refresh daily schedule if in daily mode
+      if (isDaily) {
+        await refreshDailyQueues();
+      }
     } catch (err) {
       showError(
         "Client",
-        `Failed to delete ${client.caseNumber}: ${err.message}`,
-        err.response?.status
-      );
-    }
-  };
-
-  const handleSkip = () => {
-    skipClient(client._id);
-    showMessage("Client", `Skipped client ${client.caseNumber}.`, 200);
-  };
-
-  const handleUpdateStatus = async (newStatus) => {
-    try {
-      await updateClientStatus(client._id, newStatus);
-      skipClient(client);
-      showMessage("Status", `Set ${client.caseNumber} to "${newStatus}".`, 200);
-    } catch (err) {
-      showError(
-        "Status",
-        `Failed to update status: ${err.message}`,
+        `Failed to ${label}: ${err.message}`,
         err.response?.status
       );
     }
@@ -80,43 +58,50 @@ export default function CrudClientCard({ client, onAnalyze, periodInfo }) {
           <strong>Domain:</strong> {client.domain}
         </p>
 
-        {client.reviewMessages &&
-          client.reviewMessages.map((m, i) => (
-            <p>
-              <strong>Reason {i + 1}:</strong> {m}
-            </p>
-          ))}
+        {client.reviewMessages?.map((m, i) => (
+          <p key={i}>
+            <strong>Reason {i + 1}:</strong> {m}
+          </p>
+        ))}
 
         <div className="card-actions">
-          <button onClick={handleAnalyze} className="btn btn-sm btn-info">
+          <button
+            onClick={() => onAnalyze(client)}
+            className="btn btn-sm btn-info"
+          >
             Analyze
           </button>
+
           <button
-            onClick={handleAddToPeriod}
+            onClick={() => handleReview("addToPeriod", "Add to Period")}
             className="btn btn-sm btn-primary ml-2"
           >
             Add to Period
           </button>
           <button
-            onClick={() => handleUpdateStatus("partial")}
+            onClick={() => handleReview("partial", "Mark Partial")}
             className="btn btn-sm btn-warning ml-2"
           >
             Mark Partial
           </button>
           <button
-            onClick={() => handleUpdateStatus("inactive")}
+            onClick={() => handleReview("inactive", "Mark Inactive")}
             className="btn btn-sm btn-danger ml-2"
           >
             Mark Inactive
           </button>
           <button
+            onClick={() => handleReview("delete", "Delete")}
+            className="btn btn-sm btn-danger ml-2"
+          >
+            Delete
+          </button>
+
+          <button
             onClick={handleSkip}
             className="btn btn-sm btn-secondary ml-2"
           >
-            Skip
-          </button>
-          <button onClick={handleDelete} className="btn btn-sm btn-danger ml-2">
-            Delete
+            {isDaily ? "Skip Today" : "Do Not Add"}
           </button>
         </div>
       </div>

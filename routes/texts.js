@@ -5,8 +5,8 @@ const {
   authMiddleware,
   requireAdmin,
 } = require("../middleware/authMiddleware");
+const { sendDailyText } = require("../controllers/scheduleController");
 
-const { getStats } = require("../utils/textStats");
 // Protect it
 router.use(authMiddleware, requireAdmin);
 router.post("/send", async (req, res, next) => {
@@ -29,5 +29,7 @@ router.post("/send", async (req, res, next) => {
     next(err);
   }
 });
+
+router.post("/daily", sendDailyText);
 
 module.exports = router;

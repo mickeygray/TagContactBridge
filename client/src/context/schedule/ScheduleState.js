@@ -27,6 +27,25 @@ const ScheduleState = (props) => {
       payload: res.data,
     });
   };
+  // scheduleContext.js
+
+  // 1. Settings only:
+  const updateScheduleSettings = async (settings) => {
+    const res = await api.put("/api/schedule", settings);
+    dispatch({ type: "UPDATE_SETTINGS", payload: res.data });
+  };
+
+  // 3. Refresh after sends or reviews:
+  const refreshDailyQueues = async () => {
+    const res = await api.get("/api/schedule/refresh");
+    dispatch({ type: "REFRESH_QUEUES", payload: res.data });
+  };
+
+  // 4. Process review decisions in bulk:
+
+  const skipDailyClientProcessing = (client) => {
+    dispatch({ type: "SKIP CLIENT", payload: client.caseNumber });
+  };
 
   return (
     <ScheduleContext.Provider
@@ -36,7 +55,10 @@ const ScheduleState = (props) => {
         textQueue: state.textQueue,
         loading: state.loading,
         error: state.error,
+        skipDailyClientProcessing,
         buildDailySchedule,
+        refreshDailyQueues,
+        updateScheduleSettings,
       }}
     >
       {props.children}

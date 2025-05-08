@@ -7,7 +7,7 @@ const {
   authMiddleware,
   requireAdmin,
 } = require("../middleware/authMiddleware");
-
+const { sendDailyEmail } = require("../controllers/scheduleController");
 const router = express.Router();
 
 // Protect all email routes
@@ -76,7 +76,7 @@ router.post("/send", async (req, res, next) => {
     next(err);
   }
 });
-
+router.post("/daily", sendDailyEmail);
 /**
  * Template management endpoints
  */
