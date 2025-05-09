@@ -2,6 +2,7 @@ import React, { useState, useContext, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import ListContext from "../../../context/list/listContext";
+import SftpDownloadEmailButton from "./SftpDownloadEmailButton";
 
 const NCOAUploader = () => {
   const [uploadedData, setUploadedData] = useState([]);
@@ -95,6 +96,7 @@ const NCOAUploader = () => {
   return (
     <div>
       <h3>Upload CSV or Excel File</h3>
+      <SftpDownloadEmailButton />
       <input
         type="file"
         multiple

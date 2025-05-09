@@ -38,7 +38,15 @@ const getTransporter = (domain) => {
  * @param {string} [options.html] - Optional HTML content
  * @param {string} [options.domain] - "TAG" (default) or "WYNN"
  */
-const sendEmail = async ({ to, subject, text, html, domain }) => {
+const sendEmail = async ({
+  to,
+  subject,
+  text,
+  html,
+  domain,
+  from,
+  attachments,
+}) => {
   const transporter = getTransporter(domain);
 
   const fromMap = {
@@ -46,13 +54,14 @@ const sendEmail = async ({ to, subject, text, html, domain }) => {
     WYNN: `${process.env.WYNN_EMAIL_NAME} <${process.env.WYNN_EMAIL_ADDRESS}>`,
     AMITY: `${process.env.AMITY_EMAIL_NAME} <${process.env.AMITY_EMAIL_ADDRESS}>`,
   };
-  const from = fromMap[domain?.toUpperCase()] || fromMap.TAG;
+  const fromEmail = fromMap[domain?.toUpperCase()] || from;
   const mailOptions = {
-    from,
+    from: fromEmail,
     to,
     subject,
     text: text || "",
     html: html || "",
+    attachments: attachments,
   };
 
   try {

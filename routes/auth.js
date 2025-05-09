@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const router = express.Router();
 const nodemailer = require("nodemailer");
+const passport = require("passport");
 const UserRequest = require("../models/UserRequest");
 const rateLimit = require("express-rate-limit");
 const { authMiddleware } = require("../middleware/authMiddleware");
@@ -12,6 +13,48 @@ const loginLimiter = rateLimit({
   max: 10,
   message: "Too many login attempts. Please try again later.",
 });
+let googleStrategy;
+
+if (process.env.ENABLE_GOOGLE_OAUTH === "true") {
+  const GoogleStrategy = require("passport-google-oauth20").Strategy;
+  googleStrategy = new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: "/auth/google/callback",
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      // …your lookup / isDomainAllowed / user creation / issue JWT…
+      done(null, user);
+    }
+  );
+  passport.use(googleStrategy);
+}
+
+if (process.env.ENABLE_GOOGLE_OAUTH === "true") {
+  router.get(
+    "/google",
+    passport.authenticate("google", { scope: ["email", "profile"] })
+  );
+
+  router.get(
+    "/google/callback",
+    passport.authenticate("google", { failureRedirect: "/login" }),
+    (req, res) => {
+      // success → issue JWT, redirect home
+      res.redirect("/");
+    }
+  );
+} else {
+  // stub routes locally so you don’t get 404s
+  router.get("/google", (req, res) =>
+    res.send("OAuth disabled in dev—use local login")
+  );
+  router.get("/google/callback", (req, res) =>
+    res.send("OAuth disabled in dev—use local login")
+  );
+}
+
 // POST /api/auth/request
 router.post("/request-account", loginLimiter, async (req, res) => {
   const { email, password } = req.body;

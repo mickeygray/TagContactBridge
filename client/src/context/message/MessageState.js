@@ -14,8 +14,16 @@ export default function MessageState({ children }) {
   // Actions
   const startLoading = () => dispatch({ type: "SET_LOADING" });
   const stopLoading = () => dispatch({ type: "CLEAR_LOADING" });
+  let timeoutId;
+  const startAutoClear = () => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      dispatch({ type: "CLEAR_MESSAGE" });
+    }, 15000); // 15 seconds
+  };
   const showMessage = (title, text) =>
     dispatch({ type: "SET_MESSAGE", payload: { title, text } });
+  startAutoClear();
   const showError = (route, text, status) => {
     let suggestion = "";
     if (status === 401) suggestion = " Please log in to continue.";
@@ -32,6 +40,7 @@ export default function MessageState({ children }) {
         text: `${text}${suggestion}`,
       },
     });
+    startAutoClear();
   };
   const clearMessage = () => dispatch({ type: "CLEAR_MESSAGE" });
 

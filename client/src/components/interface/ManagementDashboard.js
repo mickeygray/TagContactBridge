@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import ManualEmailSender from "../tools/email sender/ManualEmailSender";
-import TextMessageSender from "../tools/text sender/TextMessageSender";
-import NCOAUploader from "../tools/list managers/NCOAUploader";
-import ScheduleFunnelDashboard from "../tools/schedule manager/ScheduleFunnelDashboard";
+import ManualEmailSender from "../tools/emailsender/ManualEmailSender";
+import TextMessageSender from "../tools/textsender/TextMessageSender";
+import NCOAUploader from "../tools/listmanagers/NCOAUploader";
+import ScheduleFunnelDashboard from "../tools/schedulemanager/ScheduleFunnelDashboard";
 
 const ManagementDashboard = () => {
   const [showManualEmailSender, setShowManualEmailSender] = useState(false);

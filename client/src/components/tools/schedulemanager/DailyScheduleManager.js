@@ -2,7 +2,7 @@ import React, { useState, useContext, useEffect } from "react";
 import ScheduleContext from "../../../context/schedule/scheduleContext";
 import EmailContext from "../../../context/email/emailContext";
 import TextContext from "../../../context/text/textContext";
-import ClientAnalysisList from "../client review/ClientAnalysisList";
+import ClientAnalysisList from "../clientreview/ClientAnalysisList";
 
 const DailyScheduleManager = () => {
   const {

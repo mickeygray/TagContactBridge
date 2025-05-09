@@ -12,6 +12,7 @@ const ListState = (props) => {
     toReview: [],
     partial: [],
     periodInfo: null,
+    recordCount: null,
   };
 
   const [state, dispatch] = useReducer(listReducer, initialState);
@@ -45,6 +46,33 @@ const ListState = (props) => {
       );
     }
   };
+
+  const downloadAndEmailDaily = async () => {
+    try {
+      const res = await api.post("/api/list/download-and-email-daily");
+      // We expect res.data.recordCount = { totalCount, stateCount, federalCount }
+      const { recordCount } = res.data;
+
+      // 1) store it in context
+      dispatch({ type: "SET_RECORD_COUNT", payload: recordCount });
+
+      // 2) show toast
+      const { totalCount, stateCount, federalCount } = recordCount;
+      showMessage(
+        "Daily Report",
+        `Total: ${totalCount}, State: ${stateCount}, Fed: ${federalCount}`
+      );
+
+      // 3) return it (so components can also use it)
+      return recordCount;
+    } catch (error) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message;
+      showError("Daily Report", `Failed to fetch report: ${msg}`, status);
+      throw error;
+    }
+  };
+
   /**
    * Build the period contact list based on filters
    */
@@ -99,9 +127,7 @@ const ListState = (props) => {
       throw error;
     }
   };
-  const removeReviewClient = (client) => {
-    dispatch({ type: "REMOVE_REVIEW_CLIENT", payload: client.caseNumber });
-  };
+
   /**
    * Fetch all clients flagged 'inReview', sorted by reviewDate
    */
@@ -164,9 +190,11 @@ const ListState = (props) => {
         newClients: state.newClients,
         zeroInvoiceList: state.zeroInvoiceList,
         prospectDialerList: state.prospectDialerList,
+        recordCount: state.recordCount,
         postNCOAList,
         buildPeriod,
         parseZeros,
+        downloadAndEmailDaily,
         buildDialerList,
         addCreateDateClients,
         clearPeriod,

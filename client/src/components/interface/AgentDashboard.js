@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import LogicsFileReader from "../tools/list managers/LogicsFileReader";
-import CallFetcher from "../tools/call monitor/CallFetcher";
-import LexisAppendList from "../tools/list managers/LexisAppendList";
-import PeriodContactsFilter from "../tools/list managers/PeriodContactsFilter";
-import ClientAnalysisList from "../tools/client review/ClientAnalysisList";
+import LogicsFileReader from "../tools/listmanagers/LogicsFileReader";
+import CallFetcher from "../tools/callmonitor/CallFetcher";
+import LexisAppendList from "../tools/listmanagers/LexisAppendList";
+import PeriodContactsFilter from "../tools/listmanagers/PeriodContactsFilter";
+import ClientAnalysisList from "../tools/clientreview/ClientAnalysisList";
 
 const AgentDashboard = () => {
   const [activeTool, setActiveTool] = useState(null);

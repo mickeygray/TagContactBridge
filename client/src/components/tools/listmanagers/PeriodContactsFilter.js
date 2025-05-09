@@ -1,7 +1,7 @@
 import React, { useState, useContext } from "react";
 import SmartSearchFilter from "../../layout/SmartSearchFilter";
 import ListContext from "../../../context/list/listContext";
-import ClientAnalysisList from "../client review/ClientAnalysisList";
+import ClientAnalysisList from "../clientreview/ClientAnalysisList";
 const STAGE_OPTIONS = [
   { value: "update433a", label: "Update 433a" },
   { value: "penaltyAbatement", label: "Penalty Abatement" },

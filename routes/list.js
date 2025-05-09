@@ -13,13 +13,18 @@ const {
   addNewReviewedClient,
   parseZeroInvoices,
   buildDialerList,
+  downloadAndEmailDaily,
 } = require("../controllers/listController");
+
+// helper to list all non-zip files under a dir
 
 // Protect bulk-list operations
 router.use(authMiddleware, requireAdmin);
 
 // Bulk import leads into both TAG & WYNN
 // POST /api/list/postNCOA
+
+router.post("/download-and-email-daily", downloadAndEmailDaily);
 router.post("/postNCOA", postNCOA);
 
 // Bulk add clients based on createDate (placeholder)

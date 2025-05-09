@@ -19,6 +19,11 @@ export default (state, action) => {
         // if you have other lists (e.g. “hold”, “archived”), filter them here too
       };
     }
+    case "SET_RECORD_COUNT":
+      return {
+        ...state,
+        recordCount: action.payload,
+      };
     case "PARSE_ZEROS":
       return {
         ...state,

@@ -10,7 +10,34 @@ const {
 } = require("../utils/newPeriodContactChecks");
 const { validatePhone } = require("../services/validationService");
 const ValidatedPhone = require("../models/ValidatedPhone");
-
+const {
+  downloadLatestZip,
+  unzipPassworded,
+} = require("../services/lexisService");
+const sendEmail = require("../utils/sendEmail");
+const fs = require("fs");
+const path = require("path");
+const Papa = require("papaparse");
+// where we drop today’s files
+const DAILY_DIR = path.join(
+  __dirname,
+  "..",
+  "Templates",
+  "attachments",
+  "daily"
+);
+function collectFiles(dir) {
+  let out = [];
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (fs.statSync(full).isDirectory()) {
+      out = out.concat(collectFiles(full));
+    } else if (path.extname(full).toLowerCase() !== ".zip") {
+      out.push(full);
+    }
+  }
+  return out;
+}
 /**
  * Bulk import leads into both TAG and WYNN Logics
  * POST /api/list/postNCOA
@@ -406,6 +433,196 @@ async function parseZeroInvoices(req, res, next) {
   }
 }
 
+/**
+ * @param {Array<Object>} rows
+ *   Each object must have at least:
+ *     - ADDRESS (string)
+ *     - AMOUNT (string or number)
+ *     - PLAINTIFF (string)
+ *     - FILING_DATE (string in MM/DD/YY or ISO format)
+ *     - FILE_TYPE (string)
+ * @returns {Array<Object>} one “winner” per unique ADDRESS
+ */
+function dedupeByRules(rows) {
+  // helper to collapse "5005 Old Midlothian Tpke #74"
+  // and " 5005 OLD MIDLOTHIAN TPKE #74 " into the SAME key:
+  const normalizeAddr = (addr = "") =>
+    addr
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, ""); // drop every non‑alphanumeric
+
+  // 1) Group by normalized address
+  const byKey = rows.reduce((map, r) => {
+    const key = normalizeAddr(r.ADDRESS);
+    if (!map[key]) map[key] = [];
+    map[key].push(r);
+    return map;
+  }, {});
+
+  const survivors = [];
+
+  for (const group of Object.values(byKey)) {
+    // if only one record, we keep it
+    if (group.length === 1) {
+      survivors.push(group[0]);
+      continue;
+    }
+
+    // parse date & amount once
+    group.forEach((r) => {
+      r._date = new Date(r.FILING_DATE);
+      r._amount = parseFloat(r.AMOUNT) || 0;
+    });
+
+    // exactly two, same plaintiff & amount → keep the SECOND
+    if (
+      group.length === 2 &&
+      group[0]._amount === group[1]._amount &&
+      group[0].PLAINTIFF === group[1].PLAINTIFF
+    ) {
+      survivors.push(group[1]);
+      continue;
+    }
+
+    // otherwise, apply your tie‑break cascade:
+    // a) most recent date
+    let maxTs = Math.max(...group.map((r) => r._date.getTime()));
+    let candidates = group.filter((r) => r._date.getTime() === maxTs);
+
+    // b) if tie → highest amount
+    if (candidates.length > 1) {
+      const maxAmt = Math.max(...candidates.map((r) => r._amount));
+      candidates = candidates.filter((r) => r._amount === maxAmt);
+    }
+
+    // c) if tie → prefer “State Tax Lien”
+    if (candidates.length > 1) {
+      const stateTax = candidates.filter((r) =>
+        /State Tax Lien/i.test(r.FILE_TYPE)
+      );
+      if (stateTax.length) candidates = stateTax;
+    }
+
+    // d) if still tie, pick the first
+    survivors.push(candidates[0]);
+  }
+
+  return survivors;
+}
+
+async function downloadAndEmailDaily(req, res, next) {
+  try {
+    // ─── 1) Prepare a clean directory ────────────────────────────────
+    if (fs.existsSync(DAILY_DIR)) {
+      fs.rmSync(DAILY_DIR, { recursive: true, force: true });
+    }
+    fs.mkdirSync(DAILY_DIR, { recursive: true });
+
+    // ─── 2) Download the latest ZIP and move it under DAILY_DIR ──────
+    const tempZip = await downloadLatestZip();
+    const zipName = path.basename(tempZip);
+    const finalZip = path.join(DAILY_DIR, zipName);
+    fs.renameSync(tempZip, finalZip);
+
+    // ─── 3) Unzip in place ──────────────────────────────────────────
+    await unzipPassworded(finalZip, DAILY_DIR, process.env.SFTP_ZIP_PASSWORD);
+
+    // ─── 4) Collect all non‑.zip files as attachments ───────────────
+    const attachments = fs
+      .readdirSync(DAILY_DIR)
+      .filter((f) => !f.toLowerCase().endsWith(".zip"))
+      .map((f) => ({ filename: f, path: path.join(DAILY_DIR, f) }));
+
+    // initialize counts
+    let totalCount = 0;
+    let stateCount = 0;
+    let federalCount = 0;
+
+    // ─── 5) Find & parse the CSV ────────────────────────────────────
+    const csvAttachment = attachments.find(
+      (a) => path.extname(a.filename).toLowerCase() === ".csv"
+    );
+    if (csvAttachment) {
+      const raw = fs.readFileSync(csvAttachment.path, "utf8");
+
+      // normalize just like your other imports
+      const csvText = raw
+        .replace(/\u0000/g, "")
+        .replace(/\r/g, "")
+        .replace(/" +/g, '"')
+        .replace(/"/g, "")
+        .trim();
+
+      const { data: allRows } = Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+      });
+
+      // 5a) compute overall counts
+      totalCount = allRows.length;
+      stateCount = allRows.filter((r) =>
+        /State Tax/i.test(r.FILE_TYPE || "")
+      ).length;
+      federalCount = allRows.filter((r) =>
+        /Federal Tax/i.test(r.FILE_TYPE || "")
+      ).length;
+
+      // 5b) filter‑out rule: PLAINTIFF “State of …” or STATE “OR”
+      const STATES = ["Oregon", "Texas", "Florida", "Tennessee", "Washington"];
+      const STATE_OF_RE = new RegExp(`^State of (?:${STATES.join("|")})`, "i");
+      const filtered = allRows.filter(
+        (r) => !STATE_OF_RE.test(r.PLAINTIFF) && r.STATE !== "OR"
+      );
+
+      // 5c) dedupe the filtered set
+      const survivors = dedupeByRules(filtered);
+
+      // 5d) compute what was dropped
+      const dropped = filtered.filter((r) => !survivors.includes(r));
+
+      // 5e) write out your two CSVs, swapping roles
+      const today = new Date().toISOString().split("T")[0]; // YYYY‑MM‑DD
+      const mailingPath = path.join(
+        DAILY_DIR,
+        `DirectMail${today}mailinglist.csv`
+      );
+      const dedupsPath = path.join(DAILY_DIR, `DirectMail${today}dedups.csv`);
+
+      // survivors → mailinglist
+      fs.writeFileSync(mailingPath, Papa.unparse(survivors), "utf8");
+      // dropped   → dedups
+      fs.writeFileSync(dedupsPath, Papa.unparse(dropped), "utf8");
+
+      // 5f) attach both
+      attachments.push(
+        { filename: path.basename(mailingPath), path: mailingPath },
+        { filename: path.basename(dedupsPath), path: dedupsPath }
+      );
+    }
+
+    // ─── 6) Send the email with all attachments ─────────────────────
+    await sendEmail({
+      to: process.env.ADMIN_EMAIL,
+      from: process.env.ADMIN_EMAIL,
+      subject: "Your Daily Report",
+      html: "<p>Please see the attached files.</p>",
+      attachments,
+    });
+
+    // ─── 7) Cleanup ────────────────────────────────────────────────
+    fs.rmSync(DAILY_DIR, { recursive: true, force: true });
+
+    // ─── 8) Return your record counts ──────────────────────────────
+    res.json({
+      success: true,
+      recordCount: { totalCount, stateCount, federalCount },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function buildDialerList(req, res, next) {
   try {
     const rawClients = req.body.clients; // [{ name, cell, caseNumber, domain }]
@@ -469,4 +686,5 @@ module.exports = {
   addNewReviewedClient,
   buildDialerList,
   addClientToPeriodHandler,
+  downloadAndEmailDaily,
 };

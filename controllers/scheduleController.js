@@ -3,11 +3,14 @@
 const Client = require("../models/Client");
 const PeriodContacts = require("../models/PeriodContacts");
 const contactCampaignMap = require("../libraries/contactCampaignMap");
+const rawSignature = require("../libraries/rawSignature");
+const emailSubjects = require("../libraries/emailSubjects");
 const textMessageLibrary = require("../libraries/textMessageLibrary");
 const DailySchedule = require("../models/DailySchedule");
 const {
   addVerifiedClientsAndReturnUpdatedLists,
 } = require("../utils/newPeriodContactChecks");
+const { sign } = require("jsonwebtoken");
 
 // ⚙️ Util: Remove expired token clients and flag for review
 function deleteBadTokenClients(clients) {
@@ -427,6 +430,7 @@ async function updateDailySchedule(req, res, next) {
 async function sendDailyText(req, res, next) {
   try {
     const date = req.body.date || getTodayDateString();
+
     const schedule = await DailySchedule.findOne({ date }).lean();
     if (!schedule) {
       return res.status(404).json({ message: `No schedule for ${date}` });
@@ -478,51 +482,70 @@ async function sendDailyText(req, res, next) {
 
 async function sendDailyEmail(req, res, next) {
   try {
-    const date = req.body.date || getTodayDateString();
+    const date = req.body.date || new Date().toISOString().split("T")[0];
     const schedule = await DailySchedule.findOne({ date }).lean();
     if (!schedule) {
       return res.status(404).json({ message: `No schedule for ${date}` });
     }
+    const DOMAINS = ["TAG", "WYNN", "AMITY"];
+    const domainLookup = DOMAINS.reduce((acc, domain) => {
+      acc[domain] = {
+        calendarScheduleUrl:
+          process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+        url: process.env[`${domain}_URL`] || "",
+        clientContactPhone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
+      };
+      return acc;
+    }, {});
 
     const results = await Promise.allSettled(
       schedule.emailQueue.map(async (recip) => {
-        const { email, name, caseNumber, domain, token, stagePiece } = recip;
-        // validate
-        if (!email) throw new Error("Missing email");
-        if (!["TAG", "WYNN", "AMITY"].includes(domain)) {
-          throw new Error(`Invalid domain "${domain}"`);
-        }
+        const { email, name, caseNumber, domain, stagePiece } = recip;
+        const signatureVars = {
+          phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`],
+          url: process.env[`${domain}_URL`],
+          processingEmail: process.env[`${domain}_PROCESSING_EMAIL`],
+          logoSrc: process.env[`${domain}_LOGO_URL`],
+          scheduleUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`],
+          contactName: process.env[`${domain}_CONTACT_NAME`] || "",
+        };
+        // 1) fetch our env‑driven config
 
-        // load & compile template
-        const tplPath = path.join(
+        // 2) render the signature
+        const sigTpl = rawSignature;
+        if (!sigTpl) throw new Error(`No signature template for: "${domain}"`);
+
+        const signatureHtml = signatureTpl({
+          schedulerUrl: signatureVars.scheduleUrl,
+          phone: signatureVars.phone,
+          url: signatureVars.url,
+          processingEmail: signatureVars.processingEmail,
+          logoSrc: signatureVars.logoSrc,
+          contactName: signatureVars.contactName,
+        });
+
+        // 3) compile your main body (which has {{{signature}}})
+        const bodyPath = path.join(
           __dirname,
           "../Templates/clientcontact",
           `${stagePiece}.hbs`
         );
-        if (!fs.existsSync(tplPath)) throw new Error("Template not found");
-        const source = fs.readFileSync(tplPath, "utf8");
-        const compiled = hbs.compile(source);
+        if (!fs.existsSync(bodyPath)) throw new Error("Template not found");
+        const bodySource = fs.readFileSync(bodyPath, "utf8");
+        const bodyTpl = hbs.compile(bodySource);
+        const html = bodyTpl({ name, caseNumber, signature: signatureHtml });
 
-        // build scheduler URL
-        const hostMap = {
-          TAG: "taxadvocategroup.com",
-          WYNN: "wynntaxsolutions.com",
-          AMITY: "amitytaxgroup.com",
-        };
-        const host = hostMap[domain];
-        const schedulerUrl = `https://${host}/schedule-my-call/${token}`;
-
-        const html = compiled({ name, caseNumber, schedulerUrl, token });
-
-        // attachments
+        // 4) collect attachments for this stagePiece
         const atts = [];
         for (const filename of attachmentsMapping[stagePiece] || []) {
           const p = path.join(__dirname, "../Templates/attachments", filename);
           if (fs.existsSync(p)) atts.push({ filename, path: p });
         }
 
-        const subject = emailSubjects[stagePiece] || "Update from Tax Team";
+        // 5) pick your subject
+        const subject = emailSubjects[stagePiece].subject;
 
+        // 6) SEND
         await sendEmail({
           to: email,
           subject,
@@ -530,7 +553,6 @@ async function sendDailyEmail(req, res, next) {
           domain,
           attachments: atts,
         });
-
         return { caseNumber, email, status: "sent" };
       })
     );
