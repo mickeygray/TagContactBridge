@@ -12,29 +12,22 @@ const DailyScheduleManager = () => {
     buildDailySchedule,
     processReviewActions,
     refreshDailyQueues,
-    updateScheduleSettings,
+    pace, // current pace from context
+    updateScheduleSettings, // helper to PUT new pace
   } = useContext(ScheduleContext);
 
   const { sendEmailBatch } = useContext(EmailContext);
   const { sendTextBatch } = useContext(TextContext);
-  const [pace, setPace] = useState(15);
+
   const [activeQueue, setActiveQueue] = useState("email");
   const [loading, setLoading] = useState(false);
+  const [newPace, setNewPace] = useState(pace);
 
-  // Sync pace with schedule if it changes
+  // whenever context.pace changes (from build or elsewhere), reset our local input
+  useEffect(() => {
+    setNewPace(pace);
+  }, [pace]);
 
-  // Update pace in backend
-  const handlePaceChange = async (e) => {
-    const newPace = parseInt(e.target.value, 10) || 1;
-    setPace(newPace);
-    try {
-      await updateScheduleSettings({ pace: newPace });
-    } catch (err) {
-      console.error("Error updating pace:", err);
-    }
-  };
-
-  // Build or rebuild the daily schedule
   const handleBuildSchedule = async () => {
     setLoading(true);
     try {
@@ -46,17 +39,33 @@ const DailyScheduleManager = () => {
     }
   };
 
-  // Send out either emails or texts in batches of `pace`
+  const handlePaceChange = async () => {
+    const num = parseInt(newPace, 10);
+    if (isNaN(num) || num < 1) {
+      return alert("Please enter a valid positive number");
+    }
+    setLoading(true);
+    try {
+      await updateScheduleSettings({ pace: num });
+      // context.pace will update → our useEffect will reset newPace
+    } catch (err) {
+      console.error("Error updating pace:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSend = async () => {
     setLoading(true);
     try {
       if (activeQueue === "email") {
+        // emails: send the entire queue
         await sendEmailBatch(emailQueue);
-      } else if (activeQueue === "text") {
-        const batch = textQueue.slice(0, pace);
-        await sendTextBatch(batch);
+      } else {
+        // texts: only up to pace
+        const slice = textQueue.slice(0, pace);
+        await sendTextBatch(slice);
       }
-      // after sending, rebuild so sent items drop out
       await refreshDailyQueues();
     } catch (err) {
       console.error("Error sending batch:", err);
@@ -66,10 +75,9 @@ const DailyScheduleManager = () => {
   };
 
   const handleApplyReviews = async () => {
-    if (toReview.length === 0) return;
+    if (!toReview.length) return;
     setLoading(true);
     try {
-      // toReview should have { caseNumber, decision } shapes
       await processReviewActions(toReview);
       await refreshDailyQueues();
     } catch (err) {
@@ -80,36 +88,35 @@ const DailyScheduleManager = () => {
   };
 
   const renderClientList = () => {
-    switch (activeQueue) {
-      case "text":
-        return (
-          <ClientAnalysisList
-            title={`📱 Text Queue (${textQueue.length})`}
-            textQueue={textQueue}
-            isDaily
-            activeQueue="text"
-          />
-        );
-      case "review":
-        return (
-          <ClientAnalysisList
-            title={`🚨 Needs Review (${toReview.length})`}
-            toReview={toReview}
-            isDaily
-            activeQueue="review"
-          />
-        );
-      case "email":
-      default:
-        return (
-          <ClientAnalysisList
-            title={`📨 Email Queue (${emailQueue.length})`}
-            emailQueue={emailQueue}
-            isDaily
-            activeQueue="email"
-          />
-        );
+    if (activeQueue === "text") {
+      return (
+        <ClientAnalysisList
+          title={`📱 Text Queue (${textQueue.length})`}
+          textQueue={textQueue}
+          isDaily
+          activeQueue="text"
+        />
+      );
     }
+    if (activeQueue === "review") {
+      return (
+        <ClientAnalysisList
+          title={`🚨 Needs Review (${toReview.length})`}
+          toReview={toReview}
+          isDaily
+          activeQueue="review"
+        />
+      );
+    }
+    // default email
+    return (
+      <ClientAnalysisList
+        title={`📨 Email Queue (${emailQueue.length})`}
+        emailQueue={emailQueue}
+        isDaily
+        activeQueue="email"
+      />
+    );
   };
 
   return (
@@ -125,19 +132,29 @@ const DailyScheduleManager = () => {
           🔄 {loading ? "Building..." : "Build Schedule"}
         </button>
 
-        <label className="flex items-center gap-2">
-          Pace:
+        <label>
+          <span>📊 Pace: {pace} per drop</span>
+          <br />
           <input
             type="number"
-            value={pace}
             min="1"
-            onChange={handlePaceChange}
             className="input w-20"
+            value={newPace}
+            onChange={(e) => setNewPace(e.target.value)}
           />
+
+          <button
+            className="btn btn-sm"
+            onClick={handlePaceChange}
+            disabled={loading || newPace === pace}
+          >
+            Change
+          </button>
+          <br />
+          <span className="ml-2 text-sm text-gray-600"></span>
         </label>
 
-        {/* Send button for email/text */}
-        {activeQueue === "email" || activeQueue === "text" ? (
+        {["email", "text"].includes(activeQueue) ? (
           <button
             className="button secondary"
             onClick={handleSend}
@@ -157,7 +174,6 @@ const DailyScheduleManager = () => {
               : `Send Texts (up to ${pace})`}
           </button>
         ) : (
-          // REVIEW queue: Apply bulk review decisions
           <button
             className="button secondary"
             onClick={handleApplyReviews}
@@ -179,20 +195,11 @@ const DailyScheduleManager = () => {
           >
             {
               {
-                email: "📨 Email",
-                text: "📱 Text",
-                review: "🚨 Review",
+                email: `📨 Email (${emailQueue.length})`,
+                text: `📱 Text (${textQueue.length})`,
+                review: `🚨 Review (${toReview.length})`,
               }[q]
             }
-            &nbsp;(
-            {
-              {
-                email: emailQueue,
-                text: textQueue,
-                review: toReview,
-              }[q].length
-            }
-            )
           </button>
         ))}
       </div>
@@ -201,4 +208,5 @@ const DailyScheduleManager = () => {
     </div>
   );
 };
+
 export default DailyScheduleManager;

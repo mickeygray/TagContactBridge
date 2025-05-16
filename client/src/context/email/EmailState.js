@@ -3,6 +3,7 @@ import EmailContext from "./emailContext";
 import emailReducer from "./emailReducer";
 import { useApi } from "../../utils/api";
 import MessageContext from "../../context/message/messageContext";
+import ScheduleContext from "../../context/schedule/scheduleContext";
 const EmailState = ({ children }) => {
   const initialState = {
     emailQueue: [], // List of emails to send
@@ -17,6 +18,7 @@ const EmailState = ({ children }) => {
   const api = useApi();
   api.defaults.withCredentials = true;
   const { showMessage, showError } = useContext(MessageContext);
+  const { refreshDailyQueues } = useContext(ScheduleContext);
   /**
    * Send email drop for a given domain
    * @param {string} domain (e.g. 'taxadvocate', 'wynn', 'amity')
@@ -82,7 +84,7 @@ const EmailState = ({ children }) => {
       const res = await api.post("/api/emails/daily", emailQueue);
       showMessage("Emails", `Sent ${res.data.results.length} emails.`, 200);
       // refresh so UI reflects that those have been removed
-
+      refreshDailyQueues();
       return res.data.results;
     } catch (err) {
       showError(

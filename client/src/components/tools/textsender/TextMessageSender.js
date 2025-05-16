@@ -1,6 +1,8 @@
 import React, { useState, useContext } from "react";
 import { csv } from "csvtojson";
 import TextContext from "../../../context/text/textContext";
+import ListContext from "../../../context/list/listContext";
+import MessageContext from "../../../context/message/messageContext";
 
 const predefinedMessages = [
   {
@@ -10,7 +12,7 @@ const predefinedMessages = [
   },
   {
     name: "Extension Notice",
-    text: "Hi {name}, Matthew from the Tax Advocate Group. We have been trying to reach you about dealing with 2024. Call us today to to update your case file.",
+    text: "Hi {name}, Cameron from the Tax Advocate Group. We have been trying to reach you about dealing with 2024. Call us today to to update your case file.",
     trackingNumber: "310-861-9120",
   },
   {
@@ -25,34 +27,37 @@ const predefinedMessages = [
   },
   {
     name: "Prospecting-3",
-    text: "Matt here. We spoke recently about your taxes, but haven't heard back from you. If you did not file 2024 or your refund was taken, call us, call 310-945-2810.",
+    text: "Cameron here. We spoke recently about your taxes, but haven't heard back from you. If you did not file 2024 or your refund was taken, call us, call 310-945-2810.",
     trackingNumber: "310-945-2810",
   },
   {
     name: "433a followup",
-    text: "Hi {name}. This is Matthew from your tax attorneys office. \n\n The Tax Filing deadline is today. We want to make sure you have submitted everything we need to file for you or take appropriate action to file an extension.\n\nIf you have not submitted anything, you need to call us today.If we have spoken to you already, please disregard this message. \n\nCall 818-926-4286, please do not respond via text. ",
+    text: "Hi {name}. This is Cameron from your tax attorneys office. \n\n The Tax Filing deadline is today. We want to make sure you have submitted everything we need to file for you or take appropriate action to file an extension.\n\nIf you have not submitted anything, you need to call us today.If we have spoken to you already, please disregard this message. \n\nCall 818-926-4286, please do not respond via text. ",
     trackingNumber: "818-926-4286",
   },
   {
     name: "Review Request",
-    text: "Hi {name}, its Matt from the tax office. Attorney staff reviewed your case, and have determined that your resolution requires updating financial documentation. Call 818-722-9677 so we can update your file and provide you with the proper documentation.",
+    text: "Hi {name}, its Cameron from the tax office. Attorney staff reviewed your case, and have determined that your resolution requires updating financial documentation. Call 818-722-9677 so we can update your file and provide you with the proper documentation.",
     trackingNumber: "818-722-9677",
   },
   {
     name: "TO followup",
-    text: "Hi {name}. This is Matthew from the tax attorney's office. We recently received documents for your case and need to discuss them. Can you call 818-937-0439 so we can review them. ",
+    text: "Hi {name}. This is Cameron from the tax attorney's office. We recently received documents for your case and need to discuss them. Can you call 818-937-0439 so we can review them. ",
     trackingNumber: "818-937-0439",
   },
 ];
 
 const TextMessageSender = () => {
   const { sendTextMessage } = useContext(TextContext);
-
+  const { filterList, filteredClients, clearFilterList } =
+    useContext(ListContext);
+  const { startLoading, stopLoading } = useContext(MessageContext);
+  const [domain, setDomain] = useState("TAG");
   const [uploadedList, setUploadedList] = useState([]);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState("");
-
+  const [isFiltered, setIsFiltered] = useState(false);
   // Format first name properly
   const formatName = (name) =>
     name
@@ -77,8 +82,11 @@ const TextMessageSender = () => {
               .trim()
               .replace(/\D/g, "");
             const pastDue = row["PastDue"] || row.pastdueamount || "";
+            const caseNumber = (row["Case #"] || row.caseNumber || "")
+              .toString()
+              .trim();
             return phone
-              ? { name, phoneNumber: phone, pastDueAmount: pastDue }
+              ? { name, phoneNumber: phone, pastDueAmount: pastDue, caseNumber }
               : null;
           })
           .filter(Boolean);
@@ -103,28 +111,51 @@ const TextMessageSender = () => {
       .replace("{pastDueAmount}", pastDueAmount ? `$${pastDueAmount}` : "");
   };
 
+  const handleFilterList = async () => {
+    if (!uploadedList.length) return;
+    try {
+      startLoading();
+      await filterList(uploadedList, domain);
+      setIsFiltered(true);
+      setFeedback(`✅ ${filteredClients.length} clients passed filter`);
+    } catch (err) {
+      console.error(err);
+      setFeedback("❌ Filter failed—see console");
+    } finally {
+      stopLoading();
+    }
+  };
+
+  const handleClearFilter = () => {
+    setIsFiltered(false);
+    clearFilterList();
+    setFeedback("Filter cleared, using raw list");
+  };
+
   const handleSend = async () => {
     if (!selectedMessage) {
       setFeedback("⚠️ Please select a text template");
       return;
     }
-    if (uploadedList.length === 0) {
-      setFeedback("⚠️ Upload at least one contact first");
+    const baseList = isFiltered ? filteredClients : uploadedList;
+    if (baseList.length === 0) {
+      setFeedback("⚠️ No contacts to send");
       return;
     }
 
     setSending(true);
     setFeedback("");
     try {
-      const payload = uploadedList.map((r) => ({
+      const payload = baseList.map((r) => ({
         trackingNumber: selectedMessage.trackingNumber,
         phoneNumber: r.phoneNumber,
         message: generateMessage(r),
       }));
       await sendTextMessage(payload);
       setFeedback("✅ Messages sent successfully");
-      setUploadedList([]); // clear after send
+      setUploadedList([]);
       setSelectedMessage(null);
+      if (isFiltered) handleClearFilter();
     } catch (err) {
       console.error(err);
       setFeedback("❌ Error sending messages");
@@ -166,23 +197,44 @@ const TextMessageSender = () => {
       </div>
 
       {/* Preview first 5 */}
-      {uploadedList.length > 0 && selectedMessage && (
-        <div className="preview-section mb-4">
-          <h4 className="font-semibold mb-2">🔍 Preview</h4>
-          <ul className="list-disc pl-5">
-            {uploadedList.slice(0, 5).map((r, i) => (
-              <li key={i}>
-                <strong>{r.name}:</strong> {generateMessage(r)}
-              </li>
-            ))}
-            {uploadedList.length > 5 && (
-              <li>…and {uploadedList.length - 5} more</li>
-            )}
-          </ul>
-        </div>
-      )}
+      {selectedMessage &&
+        (filteredClients?.length || uploadedList.length) > 0 && (
+          <div className="preview-section mb-4">
+            <h4 className="font-semibold mb-2">
+              🔍 {filteredClients?.length > 0 ? "Filtered Preview" : "Preview"}
+            </h4>
+            <ul className="list-disc pl-5">
+              {(filteredClients?.length > 0 ? filteredClients : uploadedList)
+                .slice(0, 5)
+                .map((r, i) => (
+                  <li key={i}>
+                    <strong>{r.name}:</strong> {generateMessage(r)}
+                  </li>
+                ))}
+              {(filteredClients?.length > 0 ? filteredClients : uploadedList)
+                .length > 5 && (
+                <li>
+                  …and{" "}
+                  {(filteredClients?.length > 0
+                    ? filteredClients
+                    : uploadedList
+                  ).length - 5}{" "}
+                  more
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
 
       {/* Send Button */}
+      <select name="domain" onChange={(e) => setDomain(e.target.value)}>
+        <option value="TAG">TAG</option>
+        <option value="AMITY">AMITY</option>
+        <option value="WYNN">WYNN</option>
+      </select>
+      <button className="button primary" onClick={handleFilterList}>
+        Filter Uploaded List
+      </button>
       <button
         className="button primary"
         onClick={handleSend}

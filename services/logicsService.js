@@ -7,7 +7,7 @@ const config = {
   },
   WYNN: {
     baseUrl: process.env.WYNN_LOGICS_API_URL, // e.g. "https://wynntax.logiqs.com/publicapi/2020-02-22"
-    apiKey: process.env.WYNN_LOGICS_KEY,
+    apiKey: process.env.WYNN_LOGICS_API_KEY,
   },
   AMITY: {
     baseUrl: process.env.AMITY_LOGICS_API_URL, // if/when you need Amity file imports
@@ -124,14 +124,13 @@ async function fetchBillingSummary(domain, caseNumber) {
     });
 
     const summary = response.data.data;
-    console.log(response.data);
+    console.log(summary);
     return summary;
   } catch (error) {
     console.error(
       `❌ Error fetching PastDue for case #${caseNumber}:`,
       error.message
     );
-    return 0;
   }
 }
 

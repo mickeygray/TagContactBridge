@@ -6,12 +6,25 @@ const scheduleReducer = (state, action) => {
         toReview: action.payload.toReview || [],
         emailQueue: action.payload.emailQueue || [],
         textQueue: action.payload.textQueue || [],
+        pace: action.payload.pace || 15,
+      };
+    case "REFRESH_QUEUES":
+      return {
+        ...state,
+        toReview: action.payload.toReview || [],
+        emailQueue: action.payload.emailQueue || [],
+        textQueue: action.payload.textQueue || [],
       };
 
     case "SET_LOADING":
       return {
         ...state,
         loading: true,
+      };
+    case "UPDATE_SETTINGS":
+      return {
+        ...state,
+        ...action.payload,
       };
 
     case "SKIP CLIENT":

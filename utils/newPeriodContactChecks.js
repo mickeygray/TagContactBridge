@@ -230,6 +230,7 @@ async function checkClientActivities(client) {
     .map((a) => new Date(a.CreatedDate).getTime());
 
   const cutoffMs = cutoff.getTime();
+  const CONVERSION_WINDOW_MS = 1000;
   const sinceDateMs = client.sinceDate;
   const nowMs = Date.now();
 
@@ -243,7 +244,8 @@ async function checkClientActivities(client) {
     if (convTimes.some((c) => Math.abs(c - ts) <= CONVERSION_WINDOW_MS)) {
       continue;
     }
-
+    const STATUS_CHANGE_RE =
+      /status\s+changed\s+(?:from\s*([^,.;]+)\s*)?to\s*([^,.;]+)/i;
     // parse out the new status
     const m = raw.match(STATUS_CHANGE_RE);
     const when = new Date(ts).toLocaleString("en-US", {

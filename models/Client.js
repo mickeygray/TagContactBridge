@@ -32,8 +32,6 @@ const clientSchema = new mongoose.Schema({
     enum: ["active", "partial", "adserv", "inactive", "inReview", "delinquent"],
     default: "active",
   },
-  token: { type: String },
-  tokenExpiresAt: { type: Date },
   createDate: { type: String },
   invoiceCount: { type: Number },
   lastInvoiceAmount: { type: Number },

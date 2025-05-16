@@ -19,54 +19,96 @@ router.use(authMiddleware, requireAdmin);
  * body: { list: [{email,name,cell,caseNumber,token}], subject, template, domain, attachment }
  */
 router.post("/send", async (req, res, next) => {
-  const { list, subject, template, domain, attachment } = req.body;
-  if (!Array.isArray(list) || !subject || !template || !domain) {
-    return res.status(400).json({ message: "Missing required fields." });
-  }
-
   try {
-    // Load and compile template
-    const templatePath = path.join(
+    const { list, template } = req.body;
+    if (!Array.isArray(list) || !template) {
+      return res
+        .status(400)
+        .json({ message: "Missing required fields: list or template" });
+    }
+    const domainHostMap = {
+      TAG: "taxadvocategroup.com",
+      WYNN: "wynntaxsolutions.com",
+      AMITY: "amitytaxgroup.com",
+    };
+    // load & compile the body template from marketingemails/
+    const bodyPath = path.join(
       __dirname,
-      "../Templates",
+      "../Templates/marketingemails",
       `${template}.hbs`
     );
-    if (!fs.existsSync(templatePath)) throw new Error("Template not found");
-    const source = fs.readFileSync(templatePath, "utf8");
-    const compiled = hbs.compile(source);
+    if (!fs.existsSync(bodyPath)) {
+      return res
+        .status(404)
+        .json({ message: `Template not found: ${template}` });
+    }
+    const bodySource = fs.readFileSync(bodyPath, "utf8");
+    const bodyTpl = hbs.compile(bodySource);
 
-    // Send to each recipient
     const results = await Promise.allSettled(
-      list.map(async (recipient) => {
-        const { email, name, cell, caseNumber, token } = recipient;
-        if (!email) throw new Error("Invalid recipient");
-
-        // Build scheduler URL
-        const baseMap = {
-          TAG: "taxadvocategroup.com",
-          WYNN: "wynntaxsolutions.com",
-          AMITY: "amitytaxgroup.com",
+      list.map(async (recip) => {
+        const {
+          email,
+          name,
+          caseNumber,
+          token,
+          domain,
+          senderEmailPrefix,
+          senderName,
+        } = recip;
+        if (!email) {
+          throw new Error("Invalid recipient (missing email)");
+        }
+        if (!["TAG", "WYNN", "AMITY"].includes(domain)) {
+          throw new Error(`Invalid domain "${domain}"`);
+        }
+        const host = domainHostMap[domain];
+        const from = `${senderName} <${senderEmailPrefix}@${host}>`;
+        // 1) gather per-domain env vars
+        const vars = {
+          scheduleUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+          url: process.env[`${domain}_URL`] || "",
+          phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
+          processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
+          logoSrc: process.env[`${domain}_LOGO_URL`] || "",
+          contactName: process.env[`${domain}_CONTACT_NAME`] || "",
         };
-        const host = baseMap[domain] || baseMap.TAG;
-        const schedulerUrl = `https://${host}/schedule-my-call/${token}`;
 
-        // Render HTML
-        const html = compiled({ name, cell, caseNumber, schedulerUrl });
+        // 2) render signature
+        const signatureTpl = loadSignatureTpl(domain);
+        const signatureHtml = signatureTpl(vars);
 
-        // Prepare attachments
-        let attachments = [];
-        if (
-          attachment &&
-          fs.existsSync(path.join(__dirname, "../Templates", attachment))
-        ) {
-          attachments.push({
-            filename: attachment,
-            path: path.join(__dirname, "../Templates", attachment),
-          });
+        // 3) render body, injecting {{{signature}}}
+        const html = bodyTpl({
+          name,
+          phone: vars.phone,
+          signature: signatureHtml,
+        });
+
+        // 4) collect attachments for this marketing template
+        const atts = [];
+        for (const fn of attachmentsMapping[template] || []) {
+          const p = path.join(__dirname, "../Templates/attachments", fn);
+          if (fs.existsSync(p)) {
+            atts.push({ filename: fn, path: p });
+          }
         }
 
-        // Send
-        await sendEmail({ to: email, subject, html, domain, attachments });
+        // 5) pick subject (fallback to a generic)
+        const subject =
+          (emailSubjects[template] && emailSubjects[template].subject) ||
+          `Update from ${domain}`;
+
+        // 6) send
+        await sendEmail({
+          to: email,
+          from,
+          subject,
+          html,
+          domain,
+          attachments: atts,
+        });
+
         return { email, status: "sent" };
       })
     );

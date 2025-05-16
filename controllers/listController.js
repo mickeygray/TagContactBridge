@@ -2,6 +2,7 @@ const logicsService = require("../services/logicsService");
 const {
   addVerifiedClientsAndReturnReviewList,
 } = require("../utils/bulkAddClientsChecks");
+const { singleListFilter } = require("../utils/singleListFilter");
 const Client = require("../models/Client");
 const PeriodContacts = require("../models/PeriodContacts");
 const settlementOfficers = require("../libraries/settlementOfficers");
@@ -72,250 +73,94 @@ async function postNCOA(req, res, next) {
  * GET /api/list/buildSchedule
  */
 // POST /api/buildPeriod
+function getTomorrowDateOnly() {
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const dateOnly = tomorrow.toISOString().split("T")[0];
+  return new Date(dateOnly);
+}
+
 async function buildSchedule(req, res, next) {
   try {
-    const {
-      contactAge, // { from?, to? } in days
-      invoiceAge, // { from?, to? } in days
-      invoiceAmount, // { min?, max? }
-      invoiceCount, // { min?, max? }
-      totalPayments, // { min?, max? }
-      prospectReceived, // boolean: have they seen this stage already?
-      domain, // optional domain filter
-      stage, // campaign stage name
-    } = req.body;
-    console.log(req.body);
+    const { domain, stage } = req.body;
+    console.log("🔎 buildSchedule payload:", req.body);
+    const recentPeriods = await PeriodContacts.find() // only the same stage
+      .sort({ periodStartDate: -1 })
+      .limit(4)
+      .lean();
+    const contactedClientIDs = recentPeriods
+      .filter((p) => p.createDateStage === stage)
+      .flatMap((p) => p.contactedClientIDs);
+    // 1) Fetch all active/partial clients (optionally filter by domain)
+    const baseFilter = { status: { $in: ["active", "partial"] } };
+    if (domain) baseFilter.domain = domain;
+    const allClients = await Client.find(baseFilter).lean();
+    console.log(`⚙️  Loaded ${allClients.length} clients`);
 
-    const daysToMs = (d) => d * 24 * 60 * 60 * 1000;
+    // 2) Hard‑coded filtering
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    const passed = [];
+    const skipped = [];
 
-    // 1️⃣ Turn `{ from?, to? }` in days into real Dates (or null)
-    const parseDayRange = ({ from, to } = {}) => ({
-      from: from != null ? new Date(Date.now() - daysToMs(from)) : null,
-      to: to != null ? new Date(Date.now() - daysToMs(to)) : null,
-    });
+    for (const c of allClients) {
+      const rm = []; // reviewMessages
 
-    // 2️⃣ Build the `$or` date clause for lastContactDate ⧸ createDate
-    function buildDateQuery(field, { from, to }) {
-      // if neither bound supplied, no clause at all
-      if (!from && !to) return {};
-      const range = {};
-      if (from) range.$lte = from;
-      if (to) range.$gte = to;
-      return {
-        $or: [
-          { [field]: range },
-          { lastContactDate: { $exists: false }, createDate: range },
-        ],
-      };
+      const lastPay = c.totalPayment || 0;
+      const lastInvAmt = c.lastInvoiceAmount || 0;
+      const lastInvDate = c.lastInvoiceDate
+        ? new Date(c.lastInvoiceDate)
+        : null;
+
+      if (lastPay > 50000) {
+        rm.push(`[skip] ${c.caseNumber}: totalPayment > 50000`);
+      } else if (lastInvDate && lastInvDate > sixtyDaysAgo) {
+        rm.push(`[skip] ${c.caseNumber}: lastInvoiceDate within 60 days`);
+      } else if (lastInvAmt < -2000) {
+        rm.push(`[skip] ${c.caseNumber}: lastInvoiceAmount < -2000`);
+      } else if (
+        Array.isArray(c.stagesReceived) &&
+        c.stagesReceived.includes(stage)
+      ) {
+        rm.push(`[skip] ${c.caseNumber}: already received stage "${stage}"`);
+      } else if (contactedClientIDs.includes(c._id.toString())) {
+        rm.push(
+          `[skip] ${c.caseNumber}: contacted for "${stage}" in one of last 4 periods`
+        );
+      }
+
+      if (rm.length) {
+        skipped.push({ ...c, reviewMessages: rm });
+      } else {
+        passed.push(c);
+      }
     }
 
-    // 3️⃣ Build a simple numeric range query
-    function buildRangeQuery(field, { min, max } = {}) {
-      const range = {};
-      if (min != null) range.$gte = min;
-      if (max != null) range.$lte = max;
-      return Object.keys(range).length ? { [field]: range } : {};
-    }
-
-    const allPeriods = await PeriodContacts.find({}).lean();
-    const excludedIds = new Set(
-      allPeriods.flatMap((p) =>
-        p.createDateClientIDs.map((id) => id.toString())
-      )
+    console.log(
+      `✅ ${passed.length} candidates passed; ${skipped.length} skipped`
     );
 
-    /**
-     * Returns true if this client should remain in the candidate list.
-     * Skips if:
-     *  - no createDate
-     *  - already saw this stage (and prospectReceived===false)
-     *  - already delinquent
-     *  - already has 3+ reviewDates
-     *  - already in an active period
-     */
-
-    function hasRecentReview(reviewDates) {
-      if (!Array.isArray(reviewDates) || reviewDates.length === 0) {
-        return false;
-      }
-
-      // Compute the cutoff for “3 business days ago”
-      function getThreeBusinessDaysAgo(from = new Date()) {
-        // Mon–Wed → subtract 5, Thu–Fri → subtract 3
-        const OFFSETS = { 1: 5, 2: 5, 3: 5, 4: 3, 5: 3 };
-        const dow = from.getDay(); // 0=Sun, 1=Mon…6=Sat
-        const daysBack = OFFSETS[dow] ?? 3; // default 3 for Sat/Sun
-        return new Date(from.getTime() - daysBack * 24 * 60 * 60 * 1000);
-      }
-
-      const cutoff = getThreeBusinessDaysAgo();
-      return reviewDates.some((dateStr) => {
-        const d = new Date(dateStr);
-        return d >= cutoff;
-      });
-    }
-    function redundancyFilter(client, { prospectReceived = true, stage = "" }) {
-      const {
-        _id,
-        caseNumber,
-        createDate,
-        delinquentAmount = 0,
-        reviewDates = [],
-        stagesReceived = [],
-      } = client;
-
-      // reset any old message
-      const reviewMessages = [];
-      // 1️⃣ Must have a createDate
-      if (!createDate) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: missing createDate`
-        );
-        return client;
-      }
-
-      // 2️⃣ Reviewed too recently?
-      if (hasRecentReview(reviewDates)) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: reviewed within last 3 business days.`
-        );
-        return client;
-      }
-
-      // 3️⃣ If they’ve already seen this stage and we’re not re-sending it, skip
-      if (prospectReceived === false && stagesReceived.includes(stage)) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: already received stage '${stage}'`
-        );
-        return client;
-      }
-
-      // 4️⃣ Already flagged delinquent?
-      if (delinquentAmount > 0) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: already delinquent`
-        );
-        return client;
-      }
-
-      // 5️⃣ “Three-strikes” rule
-      if (reviewDates.length >= 3) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: 3+ prior reviewDates`
-        );
-        return client;
-      }
-
-      // 6️⃣ Already in any active period?
-      if (excludedIds.has(String(_id))) {
-        reviewMessages.push(
-          `[buildSchedule] Skipping ${caseNumber}: already in a period`
-        );
-        return client;
-      }
-
-      // ✅ passed all redundancy checks
-      return { ...client, reviewMessages };
-    }
-
-    // 4️⃣ Resolve “maxTotalPayments” if the user passed either a number or an object
-    function resolveMaxTotalPayments(tp) {
-      if (tp == null) return null;
-      if (typeof tp === "number" || typeof tp === "string") {
-        const n = Number(tp);
-        return isNaN(n) ? null : n;
-      }
-      if (typeof tp === "object") {
-        const n = Number(tp.max);
-        return isNaN(n) ? null : n;
-      }
-      return null;
-    }
-
-    // 5️⃣ Build your base query step by step
-    const now = Date.now();
-    const contactCutoffs = parseDayRange(contactAge);
-    const invoiceCutoffs = parseDayRange(invoiceAge);
-    const maxTotalPayments = resolveMaxTotalPayments(totalPayments);
-
-    let baseQuery = {
-      status: { $in: ["active", "partial"] },
-      ...buildDateQuery("lastContactDate", contactCutoffs),
-      ...buildDateQuery("lastInvoiceDate", invoiceCutoffs),
-      ...buildRangeQuery("lastInvoiceAmount", invoiceAmount),
-      ...buildRangeQuery("invoiceCount", invoiceCount),
-      // only include totalPayment filter if user really passed something
-      ...(totalPayments != null
-        ? buildRangeQuery("totalPayment", { max: maxTotalPayAmt })
-        : {}),
-    };
-
-    // optional domain
-    if (domain) baseQuery.domain = domain;
-
-    // optional “haven’t yet seen this stage”
-    if (prospectReceived === false) {
-      baseQuery.stagesReceived = { $ne: stage };
-    }
-
-    // DEV-only: inspect your final query
-    console.debug(
-      "🔍 buildSchedule query:",
-      JSON.stringify(baseQuery, null, 2)
-    );
-
-    // 6️⃣ Fire it
-    const rawClients = await Client.find(baseQuery).lean();
-    // 5️⃣ Fetch matching clients
-
-    console.log(rawClients, "RAWWWWW");
-    const annotated = rawClients.map((c) =>
-      redundancyFilter(c, { prospectReceived, stage })
-    );
-
-    // …then pull out those that passed vs. those we skipped:
-    const freshClients = annotated.filter((c) => !c.reviewMessage);
-    const skippedClients = annotated.filter((c) => c.reviewMessage);
-    // 7️⃣ Enrich & flag each one, passing its own sinceDate
+    // 3) Vet against invoices/billing/activity logic
     const { toReview, partial, verified } =
-      await addVerifiedClientsAndReturnUpdatedLists(
-        freshClients,
-        maxTotalPayments
-      );
+      await addVerifiedClientsAndReturnUpdatedLists(passed);
 
-    // 7️⃣ Partition into “pass” vs “needs review”
-
-    function getNext3AM() {
-      const now = new Date();
-      const candidate = new Date(now);
-
-      // if it’s already 3 AM or later today, bump to tomorrow
-      if (now.getHours() >= 3) {
-        candidate.setDate(now.getDate() + 1);
-      }
-      // force the time to 3:00:00.000
-      candidate.setHours(3, 0, 0, 0);
-      return candidate;
-    }
-    // 8️⃣ Upsert your PeriodContacts document
+    // 4) Create new period
     const newPeriod = await PeriodContacts.create({
-      createDateStage: req.body.stage,
-      periodStartDate: getNext3AM(), // tomorrow
-      filters: req.body, // snapshot
+      createDateStage: stage,
+      periodStartDate: getTomorrowDateOnly(),
+      filters: {}, // we dropped the old dynamic filters
       createDateClientIDs: verified.map((v) => v._id),
     });
 
-    // 9️⃣ Respond to the front end
-    return res.json({
+    // 5) Respond
+    res.json({
       message: "New period created",
       periodInfo: {
         id: newPeriod._id,
         startDate: newPeriod.periodStartDate,
         stage,
-        periodSize: newPeriod.createDateClientIDs.length,
+        periodSize: verified.length,
       },
       verified,
-      toReview: [...toReview, ...skippedClients],
+      toReview: [...toReview, ...skipped],
       partial,
     });
   } catch (err) {
@@ -675,13 +520,29 @@ async function buildDialerList(req, res, next) {
     next(err);
   }
 }
+async function filterList(req, res, next) {
+  try {
+    const { clients, domain } = req.body;
+    if (!Array.isArray(clients)) {
+      return res
+        .status(400)
+        .json({ message: "Bad request: `clients` must be an array" });
+    }
 
+    const filteredClients = await singleListFilter(clients, domain);
+    console.log(filteredClients);
+    return res.json(filteredClients);
+  } catch (err) {
+    next(err);
+  }
+}
 // 7) build final list
 
 module.exports = {
   postNCOA,
   parseZeroInvoices,
   addCreateDateClients,
+  filterList,
   buildSchedule,
   addNewReviewedClient,
   buildDialerList,

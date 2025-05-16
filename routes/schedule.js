@@ -11,5 +11,5 @@ router.use(authMiddleware);
 
 router.post("/build", ctrl.buildDailySchedule);
 router.get("/refresh", ctrl.refreshDailySchedule);
-router.put("/update", ctrl.updateDailySchedule);
+router.put("/pace", ctrl.updateDailySchedule);
 module.exports = router;

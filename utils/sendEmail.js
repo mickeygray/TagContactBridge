@@ -56,7 +56,7 @@ const sendEmail = async ({
   };
   const fromEmail = fromMap[domain?.toUpperCase()] || from;
   const mailOptions = {
-    from: fromEmail,
+    from: from ? from : fromEmail,
     to,
     subject,
     text: text || "",

@@ -9,6 +9,7 @@ const ScheduleState = (props) => {
     toReview: [],
     textQueue: [],
     loading: false,
+    pace: 0,
     error: null,
   };
 
@@ -31,7 +32,7 @@ const ScheduleState = (props) => {
 
   // 1. Settings only:
   const updateScheduleSettings = async (settings) => {
-    const res = await api.put("/api/schedule", settings);
+    const res = await api.put("/api/schedule/pace", settings);
     dispatch({ type: "UPDATE_SETTINGS", payload: res.data });
   };
 
@@ -53,6 +54,7 @@ const ScheduleState = (props) => {
         emailQueue: state.emailQueue,
         toReview: state.toReview,
         textQueue: state.textQueue,
+        pace: state.pace,
         loading: state.loading,
         error: state.error,
         skipDailyClientProcessing,

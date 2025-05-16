@@ -3,10 +3,10 @@ const hbs = require("handlebars");
 
 const rawSignatureTpl = `
   <p style="font-family:Arial,sans-serif;font-size:14px;margin-top:10px;">
-    To schedule your appointment, please
-    <a href="{{schedulerUrl}}" style="color:#000; text-decoration:underline;">
-      click here
-    </a>.
+      <a
+              href="{{scheduleUrl}}"
+              style="padding: 10px 20px; background-color: #2a7ae2; color: #fff; text-decoration: none; border-radius: 5px;"
+            >Schedule Your Call</a>
   </p>
 
   <div style="width:100%; max-width:600px; margin-top:20px;
@@ -36,6 +36,7 @@ const rawSignatureTpl = `
         <a href="{{url}}" style="color:#000;text-decoration:none;">
           {{url}}
         </a>
+        
       </td>
     </tr>
   </table>

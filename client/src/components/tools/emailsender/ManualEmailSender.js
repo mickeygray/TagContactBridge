@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import { csv } from "csvtojson";
 import EmailContext from "../../../context/email/emailContext";
 import ListContext from "../../../context/list/listContext";
@@ -41,44 +41,34 @@ const originators = [
   { settlementOfficer: "Kassy Burton", emailPrefix: "kburton" },
   { settlementOfficer: "Andrew Wells", emailPrefix: "awells" },
 ];
-const defaultSenders = {
-  "past-due": { senderName: "Hailey Davis", senderEmailPrefix: "hdavis" },
-  "past-duewynn": { senderName: "Hailey Davis", senderEmailPrefix: "hdavis" },
-  "433a-1": { senderName: "Matt Anderson", senderEmailPrefix: "matt" },
-  "433a-2": { senderName: "Matt Anderson", senderEmailPrefix: "matt" },
-  "433a-1Wynn": { senderName: "Matt Anderson", senderEmailPrefix: "matt" },
-  "important-update": {
-    senderName: "Matt Anderson",
-    senderEmailPrefix: "matt",
-  },
-};
 
-const ManualEmailSender = () => {
-  const { sendTaxAdEmails, sendWynnEmails, sendAmityEmails } =
-    React.useContext(EmailContext);
+export default function ManualEmailSender() {
+  const { sendEmail } = useContext(EmailContext);
 
-  const { getClientCreatedTodayList, clients } = React.useContext(ListContext);
+  const { filterList, filteredList, clearFilteredList } =
+    useContext(ListContext);
 
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [uploadedList, setUploadedList] = useState([]);
+  const [filtering, setFiltering] = useState(false);
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState("");
-  const [smtpGateway, setSMTPGateway] = useState(null); // 🚀 Sends to correct API
-  const [senderName, setSenderName] = useState(""); // 🚀 Overrides if filled
-  const [senderEmailPrefix, setSenderEmailPrefix] = useState(""); // 🚀 Overrides if filled
+  const [customSender, setCustomSender] = useState(false);
+  const [domain, setDomain] = useState(null);
+  const [senderName, setSenderName] = useState("");
+  const [senderEmailPrefix, setSenderEmailPrefix] = useState("");
   const [subject, setSubject] = useState("");
   const [attachment, setAttachment] = useState("none");
 
-  // ✅ Format name properly (Title Case, Remove Extra Data)
-  const formatName = (name) => {
-    return name
+  // === helpers ===
+  const formatName = (name) =>
+    name
       .split("(")[0]
-      .replace(/\b\w/g, (char) => char.toUpperCase())
-      .replace(/\B\w/g, (char) => char.toLowerCase())
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .replace(/\B\w/g, (c) => c.toLowerCase())
       .trim();
-  };
 
-  // ✅ Process uploaded CSV
+  // === CSV upload ===
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file || !selectedTemplate) {
@@ -97,50 +87,22 @@ const ManualEmailSender = () => {
             Object.entries(row).map(([key, value]) => [key.trim(), value])
           );
 
-          const settlementOfficer = rowTrimmed["Settlement Officer"]?.trim();
-          const matchedOriginator = originators.find(
-            (o) => o.settlementOfficer === settlementOfficer
-          );
-
           // Use defaultSender for the selected template, fallback to originator or Matt Anderson
-          const defaultSender = defaultSenders[selectedTemplate] || {
-            senderName: "Matthew Anderson",
-            senderEmailPrefix: "matt",
-          };
 
           return {
             name: formatName(rowTrimmed.Name || ""),
             email: rowTrimmed.Email?.trim() || "",
             cell: rowTrimmed.Cell?.trim() || "",
+            caseNumber: rowTrimmed["Case #"]?.trim() || "",
             home: rowTrimmed.Home?.trim() || "",
             workPhone: rowTrimmed["Work Phone"]?.trim() || "",
             address: rowTrimmed.Address?.trim() || "",
             city: rowTrimmed.City?.trim() || "",
             state: rowTrimmed.State?.trim() || "",
-            lastInvoiceDate: rowTrimmed["Last Invoice Date"] || "N/A",
-            lastInvoiceAmount:
-              parseFloat(rowTrimmed["Last Invoice Amount"]) || null,
-            settlementOfficer: settlementOfficer || "N/A",
-            senderName:
-              senderName ||
-              matchedOriginator?.settlementOfficer ||
-              defaultSender.senderName,
-            senderEmailPrefix:
-              senderEmailPrefix ||
-              matchedOriginator?.emailPrefix ||
-              defaultSender.senderEmailPrefix,
           };
         });
 
-        const filteredData = processedData.filter(
-          (entry) =>
-            entry.email &&
-            (entry.lastInvoiceAmount === undefined ||
-              entry.lastInvoiceAmount === null ||
-              entry.lastInvoiceAmount !== 0)
-        );
-
-        setUploadedList(filteredData);
+        setUploadedList(processedData);
       } catch (error) {
         console.error("Error processing CSV:", error);
         alert("Error processing the uploaded file.");
@@ -150,236 +112,209 @@ const ManualEmailSender = () => {
     reader.readAsText(file);
   };
 
-  console.log(subject, uploadedList.length, selectedTemplate);
+  // === Filter list button ===
+  const handleFilterList = async () => {
+    if (!uploadedList.length) return;
+    setFiltering(true);
+    try {
+      await filterList(uploadedList);
+      setMessage(
+        `Filtered down to ${filteredList.length || "0"} passing records.`
+      );
+    } catch (err) {
+      setMessage("Filter failed—see console.");
+      console.error(err);
+    } finally {
+      setFiltering(false);
+    }
+  };
+
+  // === Send ===
   const handleSendEmails = async () => {
+    // 1) basic validation
     if (!subject || !selectedTemplate) {
-      setMessage("Please fill out all fields and upload a recipient list.");
+      setMessage("Please select template & subject.");
+      return;
+    }
+    if (!domain) {
+      setMessage("Please pick a domain gateway.");
       return;
     }
 
-    if (smtpGateway === null) {
-      setMessage("Please Select A Sender Gateway");
+    // 2) pick your list
+    const rawList = filteredList.length > 0 ? filteredList : uploadedList;
+    if (rawList.length === 0) {
+      setMessage("No recipients to send to.");
       return;
     }
 
     setSending(true);
     setMessage("");
 
-    const domainMap = {
-      TaxAdvocate: "TaxAdvocateGroup.com",
-      Wynn: "WynnTaxSolutions.com",
-      Amity: "AmityTaxGroup.com",
-    };
+    // 3) normalize each recipient
+    const processedList = rawList.map((r) => ({
+      name: formatName(r.name || r.Name || ""),
+      email: (r.email || r.Email || "").trim(),
+      cell: (r.cell || r.Cell || "").replace(/\D/g, ""),
+      senderName: senderName || "Cameron Pierce",
+      senderEmailPrefix: senderEmailPrefix || "cameron",
+    }));
 
-    const domain = domainMap[smtpGateway] || "TaxAdvocateGroup.com";
-    const rawList = uploadedList.length > 0 ? uploadedList : clients;
-
-    const processedList = rawList.map((recipient) => {
-      const name = recipient.name || recipient.Name || "Unnamed";
-      const formattedName = name
-        .split("(")[0]
-        .replace(/\b\w/g, (char) => char.toUpperCase())
-        .replace(/\B\w/g, (char) => char.toLowerCase())
-        .trim();
-
-      const matchedOriginator = originators.find(
-        (o) =>
-          o.settlementOfficer === recipient.settlementOfficer ||
-          o.settlementOfficer === recipient["Settlement Officer"]
-      );
-
-      const defaultSender = defaultSenders[selectedTemplate] || {
-        senderName: "Matthew Anderson",
-        senderEmailPrefix: "matt",
-      };
-
-      return {
-        name: formattedName,
-        email: recipient.email || recipient.Email || "",
-        cell: recipient.cell || recipient.Cell || "",
-        home: recipient.home || recipient.Home || "",
-        workPhone: recipient.workPhone || recipient["Work Phone"] || "",
-        address: recipient.address || recipient.Address || "",
-        city: recipient.city || recipient.City || "",
-        state: recipient.state || recipient.State || "",
-        lastInvoiceDate:
-          recipient.lastInvoiceDate || recipient["Last Invoice Date"] || "N/A",
-        lastInvoiceAmount:
-          parseFloat(
-            recipient.lastInvoiceAmount ||
-              recipient["Last Invoice Amount"] ||
-              "0"
-          ) || null,
-        settlementOfficer:
-          recipient.settlementOfficer ||
-          recipient["Settlement Officer"] ||
-          "N/A",
-        senderName:
-          senderName ||
-          matchedOriginator?.settlementOfficer ||
-          defaultSender.senderName,
-        senderEmailPrefix:
-          senderEmailPrefix ||
-          matchedOriginator?.emailPrefix ||
-          defaultSender.senderEmailPrefix,
-      };
-    });
-
+    // 4) build your payload
     const emailPayload = {
+      template: selectedTemplate,
       subject,
       attachment,
-      template: selectedTemplate,
-      list: processedList.map((recipient) => ({
-        ...recipient,
-        senderEmailFull: `${recipient.senderEmailPrefix}@${domain}`,
-      })),
+      domain, // e.g. "TAG", "WYNN", "AMITY"
+      list: processedList,
     };
 
+    // 5) send
     try {
-      if (smtpGateway === "TaxAdvocate") {
-        await sendTaxAdEmails(emailPayload);
-      } else if (smtpGateway === "Wynn") {
-        await sendWynnEmails(emailPayload);
-      } else if (smtpGateway === "Amity") {
-        await sendAmityEmails(emailPayload);
-      }
-
-      setMessage("Emails sent successfully.");
-    } catch (error) {
-      console.error("Error sending emails:", error);
-      setMessage("An error occurred while sending emails.");
+      await sendEmail(emailPayload);
+      setMessage("✅ Emails sent successfully!");
+      clearFilteredList();
+    } catch (err) {
+      console.error("Error sending emails:", err);
+      setMessage("❌ Error sending emails.");
     } finally {
       setSending(false);
     }
   };
 
+  // === render ===
   return (
     <div className="card email-sender-container">
       <h3 className="title">📩 Manual Email Sender</h3>
+
+      {/* template picker */}
+      <label>Template:</label>
+      <select onChange={(e) => setSelectedTemplate(e.target.value)}>
+        <option value="">Select…</option>
+        {emailTemplates.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
       <div className="form-group">
-        <label>📜 Email Template:</label>
-        <select
-          onChange={(e) => setSelectedTemplate(e.target.value)}
-          className="input-field"
-        >
-          <option value="">Select Template</option>
-          {emailTemplates.map((template) => (
-            <option key={template} value={template}>
-              {template}
-            </option>
-          ))}
-        </select>
-        <div className="form-group">
-          <label>✉️ Use Todays Client List:</label>
-          <button
-            onClick={(e) => getClientCreatedTodayList()}
-            className="btn btn-primary send-button"
-          >
-            Get Today's List
-          </button>
-        </div>
-      </div>
-      {/* Upload CSV */}
-      {selectedTemplate && (
-        <div className="form-group">
-          <label>📂 Upload CSV File:</label>
+        <label>
           <input
-            type="file"
-            accept=".csv"
-            onChange={handleFileUpload}
-            className="file-input"
-          />
+            type="checkbox"
+            checked={customSender}
+            onChange={() => setCustomSender((prev) => !prev)}
+          />{" "}
+          Use custom sender
+        </label>
+      </div>
+
+      {customSender ? (
+        <>
+          <div className="form-group">
+            <label>👤 Override Sender Name:</label>
+            <input
+              type="text"
+              value={senderName}
+              onChange={(e) => setSenderName(e.target.value)}
+              className="input-field"
+            />
+          </div>
+          <div className="form-group">
+            <label>📧 Override Sender Email Prefix:</label>
+            <input
+              type="text"
+              value={senderEmailPrefix}
+              onChange={(e) => setSenderEmailPrefix(e.target.value)}
+              className="input-field"
+            />
+          </div>
+        </>
+      ) : (
+        <div className="form-group">
+          <label>👤 Pick a settlement officer:</label>
+          <select
+            className="input-field"
+            value={senderName}
+            onChange={(e) => {
+              const sel = originators.find(
+                (o) => o.settlementOfficer === e.target.value
+              );
+              if (sel) {
+                setSenderName(sel.settlementOfficer);
+                setSenderEmailPrefix(sel.emailPrefix);
+              } else {
+                setSenderName("");
+                setSenderEmailPrefix("");
+              }
+            }}
+          >
+            <option value="">— select —</option>
+            {originators.map((o) => (
+              <option key={o.emailPrefix} value={o.settlementOfficer}>
+                {o.settlementOfficer}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
-      {/* Email Subject */}
-      <div className="form-group">
-        <label>✉️ Email Subject:</label>
-        <input
-          type="text"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          className="input-field"
-        />
-      </div>
+      {/* get today's list */}
+      <button onClick={handleFilterList}>Filter Uploaded List</button>
 
-      {/* Attachment */}
+      {/* file upload */}
+      {selectedTemplate && (
+        <>
+          <label>Upload CSV:</label>
+          <input type="file" accept=".csv" onChange={handleFileUpload} />
+        </>
+      )}
+
+      {/* subject & attachment */}
+      <label>Subject:</label>
+      <input value={subject} onChange={(e) => setSubject(e.target.value)} />
+
+      <label>Attach:</label>
+      <select
+        value={attachment}
+        onChange={(e) => setAttachment(e.target.value)}
+      >
+        <option value="none">None</option>
+        <option value="433a.pdf">433-a.pdf</option>
+        <option value="document.pdf">Tax Organizer TAG</option>
+        <option value="Amity TO New.pdf">Tax Organizer Amity</option>
+      </select>
+
+      {/* Filter button */}
+      <button
+        onClick={handleFilterList}
+        disabled={filtering || (!uploadedList.length && !filteredList.length)}
+      >
+        {filtering ? "Filtering…" : "Filter List"}
+      </button>
+
+      {/* gateway radio */}
       <div className="form-group">
-        <label>📎 Attachment:</label>
+        <label>🌐 Domain:</label>
         <select
-          value={attachment}
-          onChange={(e) => setAttachment(e.target.value)}
           className="input-field"
+          value={domain || ""}
+          onChange={(e) => setDomain(e.target.value)}
         >
-          <option value="none">None</option>
-          <option value="433a.pdf">433-a.pdf</option>
-          <option value="document.pdf">Tax Organizer TAG</option>{" "}
-          <option value="Amity TO New.pdf">Tax Organizer Amity</option>
+          <option value="" disabled>
+            Select domain
+          </option>
+          <option value="TAG">TAG</option>
+          <option value="WYNN">WYNN</option>
+          <option value="AMITY">AMITY</option>
         </select>
       </div>
 
-      {/* Sender Overrides */}
-      <div className="form-group">
-        <label>👤 Override Sender Name:</label>
-        <input
-          type="text"
-          value={senderName}
-          onChange={(e) => setSenderName(e.target.value)}
-          className="input-field"
-        />
-      </div>
-
-      <div className="form-group">
-        <label>📧 Override Sender Email Prefix:</label>
-        <input
-          type="text"
-          value={senderEmailPrefix}
-          onChange={(e) => setSenderEmailPrefix(e.target.value)}
-          className="input-field"
-        />
-      </div>
-
-      {/* Lead or Prospect Selection */}
-      <div className="form-group radio-group">
-        <h4>📂 Classify This List:</h4>
-        <label>
-          <input
-            type="radio"
-            checked={smtpGateway === "TaxAdvocate"}
-            onChange={() => setSMTPGateway("TaxAdvocate")}
-          />{" "}
-          Tax Ad
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={smtpGateway === "Wynn"}
-            onChange={() => setSMTPGateway("Wynn")}
-          />{" "}
-          Wynn
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={smtpGateway === "Amity"}
-            onChange={() => setSMTPGateway("Amity")}
-          />{" "}
-          Amity
-        </label>
-      </div>
-
-      {/* Send Button */}
-      <button
-        className="button primary send-button"
-        onClick={handleSendEmails}
-        disabled={sending}
-      >
-        {sending ? "🚀 Sending Emails..." : "📨 Send Emails"}
+      {/* send */}
+      <button onClick={handleSendEmails} disabled={sending}>
+        {sending ? "🚀 Sending…" : "📨 Send Emails"}
       </button>
 
       {message && <p className="message">{message}</p>}
     </div>
   );
-};
-
-export default ManualEmailSender;
+}

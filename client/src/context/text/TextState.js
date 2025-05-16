@@ -3,6 +3,7 @@ import TextContext from "./textContext";
 import textReducer from "./textReducer";
 import { useApi } from "../../utils/api";
 import MessageContext from "../../context/message/messageContext";
+import ScheduleContext from "../../context/schedule/scheduleContext";
 const TextState = (props) => {
   const initialState = {
     sending: false,
@@ -12,6 +13,7 @@ const TextState = (props) => {
 
   const [state, dispatch] = useReducer(textReducer, initialState);
   const { showMessage, showError } = useContext(MessageContext);
+  const { refreshDailyQueues } = useContext(ScheduleContext);
   const api = useApi();
   api.defaults.withCredentials = true;
 
@@ -45,7 +47,7 @@ const TextState = (props) => {
     try {
       const res = await api.post("/api/texts/daily", messagesPayload);
       showMessage("Texts", `Sent ${res.data.results.length} texts.`, 200);
-
+      refreshDailyQueues();
       return res.data.results;
     } catch (err) {
       showError(

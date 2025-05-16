@@ -5,8 +5,7 @@ const contactSchema = new mongoose.Schema({
   caseNumber: { type: String, required: true },
   email: { type: String },
   domain: { type: String, enum: ["TAG", "WYNN", "AMITY"], default: "TAG" }, // Optional, used in emailQueue
-  cell: { type: String }, // Optional, used in textQueue
-  stage: { type: String, required: true }, // e.g., "f433a", "penaltyAbatement"
+  cell: { type: String }, // Optional, used in textQueue// e.g., "f433a", "penaltyAbatement"
   stagePiece: { type: String, required: true }, // e.g., "433a Text 1"
   contactType: { type: String, enum: ["email", "text"], required: true },
   token: { type: String },

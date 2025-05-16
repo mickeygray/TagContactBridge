@@ -1,9 +1,9 @@
 import React, { useState, useContext } from "react";
-import SmartSearchFilter from "../../layout/SmartSearchFilter";
 import ListContext from "../../../context/list/listContext";
 import ClientAnalysisList from "../clientreview/ClientAnalysisList";
+
 const STAGE_OPTIONS = [
-  { value: "update433a", label: "Update 433a" },
+  { value: "update433a", label: "Update 433(a)" },
   { value: "penaltyAbatement", label: "Penalty Abatement" },
   { value: "taxOrganizer", label: "Tax Organizer" },
   { value: "taxDeadline", label: "Tax Deadline" },
@@ -17,36 +17,30 @@ export default function PeriodContactsFilter() {
   const { buildPeriod, toReview, partial, verified, periodInfo, clearPeriod } =
     useContext(ListContext);
 
-  console.log(toReview);
   const [stage, setStage] = useState("");
-  const [prospectReceived, setProspectReceived] = useState("");
-  const [otherFilters, setOtherFilters] = useState({});
 
   const handleStageChange = (e) => {
     setStage(e.target.value);
-    setProspectReceived("");
-    setOtherFilters({});
   };
 
   const fetchPeriodContacts = () => {
     if (!stage) return;
     buildPeriod({
       stage,
-      prospectReceived: prospectReceived === "yes",
-      ...otherFilters,
     });
   };
 
   return (
-    <div className="card">
-      <h3>Create A New Campaign Period</h3>
+    <div className="card p-4">
+      <h3 className="text-xl font-semibold mb-4">
+        📊 Create A New Campaign Period
+      </h3>
 
       {/* Stage selector */}
-      <div className="form-group">
-        <label htmlFor="stage-select">Stage:</label>
+      <div className="mb-4">
+        <label className="block font-medium mb-1">Stage:</label>
         <select
-          id="stage-select"
-          className="form-control"
+          className="input w-full"
           value={stage}
           onChange={handleStageChange}
         >
@@ -59,63 +53,46 @@ export default function PeriodContactsFilter() {
         </select>
       </div>
 
-      {/* Radios + Smart filters only after stage */}
+      {/* Static rule summary */}
       {stage && (
-        <>
-          <div className="inline-group">
-            <span className="inline-label">Has Received This Content?</span>
-            <label>
-              <input
-                type="radio"
-                name="prospectReceived"
-                value="yes"
-                checked={prospectReceived === "yes"}
-                onChange={(e) => setProspectReceived(e.target.value)}
-              />{" "}
-              Yes
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="prospectReceived"
-                value="no"
-                checked={prospectReceived === "no"}
-                onChange={(e) => setProspectReceived(e.target.value)}
-              />{" "}
-              No
-            </label>
-          </div>
-
-          <SmartSearchFilter onChange={setOtherFilters} />
-        </>
+        <div className="bg-gray-50 p-3 rounded mb-4 text-sm text-gray-800">
+          <p className="font-medium mb-1">Current inclusion rules:</p>
+          <ul className="list-disc list-inside space-y-1">
+            <li>No zero‑invoice clients</li>
+            <li>Last invoice between –2 000 and 50 000 (inclusive)</li>
+            <li>No new invoices in the past 60 days</li>
+            <li>Has not completed this stages content</li>
+          </ul>
+        </div>
       )}
 
-      <button
-        className="btn btn-primary mt-3"
-        disabled={!stage}
-        onClick={fetchPeriodContacts}
-      >
-        Apply Filters
-      </button>
-      <button
-        className="btn btn-danger mt-3"
-        disabled={!periodInfo}
-        onClick={() => clearPeriod()}
-      >
-        Period Analysis Complete
-      </button>
-      <div>
-        <br />
-        <br />
-        {periodInfo !== null && (
-          <ClientAnalysisList
-            periodInfo={periodInfo}
-            verified={verified}
-            partial={partial}
-            toReview={toReview}
-          />
-        )}
+      {/* Action buttons */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={fetchPeriodContacts}
+          disabled={!stage}
+          className="btn btn-primary"
+        >
+          Apply Filters
+        </button>
+        <button
+          onClick={clearPeriod}
+          disabled={!periodInfo}
+          className="btn btn-danger"
+        >
+          Period Analysis Complete
+        </button>
       </div>
+
+      {/* Results */}
+      {periodInfo && (
+        <ClientAnalysisList
+          periodInfo={periodInfo}
+          verified={verified}
+          partial={partial}
+          toReview={toReview}
+        />
+      )}
     </div>
   );
 }

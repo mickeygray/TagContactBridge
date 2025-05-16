@@ -9,16 +9,19 @@ export default (state, action) => {
       return {
         ...state,
       };
-    case "SKIP_CLIENT": {
-      const clientId = action.payload;
+    case "CLEAR_FILTER_LIST":
       return {
         ...state,
-        toReview: state.toReview.filter((c) => c._id !== clientId),
-        verified: state.verified.filter((c) => c._id !== clientId),
-        partial: state.partial.filter((c) => c._id !== clientId),
-        // if you have other lists (e.g. “hold”, “archived”), filter them here too
+        filteredClients: [],
       };
-    }
+    case "SKIP_CLIENT":
+      return {
+        ...state,
+        // remove any reviewClient whose caseNumber matches the payload
+        reviewClients: state.reviewClients.filter(
+          (c) => c.caseNumber !== action.payload
+        ),
+      };
     case "SET_RECORD_COUNT":
       return {
         ...state,
@@ -82,6 +85,11 @@ export default (state, action) => {
         prospectDialerList: action.payload,
         loading: false,
         error: null,
+      };
+    case "PREPARE_LIST":
+      return {
+        ...state,
+        filteredClients: action.payload,
       };
     default:
       return state;

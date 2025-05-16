@@ -69,7 +69,7 @@ const NewClientCreationForm = () => {
       initialPayment: "",
       secondPaymentDate: "",
       domain: "TAG",
-      autoPoa: false,
+      autoPOA: false,
     });
   };
   const handleReviewedAction = async (client, action) => {
@@ -161,8 +161,8 @@ const NewClientCreationForm = () => {
         <label className="form-field">
           Client Tier
           <select
-            name="autoPoa"
-            value={formData.autoPoa}
+            name="autoPOA"
+            value={formData.autoPOA}
             onChange={handleChange}
             className="form-input"
           >

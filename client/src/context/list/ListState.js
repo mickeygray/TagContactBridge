@@ -8,6 +8,7 @@ const ListState = (props) => {
     reviewClients: [],
     newClients: [],
     verified: [],
+    filteredClients: [],
     zeroInvoiceList: [],
     toReview: [],
     partial: [],
@@ -128,6 +129,10 @@ const ListState = (props) => {
     }
   };
 
+  const clearFilterList = () => {
+    dispatch({ type: "CLEAR_FILTER_LIST" });
+  };
+
   /**
    * Fetch all clients flagged 'inReview', sorted by reviewDate
    */
@@ -179,11 +184,37 @@ const ListState = (props) => {
   const removeClientFromUploadList = (client) => {
     dispatch({ type: "SKIP CLIENT", payload: client.caseNumber });
   };
+
+  const filterList = async (clientsArray) => {
+    try {
+      // POST to your new /filterList endpoint
+      const res = await api.post("/api/list/filterList", {
+        clients: clientsArray,
+      });
+
+      console.log(res.data);
+      dispatch({
+        type: "PREPARE_LIST",
+        payload: res.data,
+      });
+    } catch (err) {
+      dispatch({
+        type: "LIST_ERROR",
+        payload: err.response?.data?.message || err.message,
+      });
+      throw err;
+    }
+  };
+
+  const skipClient = (clientID) => {
+    dispatch({ type: "SKIP_CLIENT", payload: clientID });
+  };
   return (
     <ListContext.Provider
       value={{
         verified: state.verified,
         partial: state.partial,
+        filteredClients: state.filteredClients,
         toReview: state.toReview,
         periodInfo: state.periodInfo,
         reviewClients: state.reviewClients,
@@ -194,6 +225,9 @@ const ListState = (props) => {
         postNCOAList,
         buildPeriod,
         parseZeros,
+        skipClient,
+        filterList,
+        clearFilterList,
         downloadAndEmailDaily,
         buildDialerList,
         addCreateDateClients,

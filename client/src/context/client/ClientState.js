@@ -78,10 +78,11 @@ const ClientState = (props) => {
   /**
    * Update an existing scheduled client
    */
-  const processReviewedClient = async (client, action) => {
+  const processReviewedClient = async (client, action, clientState) => {
     try {
       const res = await api.post(`/api/clients/review`, { client, action });
-      dispatch({ type: "UPDATE_SCHEDULED_CLIENT", payload: res.data });
+      !clientState &&
+        dispatch({ type: "UPDATE_SCHEDULED_CLIENT", payload: res.data });
     } catch (error) {
       console.error("❌ Error updating scheduled client:", error);
     }

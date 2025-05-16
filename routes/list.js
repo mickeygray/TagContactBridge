@@ -13,6 +13,7 @@ const {
   addNewReviewedClient,
   parseZeroInvoices,
   buildDialerList,
+  filterList,
   downloadAndEmailDaily,
 } = require("../controllers/listController");
 
@@ -49,4 +50,6 @@ router.get("/reviewClients", async (req, res, next) => {
   }
 });
 router.post("/validate", buildDialerList);
+
+router.post("/filterList", filterList);
 module.exports = router;

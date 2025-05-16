@@ -112,22 +112,21 @@ async function flagAndUpdateDelinquent(client) {
   let summary;
   try {
     summary = await fetchBillingSummary(client.domain, client.caseNumber);
+    const pastDue = summary.PastDue ?? 0;
+    if (pastDue > 0) {
+      stampReview(
+        client,
+        `[Billing] ${client.caseNumber} PastDue=${pastDue} → flagging review`
+      );
+    }
+
+    return client;
   } catch (err) {
     return stampReview(
       client,
       `[Billing] fetch error for ${client.caseNumber}, flagging review`
     );
   }
-
-  const pastDue = summary.PastDue ?? 0;
-  if (pastDue > 0) {
-    stampReview(
-      client,
-      `[Billing] ${client.caseNumber} PastDue=${pastDue} → flagging review`
-    );
-  }
-
-  return client;
 }
 
 /**
@@ -160,24 +159,101 @@ async function reviewClientContact(client) {
     .filter((a) => /converted from prospect/i.test(`${a.Subject} ${a.Comment}`))
     .map((a) => Date.parse(a.CreatedDate));
 
-  const windowMs = 1000;
+  const CONVERSION_WINDOW_MS = 1000;
 
   // scan for “status changed”
   for (const a of activities) {
-    const ts = Date.parse(a.CreatedDate);
+    const ts = new Date(a.CreatedDate).getTime();
     if (ts <= cutoff.getTime()) continue;
 
-    const txt = `${a.Subject} ${a.Comment}`.toLowerCase();
-    if (!txt.includes("status changed")) continue;
-
-    // skip if within conversion window
-    if (convTimes.some((c) => Math.abs(c - ts) <= windowMs)) {
+    const raw = `${a.Subject || ""} ${a.Comment || ""}`;
+    if (!/status changed/i.test(raw)) continue;
+    if (convTimes.some((c) => Math.abs(c - ts) <= CONVERSION_WINDOW_MS)) {
       continue;
     }
+    const STATUS_CHANGE_RE =
+      /status\s+changed\s+(?:from\s*([^,.;]+)\s*)?to\s*([^,.;]+)/i;
+    // parse out the new status
+    const m = raw.match(STATUS_CHANGE_RE);
+    const when = new Date(ts).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
 
+    if (m) {
+      const [, oldStatus, newStatus] = m.map((s) => s.trim());
+
+      // 1) IGNORE the Wynn “Active Prospect → Pending Approval” step
+      if (
+        /Active Prospect/i.test(oldStatus) &&
+        /Pending Approval/i.test(newStatus)
+      ) {
+        continue; // skip stamping for this specific transition
+      }
+      if (
+        /Active Prospect/i.test(oldStatus) &&
+        /Active Prospect/i.test(newStatus)
+      ) {
+        continue; // skip stamping for this specific transition
+      }
+
+      if (/Lead/i.test(oldStatus) && /Active Prospect/i.test(newStatus)) {
+        continue; // skip stamping for this specific transition
+      }
+      if (/Lead/i.test(oldStatus) && /Pending Approval/i.test(newStatus)) {
+        continue; // skip stamping for this specific transition
+      }
+      if (
+        /Pending Approval/i.test(oldStatus) &&
+        /Active Client/i.test(newStatus)
+      ) {
+        continue; // skip stamping for this specific transition
+      }
+      if (/Pending Approval/i.test(oldStatus) && /TI/i.test(newStatus)) {
+        continue; // skip stamping for this specific transition
+      }
+
+      // — Tier 5 or Non‑Collectible → delete
+      if (/Tier\s*5/i.test(newStatus) || /Non-Collectible/i.test(newStatus)) {
+        await Client.deleteOne({ caseNumber: client.caseNumber });
+        return { deleted: true, caseNumber: client.caseNumber };
+      }
+
+      // — Tier 1 → POA update for saleDate clients; review for createDate clients
+      if (/Tier\s*1/i.test(newStatus)) {
+        const isSaleClient = !!client.saleDate && !client.createDate;
+        if (isSaleClient) {
+          // tag them so the scheduler knows this came via Tier1
+          client.autoPOA = true;
+
+          // still record their “poa” stage so you can see it on the client object
+          client.stage = "poa";
+          client.stagesReceived = [
+            ...new Set([...(client.stagesReceived || []), "poa"]),
+          ];
+          client.stagePieces = [
+            ...new Set([...(client.stagePieces || []), "POA Email 1"]),
+          ];
+
+          // bump lastContactDate so your window logic picks them up
+          client.lastContactDate = new Date();
+          return client;
+        }
+        // …else fall back to review
+        return stampReview(
+          client,
+          `[Activity] Tier 1 status change on ${when}`
+        );
+      }
+    }
+
+    // — any other status changed → generic review
     return stampReview(
       client,
-      `[Activity] ${client.caseNumber} status changed → flagging review`
+      `[Activity] status changed (“${a.Subject}”) on ${when}`
     );
   }
 

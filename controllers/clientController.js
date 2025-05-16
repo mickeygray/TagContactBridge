@@ -9,8 +9,9 @@ const DailySchedule = require("../models/DailySchedule"); // your daily schedule
 const PeriodContacts = require("../models/PeriodContacts");
 const sendEmail = require("../utils/sendEmail");
 const interactions = require("../utils/singleClientInteractions");
-
-const signatures = require("../libraries/emailSignatures"); // 🆕 import
+const { addAndVerifySingleClient } = require("../utils/newClientEntryChecks");
+const signature = require("../libraries/rawSignature");
+const emailSubjects = require("../libraries/emailSubjects"); // 🆕 import
 
 const upload = multer();
 async function purgeFromScheduleAndPeriod(clientId, caseNumber) {
@@ -26,12 +27,11 @@ async function purgeFromScheduleAndPeriod(clientId, caseNumber) {
   );
 
   // 2) From every PeriodContacts document, pull out this clientId string
-  await PeriodContacts.updateMany(
-    {},
+  await PeriodContacts.updateOne(
+    { createDateClientIDs: clientId.toString() },
     {
-      $pull: {
-        createDateClientIDs: clientId.toString(),
-      },
+      $pull: { createDateClientIDs: clientId.toString() },
+      $addToSet: { contactedClientIDs: clientId.toString() },
     }
   );
 }
@@ -172,74 +172,83 @@ async function createActivityHandler(req, res, next) {
  */
 async function createScheduledClientHandler(req, res, next) {
   try {
-    const {
-      caseNumber,
-      domain = "TAG",
-      name,
-      email = "",
-      cell = "",
-      ...rest
-    } = req.body;
+    const { caseNumber, domain, name, email, cell, ...rest } = req.body;
 
-    // 60‑day token
-    const token = crypto.randomBytes(24).toString("hex");
-    const tokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    // 1) generate the 60‑day token
 
-    // base object
+    // 2) build the “bare” baseClient — **no stages** yet
     const baseClient = {
       caseNumber,
       domain,
       name,
       email,
       cell,
-      token,
-      tokenExpiresAt,
       saleDate: new Date(),
-      stagesReceived: ["prac"],
-      stagePieces: ["prac email 1"],
       status: "active",
-      contactedThisPeriod: false,
-      activeInStage: true,
       lastContactDate: new Date(),
       ...rest,
     };
 
-    // run checks
+    // 3) run your verification/flagging logic
     const client = await addAndVerifySingleClient(baseClient);
-
+    console.log(client, "client after filter");
+    // 4) if it still needs manual review, stop here
     if (client.status === "inReview") {
-      // send back for manual review
       return res.status(202).json({
         message: "Client needs review before being scheduled.",
         client,
       });
     }
 
-    // save and send prac email 1
-    const saved = await new Client(client).save();
-    const tokenURL = `https://${
-      domain === "WYNN" ? "wynntaxsolutions.com" : "taxadvocategroup.com"
-    }/schedule-my-call/${token}`;
+    // 5) **now** decide which stage flow to apply:
+    const stageKey = client.autoPOA ? "POAEmail" : "PracEmail1";
+    client.stagesReceived = client.autoPOA ? ["prac"] : [];
+    client.stagePieces = [stageKey];
 
-    // load & render HBS
-    const tpl = fs.readFileSync(
-      path.join(
-        __dirname,
-        "../Templates/client contact emails/Prac Email 1.hbs"
-      ),
-      "utf8"
+    // 6) save to Mongo
+    const saved = await new Client(client).save();
+
+    // 7) gather your per‑domain signature variables
+    const sigVars = {
+      schedulerUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+      url: process.env[`${domain}_URL`] || "",
+      phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
+      processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
+      logoSrc: process.env[`${domain}_LOGO_URL`] || "",
+      contactName: process.env[`${domain}_CONTACT_NAME`] || "",
+    };
+
+    // 8) compile & render your signature
+    const sigTpl = signature;
+    if (!sigTpl) throw new Error(`No signature for domain "${domain}"`);
+
+    const signatureHtml = sigTpl(sigVars);
+    console.log(__dirname, "dirname");
+    // 9) compile & render your body template
+    const bodyPath = path.join(
+      __dirname,
+      "../Templates/clientcontactemails",
+      `${stageKey}.hbs`
     );
-    const html = hbs.compile(tpl)({
+
+    if (!fs.existsSync(bodyPath))
+      throw new Error(`Template not found: ${stageKey}`);
+    const bodySource = fs.readFileSync(bodyPath, "utf8");
+    const bodyTpl = hbs.compile(bodySource);
+    const html = bodyTpl({
       name,
-      caseNumber,
-      tokenURL,
-      number: signatures[domain].number,
-      signature: signatures[domain].html,
+      phone: sigVars.phone,
+      signature: signatureHtml,
     });
 
+    // 10) pick the subject
+    const subject =
+      emailSubjects[`${stageKey}`].subject || "Update from Your Tax Team";
+
+    // 11) send
     await sendEmail({
       to: saved.email,
-      subject: "Let’s Schedule Your Practitioner Call",
+      subject: subject,
       html,
       domain: saved.domain,
     });
@@ -257,18 +266,19 @@ async function createScheduledClientHandler(req, res, next) {
 async function processReviewedClientHandler(req, res, next) {
   try {
     const { client, action } = req.body;
+    console.log(action);
 
     if (!client) return res.status(404).json({ message: "Not found" });
 
     const domain = client.domain;
-    let stagePiece, tplPath, subject;
+    let clientDoc, stagePiece, tplPath, subject;
 
     switch (action) {
       case "prac":
-        stagePiece = "Prac Email 1";
+        stagePiece = "PracEmail1";
         tplPath = path.join(
           __dirname,
-          "../Templates/client contact emails/Prac Email 1.hbs"
+          "../Templates/clientcontactemails/PracEmail1.hbs"
         );
         subject = "Let’s Schedule Your Practitioner Call";
         client.stagesReceived.push("prac");
@@ -276,35 +286,75 @@ async function processReviewedClientHandler(req, res, next) {
         break;
 
       case "433a":
-        stagePiece = "433a Email 1";
+        stagePiece = "POAEmail";
         tplPath = path.join(
           __dirname,
-          "../Templates/client contact emails/433a Email 1.hbs"
+          "../Templates/clientcontactemails/433aEmail1.hbs"
         );
         subject = "Your 433(a) Update";
         client.stagesReceived.push("f433a");
         client.stagePieces.push(stagePiece);
         break;
 
-      case "delay":
-        client.createDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
-        client.status = "active";
-        client.reviewDate = null;
-        await client.save();
-        return res.json({ message: "Client delayed 60 days", client });
+      case "delay": {
+        // compute the 60‑day bump
+        const newCreate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+        // upsert-like semantics: update existing or insert new with defaults
+        const updated = await Client.findOneAndUpdate(
+          { caseNumber: client.caseNumber }, // filter
+          {
+            $set: {
+              createDate: newCreate,
+              status: "active",
+              reviewDate: null,
+            },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+          }
+        );
+
+        return res.json({
+          message: "Client delayed 60 days",
+          client: updated,
+        });
+      }
 
       case "inactive":
-      case "partial":
+      case "partial": {
         // set status, clear for review
-        client.status = action;
-        client.reviewDate = null;
-        await client.save();
+        // Atomically set status and clear reviewDate
+        const updated = await Client.findOneAndUpdate(
+          { caseNumber: client.caseNumber }, // or: { _id: client._id }
+          {
+            $set: {
+              status: action,
+              reviewDate: null,
+            },
+          },
+          { new: true }
+        );
 
         // remove from today's schedule & current period
-        await purgeFromScheduleAndPeriod(client._id, client.caseNumber);
+        await purgeFromScheduleAndPeriod(updated._id, updated.caseNumber);
 
         return res.json({
           message: `Client status set to "${action}" and purged from schedule/period.`,
+          client: updated,
+        });
+      }
+      case "add":
+        // Add this client immediately: set createDate = today, status = active
+        client.createDate = new Date();
+        client.status = "active";
+        client.reviewDate = null;
+        clientDoc = new Client({ ...client });
+        await clientDoc.save();
+
+        return res.json({
+          message: `Client ${client.caseNumber} added and scheduled.`,
           client,
         });
 

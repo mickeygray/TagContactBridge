@@ -13,7 +13,10 @@ const periodContactsSchema = new mongoose.Schema({
     type: Date,
     required: true,
   },
-  periodContactsComplete: { type: Boolean },
+  contactedClientIDs: {
+    type: [String], // Just IDs; full logic runs from the client model
+    default: [],
+  },
 });
 
 module.exports = mongoose.model("PeriodContacts", periodContactsSchema);
