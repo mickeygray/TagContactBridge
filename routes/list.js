@@ -9,8 +9,6 @@ const {
   postNCOA,
   buildSchedule,
   addCreateDateClients,
-  addClientToPeriodHandler,
-  addNewReviewedClient,
   parseZeroInvoices,
   buildDialerList,
   filterList,
@@ -34,11 +32,10 @@ router.post("/addCreateDateClients", addCreateDateClients);
 
 router.post("/parseZeros", parseZeroInvoices);
 
-router.post("/addNewReviewedClients", addNewReviewedClient);
 // Placeholder: build marketing schedule list
 // GET /api/list/buildSchedule
 router.post("/buildPeriod", buildSchedule);
-router.post("/:periodId/clients", addClientToPeriodHandler);
+
 router.get("/reviewClients", async (req, res, next) => {
   try {
     const clients = await Client.find({ status: "inReview" })

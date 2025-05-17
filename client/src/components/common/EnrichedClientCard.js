@@ -1,7 +1,7 @@
 // EnrichedClientCard.jsx
 import React, { useContext } from "react";
-import ClientContext from "../../../context/client/clientContext";
-import CollapsibleNote from "../../layout/CollapsibleNote";
+import ClientContext from "../../context/client/clientContext";
+import CollapsibleNote from "../layout/CollapsibleNote";
 
 export default function EnrichedClientCard({ client, onHide }) {
   const { enrichedClient } = client;

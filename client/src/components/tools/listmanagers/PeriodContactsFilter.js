@@ -1,6 +1,8 @@
+// src/components/tools/listManagers/PeriodContactsFilter.jsx
+
 import React, { useState, useContext } from "react";
 import ListContext from "../../../context/list/listContext";
-import ClientAnalysisList from "../clientreview/ClientAnalysisList";
+import PeriodClientAnalysisList from "../lists/PeriodClientAnalysisList";
 
 const STAGE_OPTIONS = [
   { value: "update433a", label: "Update 433(a)" },
@@ -14,20 +16,12 @@ const STAGE_OPTIONS = [
 ];
 
 export default function PeriodContactsFilter() {
-  const { buildPeriod, toReview, partial, verified, periodInfo, clearPeriod } =
-    useContext(ListContext);
-
+  const { buildPeriod, periodInfo, clearPeriod } = useContext(ListContext);
   const [stage, setStage] = useState("");
-
-  const handleStageChange = (e) => {
-    setStage(e.target.value);
-  };
 
   const fetchPeriodContacts = () => {
     if (!stage) return;
-    buildPeriod({
-      stage,
-    });
+    buildPeriod({ stage });
   };
 
   return (
@@ -42,7 +36,7 @@ export default function PeriodContactsFilter() {
         <select
           className="input w-full"
           value={stage}
-          onChange={handleStageChange}
+          onChange={(e) => setStage(e.target.value)}
         >
           <option value="">– Select Stage –</option>
           {STAGE_OPTIONS.map((opt) => (
@@ -58,10 +52,10 @@ export default function PeriodContactsFilter() {
         <div className="bg-gray-50 p-3 rounded mb-4 text-sm text-gray-800">
           <p className="font-medium mb-1">Current inclusion rules:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>No zero‑invoice clients</li>
-            <li>Last invoice between –2 000 and 50 000 (inclusive)</li>
+            <li>No zero-invoice clients</li>
+            <li>Last invoice between –2 000 and 50 000 (inclusive)</li>
             <li>No new invoices in the past 60 days</li>
-            <li>Has not completed this stages content</li>
+            <li>Has not completed this stage’s content</li>
           </ul>
         </div>
       )}
@@ -85,14 +79,7 @@ export default function PeriodContactsFilter() {
       </div>
 
       {/* Results */}
-      {periodInfo && (
-        <ClientAnalysisList
-          periodInfo={periodInfo}
-          verified={verified}
-          partial={partial}
-          toReview={toReview}
-        />
-      )}
+      {periodInfo && <PeriodClientAnalysisList />}
     </div>
   );
 }

@@ -18,14 +18,10 @@ router.post("/enrichClient", ctrl.enrichClientHandler);
 router.post("/zeroInvoice", ctrl.zeroInvoiceHandler);
 router.post("/createTask", ctrl.createTaskHandler);
 router.post("/createActivity", ctrl.createActivityHandler);
-router.put(
-  "/reinsertToPeriod",
-  // you can add requireAdmin here if only admins should do this
-  ctrl.reinsertToPeriodHandler
-);
 // scheduled-client CRUD
 router.post("/", ctrl.createScheduledClientHandler);
-router.post("/review", ctrl.processReviewedClientHandler);
-router.delete("/:id", ctrl.deleteScheduledClientHandler);
+router.post("/reviewSaleDate", ctrl.processReviewedSaleDateClientHandler);
+router.post("/reviewCreateDate", ctrl.processReviewedCreateDateClientHandler);
+router.delete("/delete", ctrl.deleteClientHandler);
 
 module.exports = router;

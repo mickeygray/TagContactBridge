@@ -136,9 +136,14 @@ async function flagAndUpdateDelinquent(client) {
  */
 async function reviewClientContact(client) {
   const cutoff = client.sinceDate;
-  if (!cutoff) return client;
+  if (!cutoff) {
+    console.log(`[reviewClientContact] ${client.caseNumber} has no sinceDate`);
+    return client;
+  }
 
-  // 2️⃣ Fetch activities
+  console.log(
+    `[reviewClientContact] Fetching activities for ${client.caseNumber}`
+  );
   let activities;
   try {
     activities = await fetchActivities(client.domain, client.caseNumber);
@@ -147,26 +152,27 @@ async function reviewClientContact(client) {
       client,
       `[Activity] ${client.caseNumber} fetch error: ${err.message}`
     );
+    console.log(
+      `[reviewClientContact] Error fetching activities: ${err.message}`
+    );
     return client;
   }
 
-  // 3️⃣ No activities → flag
   if (!Array.isArray(activities) || activities.length === 0) {
     stampReview(
       client,
       `[Activity] ${client.caseNumber} no activities returned`
     );
+    console.log(`[reviewClientContact] No activities for ${client.caseNumber}`);
     return client;
   }
 
-  // 4️⃣ Identify conversion timestamps to ignore nearby “status changed”
   const convTimes = activities
     .filter((act) =>
       /converted from prospect/i.test(`${act.Subject} ${act.Comment}`)
     )
     .map((act) => new Date(act.CreatedDate).getTime());
 
-  // 5️⃣ Scan for any genuine “status changed” after cutoff
   const thresholdMs = 1000;
   for (const act of activities) {
     const createdMs = new Date(act.CreatedDate).getTime();
@@ -175,10 +181,8 @@ async function reviewClientContact(client) {
     const text = `${act.Subject || ""} ${act.Comment || ""}`.toLowerCase();
     if (!text.includes("status changed")) continue;
 
-    // skip if within conversion window
-    if (convTimes.some((ts) => Math.abs(ts - createdMs) <= thresholdMs)) {
+    if (convTimes.some((ts) => Math.abs(ts - createdMs) <= thresholdMs))
       continue;
-    }
 
     const readableDate = new Date(createdMs).toLocaleString("en-US", {
       month: "short",
@@ -190,11 +194,13 @@ async function reviewClientContact(client) {
       client,
       `[Activity] ${client.caseNumber} status change message: ${act.Subject} recorded on ${readableDate}`
     );
-    // genuine status change → stamp review
+    console.log(
+      `[reviewClientContact] ${client.caseNumber} flagged due to status change`
+    );
     return client;
   }
 
-  // passed all checks → leave unchanged
+  console.log(`[reviewClientContact] ${client.caseNumber} passed`);
   return client;
 }
 
@@ -205,18 +211,34 @@ async function reviewClientContact(client) {
 async function addVerifiedClientsAndReturnReviewList(rawClients) {
   const toSave = [];
   const reviewList = [];
-
+  console.log(`[Input] Received ${rawClients.length} clients`);
   for (const data of rawClients) {
+    console.log(`\n▶️ Processing client: ${data.caseNumber}`);
+    console.time(`⏱️ Total time for ${data.caseNumber}`);
+
     let client = { ...data };
+
+    console.time(`  processInvoices - ${data.caseNumber}`);
     client = await processInvoices(client);
+    console.timeEnd(`  processInvoices - ${data.caseNumber}`);
+
+    console.time(`  flagAndUpdateDelinquent - ${data.caseNumber}`);
     client = await flagAndUpdateDelinquent(client);
+    console.timeEnd(`  flagAndUpdateDelinquent - ${data.caseNumber}`);
+
+    console.time(`  reviewClientContact - ${data.caseNumber}`);
     client = await reviewClientContact(client);
+    console.timeEnd(`  reviewClientContact - ${data.caseNumber}`);
 
     if (client.status === "inReview") {
       reviewList.push(client);
+      console.log(`❗ ${client.caseNumber} added to reviewList`);
     } else {
       toSave.push(client);
+      console.log(`✅ ${client.caseNumber} added to toSave`);
     }
+
+    console.timeEnd(`⏱️ Total time for ${data.caseNumber}`);
   }
 
   const added = toSave.length ? await Client.insertMany(toSave) : [];

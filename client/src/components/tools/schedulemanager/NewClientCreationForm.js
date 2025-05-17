@@ -1,11 +1,17 @@
+// src/components/tools/listManagers/NewClientCreationForm.jsx
 import React, { useState, useContext } from "react";
 import ClientContext from "../../../context/client/clientContext";
+import NewSaleClientAnalysisCard from "../cards/NewSaleClientAnalysisCard";
 
 const NewClientCreationForm = () => {
-  const { addScheduledClient, processReviewedClient, newClient } =
-    useContext(ClientContext);
-  const [inputFocused, setInputFocused] = useState(false);
+  const {
+    addScheduledClient,
+    newClient,
+    // we'll need to clear it once hidden
+    clearNewClient,
+  } = useContext(ClientContext);
 
+  const [inputFocused, setInputFocused] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -14,50 +20,20 @@ const NewClientCreationForm = () => {
     initialPayment: "",
     secondPaymentDate: "",
     domain: "TAG",
-    autoPoa: false,
+    autoPOA: false,
   });
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    let fieldValue;
-    if (type === "checkbox") {
-      fieldValue = checked;
-    } else if (name === "autoPoa") {
-      fieldValue = value === "true";
-    } else {
-      fieldValue = value;
-    }
     setFormData((prev) => ({
       ...prev,
-      [name]: fieldValue,
+      [name]:
+        type === "checkbox"
+          ? checked
+          : name === "autoPOA"
+          ? value === "true"
+          : value,
     }));
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
-    const today = new Date().toISOString().split("T")[0];
-
-    const newClient = {
-      ...formData,
-      saleDate: today,
-      stage: "prac",
-      status: "active",
-    };
-
-    addScheduledClient(newClient); // now posts to /api/clients
-
-    // Reset form
-    setFormData({
-      name: "",
-      email: "",
-      cell: "",
-      caseNumber: "",
-      initialPayment: "",
-      secondPaymentDate: "",
-      domain: "TAG",
-      autoPOA: false,
-    });
   };
 
   const resetForm = () => {
@@ -71,189 +47,104 @@ const NewClientCreationForm = () => {
       domain: "TAG",
       autoPOA: false,
     });
+    clearNewClient();
   };
-  const handleReviewedAction = async (client, action) => {
-    try {
-      processReviewedClient(client, action);
-      // you might dispatch or re-fetch your list here…
-      alert(`Action "${action}" applied.`);
-    } catch (err) {
-      console.error(err);
-      alert(`Failed to apply "${action}".`);
-    }
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const today = new Date().toISOString().split("T")[0];
+    addScheduledClient({
+      ...formData,
+      saleDate: today,
+      stage: "prac",
+      status: "active",
+    });
   };
+
   return (
-    <form className="client-form" onSubmit={handleSubmit}>
-      <h3 className="client-form__title">➕ New Client Creation</h3>
+    <div className="card p-4 mb-6">
+      <h3 className="text-xl font-semibold mb-4">➕ New Client Creation</h3>
 
-      <div className="form-grid">
-        <label className="form-field">
-          Full Name
-          <input
-            type="text"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            required
-            className="form-input"
-          />
-        </label>
+      {/* form */}
+      <form
+        onSubmit={handleSubmit}
+        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+      >
+        {[
+          { label: "Full Name", name: "name", type: "text", required: true },
+          { label: "Email", name: "email", type: "email", required: true },
+          { label: "Cell", name: "cell", type: "text", required: true },
+          { label: "Case #", name: "caseNumber", type: "text", required: true },
+          { label: "Initial Payment", name: "initialPayment", type: "number" },
+          {
+            label: "Second Payment Date",
+            name: "secondPaymentDate",
+            type: inputFocused ? "date" : "text",
+            onFocus: () => setInputFocused(true),
+          },
+        ].map(({ label, ...fld }) => (
+          <label key={fld.name} className="flex flex-col">
+            {label}
+            <input
+              {...fld}
+              value={formData[fld.name]}
+              onChange={handleChange}
+              className="input"
+            />
+          </label>
+        ))}
 
-        <label className="form-field">
-          Email Address
-          <input
-            type="email"
-            name="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-            className="form-input"
-          />
-        </label>
-
-        <label className="form-field">
-          Cell Number
-          <input
-            type="text"
-            name="cell"
-            value={formData.cell}
-            onChange={handleChange}
-            required
-            className="form-input"
-          />
-        </label>
-
-        <label className="form-field">
-          Case Number
-          <input
-            type="text"
-            name="caseNumber"
-            value={formData.caseNumber}
-            onChange={handleChange}
-            required
-            className="form-input"
-          />
-        </label>
-
-        <label className="form-field">
-          Initial Payment
-          <input
-            type="number"
-            name="initialPayment"
-            value={formData.initialPayment}
-            onChange={handleChange}
-            className="form-input"
-          />
-        </label>
-
-        <label className="form-field">
-          Second Payment Date
-          <input
-            type={inputFocused ? "date" : "text"}
-            name="secondPaymentDate"
-            value={formData.secondPaymentDate}
-            onFocus={() => setInputFocused(true)}
-            onChange={handleChange}
-            className="form-input"
-          />
-        </label>
-
-        <label className="form-field">
+        <label className="flex flex-col">
           Client Tier
           <select
             name="autoPOA"
             value={formData.autoPOA}
             onChange={handleChange}
-            className="form-input"
+            className="input"
           >
             <option value="false">Active Client</option>
-            <option value="true">Tier 1</option>
+            <option value="true">Tier 1</option>
           </select>
         </label>
 
-        <label className="form-field">
+        <label className="flex flex-col">
           Domain
           <select
             name="domain"
             value={formData.domain}
             onChange={handleChange}
-            className="form-input"
+            className="input"
           >
             <option value="TAG">Tax Advocate Group</option>
             <option value="WYNN">Wynn Tax Solutions</option>
           </select>
         </label>
-      </div>
 
-      <button type="submit" className="form-submit">
-        📤 Submit & Trigger Email
-      </button>
+        <div className="col-span-full">
+          <button type="submit" className="btn btn-primary">
+            📤 Submit & Trigger Email
+          </button>
+        </div>
+      </form>
 
+      {/* result */}
       {newClient && newClient.status !== "inReview" && (
-        <div className="notification-card notification-card--success">
-          <h4 className="notification-card__title">
+        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded">
+          <p className="font-medium">
             ✅ Client added and Practitioner Email sent!
-          </h4>
-          <button
-            type="button"
-            className="action-button action-button--secondary"
-            onClick={resetForm}
-          >
+          </p>
+          <button onClick={resetForm} className="mt-2 btn btn-sm">
             Add another client
           </button>
         </div>
       )}
 
       {newClient && newClient.status === "inReview" && (
-        <div className="notification-card notification-card--warning">
-          <h4 className="notification-card__title">
-            🚨 Client flagged for review
-          </h4>
-          {newClient.reviewMessages?.map((m, i) => (
-            <p key={i}>
-              <strong>Reason {i + 1}:</strong> {m}
-            </p>
-          ))}
-          <div className="notification-card__actions">
-            <button
-              type="button"
-              className="action-button action-button--primary"
-              onClick={() => handleReviewedAction("prac")}
-            >
-              Re‑send Prac Email
-            </button>
-            <button
-              type="button"
-              className="action-button action-button--primary"
-              onClick={() => handleReviewedAction("433a")}
-            >
-              Send 433(a) Email
-            </button>
-            <button
-              type="button"
-              className="action-button action-button--warning"
-              onClick={() => handleReviewedAction("delay")}
-            >
-              Delay 60 days
-            </button>
-            <button
-              type="button"
-              className="action-button action-button--info"
-              onClick={() => handleReviewedAction("partial")}
-            >
-              Mark Partial
-            </button>
-            <button
-              type="button"
-              className="action-button action-button--danger"
-              onClick={() => handleReviewedAction("inactive")}
-            >
-              Mark Inactive
-            </button>
-          </div>
+        <div className="mt-6">
+          <NewSaleClientAnalysisCard client={newClient} onHide={resetForm} />
         </div>
       )}
-    </form>
+    </div>
   );
 };
 

@@ -2,7 +2,7 @@ import React, { useState, useContext, useEffect } from "react";
 import ScheduleContext from "../../../context/schedule/scheduleContext";
 import EmailContext from "../../../context/email/emailContext";
 import TextContext from "../../../context/text/textContext";
-import ClientAnalysisList from "../clientreview/ClientAnalysisList";
+import DailyClientAnalysisList from "../lists/DailyClientAnalysisList";
 
 const DailyScheduleManager = () => {
   const {
@@ -85,38 +85,6 @@ const DailyScheduleManager = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const renderClientList = () => {
-    if (activeQueue === "text") {
-      return (
-        <ClientAnalysisList
-          title={`📱 Text Queue (${textQueue.length})`}
-          textQueue={textQueue}
-          isDaily
-          activeQueue="text"
-        />
-      );
-    }
-    if (activeQueue === "review") {
-      return (
-        <ClientAnalysisList
-          title={`🚨 Needs Review (${toReview.length})`}
-          toReview={toReview}
-          isDaily
-          activeQueue="review"
-        />
-      );
-    }
-    // default email
-    return (
-      <ClientAnalysisList
-        title={`📨 Email Queue (${emailQueue.length})`}
-        emailQueue={emailQueue}
-        isDaily
-        activeQueue="email"
-      />
-    );
   };
 
   return (
@@ -203,8 +171,7 @@ const DailyScheduleManager = () => {
           </button>
         ))}
       </div>
-
-      {renderClientList()}
+      <DailyClientAnalysisList activeTab={activeQueue} />
     </div>
   );
 };

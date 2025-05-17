@@ -17,19 +17,6 @@ const sendEmail = require("../utils/sendEmail");
 const sendTextMessage = require("../utils/sendTextMessage");
 
 // ⚙️ Util: Remove expired token clients and flag for review
-function deleteBadTokenClients(clients) {
-  const today = new Date().toISOString().split("T")[0];
-  const remaining = [];
-  const toReview = [];
-
-  for (const client of clients) {
-    const isExpired = client.tokenExpiresAt && client.tokenExpiresAt <= today;
-    if (isExpired) toReview.push(client);
-    else remaining.push(client);
-  }
-
-  return { remaining, toReview };
-}
 
 const assignContactMethodAndStagePiece = async (
   dailyPeriodContacts, // full client objects
@@ -64,7 +51,7 @@ const assignContactMethodAndStagePiece = async (
           client.contactType = "email";
           client.stagePiece = "POAEmail";
           client.stagesReceived = [
-            ...new Set([...(client.stagesReceived || []), "poa"]),
+            ...new Set([...(client.stagesReceived || []), "prac"]),
           ];
           client.stagePieces = [
             ...new Set([...(client.stagePieces || []), "POAEmail1"]),
@@ -114,8 +101,7 @@ const assignContactMethodAndStagePiece = async (
         // 6) Dedupe same-day re-send (unless it’s poa)
         if (
           nextIdx === 0 && // if it’s the very first step
-          had.includes(stageKey) && // and they’ve marked the stage done
-          stageKey !== "poa"
+          had.includes(stageKey) // and they’ve marked the stage done
         ) {
           console.log(
             `[processClientList] Skipping ${client.caseNumber} — already did stage "${stageKey}" today`
@@ -183,102 +169,65 @@ async function buildDailySchedule(req, res) {
     const today = new Date().toISOString().split("T")[0];
     console.log(`🗓️  Starting buildDailySchedule for ${today}`);
 
-    // 1️⃣ Reset daily schedule if needed
-    const existing = await DailySchedule.findOne({ date: today });
-    if (!existing) {
-      console.log("🔄 No existing schedule—creating new one");
-
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const carryOver = await DailySchedule.findOne({
-        date: yesterday.toISOString().split("T")[0],
+    // 1️⃣ Ensure a DailySchedule exists
+    let schedule = await DailySchedule.findOne({ date: today });
+    if (!schedule) {
+      console.log("🔄 No existing schedule—creating new blank one");
+      schedule = await DailySchedule.create({
+        date: today,
+        emailQueue: [],
+        textQueue: [],
+        pace: 15,
       });
-      const textQueue = carryOver?.textQueue?.length || 0;
-      console.log(`↪ Carrying over ${textQueue} texts from yesterday`);
-
-      // instrumented block
-      try {
-        console.log("⚙️  About to insert DailySchedule:", {
-          date: today,
-          emailQueue: [],
-          textQueue: carryOver?.textQueue || [],
-          pace: 15,
-        });
-        const newSchedule = await DailySchedule.create({
-          date: today,
-          emailQueue: [],
-          textQueue: carryOver?.textQueue || [],
-          pace: 15,
-        });
-        console.log("✅ Created new DailySchedule:", newSchedule);
-      } catch (createErr) {
-        console.error("❌ Error creating DailySchedule:", createErr);
-        // rethrow so your outer catch picks it up and logs it
-        throw createErr;
-      }
     } else {
       console.log("✔️ DailySchedule already exists");
     }
 
-    // 2️⃣ Pull period and saleDate clients
+    // 2️⃣ Get clients by period & saleDate (no createDate allowed in sale)
     const periodDoc = await PeriodContacts.findOne();
     const periodIds = periodDoc?.createDateClientIDs || [];
     const periodClients = await Client.find({ _id: { $in: periodIds } }).lean();
-    const periodStartDate = periodDoc.periodStartDate;
+
     const sixtyDaysAgo = new Date();
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
     const saleClients = await Client.find({
       saleDate: { $gte: sixtyDaysAgo },
+      createDate: { $exists: false }, // ⛔ no createDate allowed
       status: { $in: ["active", "partial"] },
     }).lean();
+
     console.log(
       `🔍 Loaded ${periodClients.length} period clients, ` +
-        `${saleClients.length} sale clients (last 60d)`
+        `${saleClients.length} sale clients`
     );
 
-    // 3️⃣ Remove expired tokens
-    let toReview = [];
-    const { remaining: validPeriod, toReview: expPeriod } =
-      deleteBadTokenClients(periodClients);
-    const { remaining: validSales, toReview: expSales } =
-      deleteBadTokenClients(saleClients);
-    toReview.push(...expPeriod, ...expSales);
-    console.log(
-      `🚫 Expired tokens: ${expPeriod.length} period, ${expSales.length} sale`
-    );
-
-    // 4️⃣ Run external Logics validation
-    const fresh = [...validPeriod, ...validSales].map((client) => {
-      // parse your three possible dates
+    // 3️⃣ Validate and enrich clients
+    const fresh = [...periodClients, ...saleClients].map((client) => {
       const lastContact = client.lastContactDate
         ? new Date(client.lastContactDate)
         : null;
       const sale = client.saleDate ? new Date(client.saleDate) : null;
-      const period = periodStartDate; // already a Date
+      const period = periodDoc?.periodStartDate || null;
 
-      // collect only valid Dates
-      const candidates = [lastContact, sale, period].filter(
+      const dates = [lastContact, sale, period].filter(
         (d) => d instanceof Date && !isNaN(d)
       );
-
-      // pick the max timestamp
-      const sinceTs = Math.max(...candidates.map((d) => d.getTime()));
+      const sinceTs = Math.max(...dates.map((d) => d.getTime()));
       client.sinceDate = new Date(sinceTs);
 
       return client;
     });
-    const {
-      verified,
-      partial,
-      toReview: flagged,
-    } = await addVerifiedClientsAndReturnUpdatedLists(fresh);
-    toReview.push(...flagged);
+
+    const { verified, partial, toReview } =
+      await addVerifiedClientsAndReturnUpdatedLists(fresh);
+
     console.log(
-      `⚙️ Validation → Verified: ${verified.length}, Partial: ${partial.length}, Flagged: ${flagged.length}`
+      `⚙️ Validation → Verified: ${verified.length}, Partial: ${partial.length}, Flagged: ${toReview.length}`
     );
 
-    // 5️⃣ Split into period vs sale for scheduling
-    const saleIds = new Set(validSales.map((c) => c._id.toString()));
+    // 4️⃣ Classify verified into period and sale
+    const saleIds = new Set(saleClients.map((c) => c._id.toString()));
+
     const verifiedPeriod = verified.filter(
       (c) => !saleIds.has(c._id.toString())
     );
@@ -286,32 +235,55 @@ async function buildDailySchedule(req, res) {
     const partialPeriod = partial.filter((c) => !saleIds.has(c._id.toString()));
     const partialSales = partial.filter((c) => saleIds.has(c._id.toString()));
 
-    const { emailQueue, textQueue, dailyPeriodContacts, dailyNewClients } =
-      await assignContactMethodAndStagePiece(
-        [...verifiedPeriod, ...partialPeriod],
-        [...verifiedSales, ...partialSales]
-      );
+    // 5️⃣ Assign stage pieces
+    const {
+      emailQueue: freshEmailQueue,
+      textQueue: freshTextQueue,
+      dailyPeriodContacts,
+      dailyNewClients,
+    } = await assignContactMethodAndStagePiece(
+      [...verifiedPeriod, ...partialPeriod],
+      [...verifiedSales, ...partialSales]
+    );
+
+    // 6️⃣ Bring in carryover from yesterday and deduplicate
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const carryOver = await DailySchedule.findOne({
+      date: yesterday.toISOString().split("T")[0],
+    });
+
+    const carriedTextQueue = carryOver?.textQueue || [];
+    const dedupedTextQueue = [
+      ...carriedTextQueue,
+      ...freshTextQueue.filter(
+        (item) =>
+          !carriedTextQueue.some(
+            (c) => c.caseNumber === item.caseNumber && c.stage === item.stage
+          )
+      ),
+    ];
+
     console.log(
-      `📬 Queues → Email: ${emailQueue.length}, Text: ${textQueue.length}`
+      `📬 Queues → Email: ${freshEmailQueue.length}, Text: ${dedupedTextQueue.length} (with carryover)`
     );
     console.log(
       `📑 Clients → Period: ${dailyPeriodContacts.length}, New: ${dailyNewClients.length}`
     );
 
-    // 6️⃣ Save queues
+    // 7️⃣ Save queues
     await DailySchedule.findOneAndUpdate(
       { date: today },
       {
-        $push: {
-          emailQueue: { $each: emailQueue },
-          textQueue: { $each: textQueue },
+        $set: {
+          emailQueue: freshEmailQueue,
+          textQueue: dedupedTextQueue,
         },
-      },
-      { upsert: true }
+      }
     );
     console.log("💾 Queues saved to DailySchedule");
 
-    // 7️⃣ Update each client’s DB record
+    // 8️⃣ Update client records
     const allClients = [
       ...dailyPeriodContacts,
       ...dailyNewClients,
@@ -324,7 +296,6 @@ async function buildDailySchedule(req, res) {
           $set: {
             lastContactDate: client.lastContactDate || new Date(),
             contactedThisPeriod: client.contactedThisPeriod ?? false,
-            stagesReceived: client.stagesReceived || [],
             status: client.status || "active",
             stage: client.stage,
             saleDate: client.saleDate,
@@ -333,8 +304,6 @@ async function buildDailySchedule(req, res) {
             lastInvoiceAmount: client.lastInvoiceAmount,
             delinquentAmount: client.delinquentAmount || null,
             delinquentDate: client.delinquentDate || null,
-            token: client.token || null,
-            tokenExpiresAt: client.tokenExpiresAt || null,
             domain: client.domain,
             stagePieces: client.stagePieces || [],
           },
@@ -343,24 +312,16 @@ async function buildDailySchedule(req, res) {
     }
     console.log(`🔄 Updated ${allClients.length} clients in DB`);
 
-    // 8️⃣ Refresh the PeriodContacts list
-    /*    if (periodDoc) {
-      const updatedIDs = dailyPeriodContacts.map((c) => c._id.toString());
-      periodDoc.createDateClientIDs = updatedIDs;
-      await periodDoc.save();
-      console.log(`🔁 PeriodContacts updated with ${updatedIDs.length} IDs`);
-    }
-*/
     // ✅ Final response
     return res.status(200).json({
       message: "Daily schedule built",
-      emailQueue,
-      textQueue,
+      emailQueue: freshEmailQueue,
+      textQueue: dedupedTextQueue,
       toReview,
       pace: 15,
     });
   } catch (err) {
-    //console.error("❌ Error in buildDailySchedule:", err);
+    console.error("❌ Error in buildDailySchedule:", err);
     return res.status(500).json({ error: "Server error" });
   }
 }
@@ -509,7 +470,6 @@ async function sendDailyText(req, res, next) {
       "TO Text 9": "taxOrganizer",
       "f433a Text 9": "f433a", // also set createDate
       "Prac Text 9": "prac",
-      POAEmail: "poa",
     };
     const REUSABLE_TEXT3 = new Set([
       "Doc Submission Review Text 3",
@@ -709,9 +669,6 @@ async function sendDailyEmail(req, res, next) {
         const addToSet = { stagePieces: r.stagePiece };
 
         // if it's the POA email, also mark the "poa" stage done
-        if (r.stagePiece === "POAEmail") {
-          addToSet.stagesReceived = "poa";
-        }
 
         return Client.findOneAndUpdate(filter, { $addToSet: addToSet }).exec();
       })

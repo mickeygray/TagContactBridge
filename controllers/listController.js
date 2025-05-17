@@ -179,7 +179,8 @@ async function addCreateDateClients(req, res, next) {
     const { added, reviewList } = await addVerifiedClientsAndReturnReviewList(
       rawClients
     );
-
+    console.log(added.length);
+    console.log(reviewList.length);
     // Send back both lists
     return res.json({
       added, // Array of Client docs that were just created
@@ -190,47 +191,6 @@ async function addCreateDateClients(req, res, next) {
   }
 }
 
-async function addNewReviewedClient(req, res, next) {
-  try {
-    const rawClient = req.body;
-    if (!rawClient || typeof rawClient !== "object") {
-      return res.status(400).json({ message: "No client provided." });
-    }
-
-    // Create the new Client document
-    const created = await Client.create(rawClient);
-
-    // Return the newly created client
-    return res.json(created);
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function addClientToPeriodHandler(req, res, next) {
-  try {
-    const { periodId } = req.params;
-    const { clientId } = req.body;
-
-    const period = await PeriodContacts.findById(periodId);
-    if (!period) {
-      return res.status(404).json({ message: "Period not found" });
-    }
-
-    // avoid duplicates
-    if (!period.createDateClientIDs.some((id) => id.toString() === clientId)) {
-      period.createDateClientIDs.push(clientId);
-      await period.save();
-    }
-
-    res.json({
-      message: `Client ${clientId} added to period ${periodId}`,
-      periodIds: period.createDateClientIDs,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
 async function parseZeroInvoices(req, res, next) {
   try {
     const rawClients = req.body.clients;
@@ -544,8 +504,6 @@ module.exports = {
   addCreateDateClients,
   filterList,
   buildSchedule,
-  addNewReviewedClient,
   buildDialerList,
-  addClientToPeriodHandler,
   downloadAndEmailDaily,
 };

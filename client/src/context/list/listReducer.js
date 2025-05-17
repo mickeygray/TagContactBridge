@@ -61,7 +61,7 @@ export default (state, action) => {
     case "SET_REVIEW_CLIENTS":
       return {
         ...state,
-        reviewClients: action.payload,
+        toReview: action.payload,
       };
     case "SAVE_REVIEW_CLIENT":
       return {
@@ -71,9 +71,7 @@ export default (state, action) => {
     case "REMOVE_REVIEW_CLIENT":
       return {
         ...state,
-        reviewClients: state.reviewClients.filter(
-          (c) => c.caseNumber !== action.payload
-        ),
+        toReview: state.toReview.filter((c) => c.caseNumber !== action.payload),
       };
     case "ADD_CLIENT_TO_PERIOD":
       return {

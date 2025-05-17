@@ -101,13 +101,15 @@ const ListState = (props) => {
    */
   const addCreateDateClients = async (clientsArray) => {
     try {
+      console.log(clientsArray.length, "raw clients");
       const res = await api.post("/api/list/addCreateDateClients", {
         clients: clientsArray,
       });
 
       // Expecting { added: [...], flagged: [...] }
       const { added, reviewList } = res.data;
-
+      console.log(added);
+      console.log(reviewList);
       // Update context state
       dispatch({ type: "CLEAR_REVIEW_CLIENTS" });
       dispatch({ type: "SET_REVIEW_CLIENTS", payload: reviewList });

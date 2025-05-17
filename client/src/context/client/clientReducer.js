@@ -4,7 +4,7 @@ const clientReducer = (state, action) => {
     case "ENRICH_CLIENT":
       return {
         ...state,
-        enrichedClient: action.payload,
+        enrichedClient: action.payload.enrichedClient,
       };
     case "CLEAR_ENRICHMENT":
       return {

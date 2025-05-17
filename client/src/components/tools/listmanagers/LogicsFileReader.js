@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import ListContext from "../../../context/list/listContext";
 import MessageContext from "../../../context/message/messageContext";
-import NewClientReviewList from "./NewClientReviewList";
+import NewCreateClientAnalysisList from "../lists/NewCreateClientAnalysisList";
 
 const LogicsFileReader = () => {
   // RAW rows → mapped clients
@@ -246,7 +246,7 @@ const LogicsFileReader = () => {
         </p>
       )}
       {/* show review if bulk upload */}
-      {mode === "bulkUpload" && <NewClientReviewList />}
+      {mode === "bulkUpload" && <NewCreateClientAnalysisList />}
     </div>
   );
 };
