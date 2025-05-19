@@ -208,8 +208,8 @@ const ListState = (props) => {
     }
   };
 
-  const skipClient = (clientID) => {
-    dispatch({ type: "SKIP_CLIENT", payload: clientID });
+  const skipClient = (client) => {
+    dispatch({ type: "SKIP_CLIENT", payload: client });
   };
   return (
     <ListContext.Provider

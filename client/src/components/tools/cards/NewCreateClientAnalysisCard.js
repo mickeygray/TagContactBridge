@@ -9,19 +9,13 @@ export default function NewCreateClientAnalysisCard({ client }) {
   const { skipClient } = useContext(ListContext);
   const { showMessage, showError } = useContext(MessageContext);
 
-  const actions = [
-    { key: "add", label: "Add to Period", variant: "primary" },
-    { key: "remove", label: "Remove", variant: "outline" },
-  ];
+  const actions = [{ key: "add", label: "Add to Period", variant: "primary" }];
 
   const handleReview = async (client, action) => {
     try {
       if (action === "add") {
         await addCreateDateClients([client]);
         showMessage("Client", `Added ${client.caseNumber}`, 200);
-      } else {
-        skipClient(client.caseNumber);
-        showMessage("Client", `Removed ${client.caseNumber}`, 200);
       }
     } catch (err) {
       showError(
@@ -38,7 +32,7 @@ export default function NewCreateClientAnalysisCard({ client }) {
       actions={actions}
       onReview={handleReview}
       onSkip={() => {
-        skipClient(client.caseNumber);
+        skipClient(client);
         showMessage("Client", `Removed ${client.caseNumber}`, 200);
       }}
     />

@@ -27,10 +27,30 @@ const scheduleReducer = (state, action) => {
         ...action.payload,
       };
 
-    case "SKIP CLIENT":
+    case "SKIP_CLIENT":
       return {
         ...state,
-        toReview: state.toReview.filter((c) => c.caseNumber !== action.payload),
+        toReview: state.toReview.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
+        ),
+        emailQueue: state.emailQueue.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
+        ),
+        textQueue: state.textQueue.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
+        ),
       };
 
     case "CLEAR_LOADING":

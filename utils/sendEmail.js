@@ -61,9 +61,9 @@ const sendEmail = async ({
     subject,
     text: text || "",
     html: html || "",
-    attachments: attachments,
+    attachments: attachments || [],
   };
-
+  console.log(mailOptions);
   try {
     await transporter.sendMail(mailOptions);
     console.log(`📤 Email sent to ${to} via ${domain}`);

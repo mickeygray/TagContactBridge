@@ -12,7 +12,7 @@ export default function ClientAnalysisCard({
 }) {
   const { name, caseNumber, email, cell, domain, reviewMessages = [] } = client;
 
-  const { enrichClient, enrichedClient, deleteClient } =
+  const { enrichClient, enrichedClient, deleteScheduledClient } =
     useContext(ClientContext);
 
   const [showEnriched, setShowEnriched] = useState(false);
@@ -58,9 +58,9 @@ export default function ClientAnalysisCard({
             Skip
           </button>
         )}
-        {deleteClient && (
+        {deleteScheduledClient && (
           <button
-            onClick={() => deleteClient(caseNumber)}
+            onClick={() => deleteScheduledClient(client)}
             className="btn btn-danger btn-sm"
           >
             Delete

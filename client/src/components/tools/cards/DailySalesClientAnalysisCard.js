@@ -4,17 +4,16 @@ import ClientContext from "../../../context/client/clientContext";
 import ScheduleContext from "../../../context/schedule/scheduleContext";
 import MessageContext from "../../../context/message/messageContext";
 
-export default function DailyClientAnalysisCard({ client }) {
-  const { processReviewedSaleDateClient, processReviewedCreateDateClient } =
-    useContext(ClientContext);
+export default function DailySalesClientAnalysisCard({ client }) {
+  const { processReviewedSaleDateClient } = useContext(ClientContext);
   const { skipDailyClientProcessing, refreshDailyQueues } =
     useContext(ScheduleContext);
   const { showMessage, showError } = useContext(MessageContext);
 
   const actions = [
     { key: "scheduleDaily", label: "Send Next Content", variant: "success" },
-    { key: "partial", label: "Mark Partial", variant: "warning" },
-    { key: "inactive", label: "Mark Inactive", variant: "danger" },
+    { key: "f433a", label: "Send POA Email", variant: "warning" },
+    { key: "delay", label: "Remove From Initial Contact", variant: "danger" },
   ];
 
   const handleReview = async (c, action) => {
@@ -32,9 +31,9 @@ export default function DailyClientAnalysisCard({ client }) {
   };
 
   const handleSkip = () => {
+    processReviewedSaleDateClient(client, "removeFromQueue");
     skipDailyClientProcessing(client);
     showMessage("Client", `Skipped ${client.caseNumber} for today`, 200);
-    refreshDailyQueues();
   };
 
   return (

@@ -22,9 +22,6 @@ const clientReducer = (state, action) => {
     case "UPDATE_SCHEDULED_CLIENT":
       return {
         ...state,
-        scheduledClients: state.scheduledClients.map((client) =>
-          client._id === action.payload._id ? action.payload : client
-        ),
       };
 
     // Remove a scheduled client by ID

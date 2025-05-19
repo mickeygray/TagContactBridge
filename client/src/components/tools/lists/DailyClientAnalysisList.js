@@ -2,7 +2,8 @@ import React, { useContext } from "react";
 import PropTypes from "prop-types";
 import ScheduleContext from "../../../context/schedule/scheduleContext";
 import ClientAnalysisList from "../../common/ClientAnalysisList";
-
+import DailyCreateClientAnalysisCard from "../cards/DailyCreateClientAnalysisCard";
+import DailySalesClientAnalysisCard from "../cards/DailySalesClientAnalysisCard";
 export default function DailyClientAnalysisList({ activeTab }) {
   const { emailQueue, textQueue, toReview } = useContext(ScheduleContext);
 
@@ -13,11 +14,22 @@ export default function DailyClientAnalysisList({ activeTab }) {
     text: `📱 Text Queue (${textQueue.length})`,
     review: `🚨 Needs Review (${toReview.length})`,
   };
+  const SmartDailyCard = (props) => {
+    const { client } = props;
 
+    const hasCreateDate = client.type === "createDate";
+
+    const Card = hasCreateDate
+      ? DailyCreateClientAnalysisCard
+      : DailySalesClientAnalysisCard;
+
+    return <Card {...props} />;
+  };
   return (
     <ClientAnalysisList
       title={titles[activeTab]}
       lists={lists}
+      CardComponent={SmartDailyCard}
       isDaily
       activeTab={activeTab}
     />

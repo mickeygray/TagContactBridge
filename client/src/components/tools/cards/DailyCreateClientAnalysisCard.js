@@ -1,26 +1,26 @@
-// src/components/clientreview/PeriodClientAnalysisCard.jsx
 import React, { useContext } from "react";
 import ClientAnalysisCard from "../../common/ClientAnalysisCard";
 import ClientContext from "../../../context/client/clientContext";
-import ListContext from "../../../context/list/listContext";
+import ScheduleContext from "../../../context/schedule/scheduleContext";
 import MessageContext from "../../../context/message/messageContext";
 
-export default function PeriodClientAnalysisCard({ client }) {
+export default function DailyCreateClientAnalysisCard({ client }) {
   const { processReviewedCreateDateClient } = useContext(ClientContext);
-  const { skipClient } = useContext(ListContext);
+  const { skipDailyClientProcessing, refreshDailyQueues } =
+    useContext(ScheduleContext);
   const { showMessage, showError } = useContext(MessageContext);
 
   const actions = [
-    { key: "schedulePeriod", label: "Add to Period", variant: "primary" },
+    { key: "scheduleDaily", label: "Send Next Content", variant: "success" },
     { key: "partial", label: "Mark Partial", variant: "warning" },
     { key: "inactive", label: "Mark Inactive", variant: "danger" },
   ];
 
-  const handleReview = async (client, action) => {
+  const handleReview = async (c, action) => {
     try {
-      await processReviewedCreateDateClient(client, action);
-      skipClient(client);
-      showMessage("Client", `${action} applied to ${client.caseNumber}`, 200);
+      await processReviewedCreateDateClient(c, action);
+      showMessage("Client", `${action} applied to ${c.caseNumber}`, 200);
+      await refreshDailyQueues();
     } catch (err) {
       showError(
         "Client",
@@ -29,15 +29,21 @@ export default function PeriodClientAnalysisCard({ client }) {
       );
     }
   };
+
+  const handleSkip = () => {
+    processReviewedCreateDateClient(client, "removeFromQueue");
+    skipDailyClientProcessing(client);
+
+    showMessage("Client", `Skipped ${client.caseNumber} for today`, 200);
+    refreshDailyQueues();
+  };
+
   return (
     <ClientAnalysisCard
       client={client}
       actions={actions}
       onReview={handleReview}
-      onSkip={() => {
-        skipClient(client);
-        showMessage("Client", `Removed ${client.caseNumber}`, 200);
-      }}
+      onSkip={handleSkip}
     />
   );
 }

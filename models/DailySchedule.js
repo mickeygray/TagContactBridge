@@ -8,7 +8,7 @@ const contactSchema = new mongoose.Schema({
   cell: { type: String }, // Optional, used in textQueue// e.g., "f433a", "penaltyAbatement"
   stagePiece: { type: String, required: true }, // e.g., "433a Text 1"
   contactType: { type: String, enum: ["email", "text"], required: true },
-  token: { type: String },
+  type: { type: String },
 });
 
 const dailyScheduleSchema = new mongoose.Schema(

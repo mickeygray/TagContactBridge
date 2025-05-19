@@ -135,7 +135,14 @@ async function flagAndUpdateDelinquent(client) {
  * 3️⃣ Review status-change activities (excluding benign conversions).
  */
 async function reviewClientContact(client) {
-  const cutoff = client.sinceDate;
+  const REVIEW_WINDOW_DAYS = 30;
+  const reviewWindowStart = new Date(
+    Date.now() - REVIEW_WINDOW_DAYS * 86400000
+  );
+
+  const rawSince = client.sinceDate ? new Date(client.sinceDate) : null;
+  const cutoff =
+    rawSince && rawSince > reviewWindowStart ? rawSince : reviewWindowStart;
   if (!cutoff) {
     console.log(`[reviewClientContact] ${client.caseNumber} has no sinceDate`);
     return client;

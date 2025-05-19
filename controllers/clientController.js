@@ -1,18 +1,17 @@
 // controllers/clientController.js
 const path = require("path");
 const fs = require("fs");
-const crypto = require("crypto");
 const multer = require("multer");
 const hbs = require("handlebars");
 const Client = require("../models/Client");
 const DailySchedule = require("../models/DailySchedule"); // your daily schedule model
 const PeriodContacts = require("../models/PeriodContacts");
-const sendEmail = require("../utils/sendEmail");
 const interactions = require("../utils/singleClientInteractions");
 const { addAndVerifySingleClient } = require("../utils/newClientEntryChecks");
 const sigTpl = require("../libraries/rawSignature");
 const emailSubjects = require("../libraries/emailSubjects"); // 🆕 import
-
+const contactCampaignMap = require("../libraries/contactCampaignMap");
+const sendEmail = require("../utils/sendEmail");
 const upload = multer();
 
 /**
@@ -49,7 +48,7 @@ async function purgeFromScheduleAndPeriod(clientId, caseNumber) {
   );
 }
 
-async function getClientDocument(clientLike) {
+async function getClientByCaseAndDomain(clientLike) {
   if (!clientLike) return null;
 
   // 1️⃣ If we already have a Mongo _id, prefer that
@@ -68,9 +67,21 @@ async function getClientDocument(clientLike) {
   return null;
 }
 
-async function loadTodaySchedule() {
+async function getTodaySchedule() {
   const today = new Date().toISOString().split("T")[0];
   return DailySchedule.findOne({ date: today });
+}
+
+async function getLatestPeriod() {
+  try {
+    const latest = await PeriodContacts.findOne()
+      .sort({ periodStartDate: -1 })
+      .lean();
+    return latest;
+  } catch (err) {
+    console.error("❌ Failed to get latest period:", err);
+    return null;
+  }
 }
 /**
  * POST /api/clients/uploadDocument
@@ -187,7 +198,7 @@ async function sendSaleDateClientEmail(client, stageKey) {
 
   // 1) signature vars (no token)
   const sigVars = {
-    schedulerUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+    scheduleUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
     url: process.env[`${domain}_URL`] || "",
     phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
     processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
@@ -220,11 +231,12 @@ async function sendSaleDateClientEmail(client, stageKey) {
   const subject = emailSubjects[stageKey]?.subject || `Update from ${domain}`;
 
   // 5) send mail
-  await getTransporter(domain).sendMail({
-    from: process.env[`${domain}_EMAIL_NAME`],
+  await sendEmail({
+    from: `${process.env["TAG_EMAIL_NAME"]} <${process.env["TAG_EMAIL_ADDRESS"]}>`,
     to: email,
     subject,
     html,
+    domain,
   });
 
   // 6) stamp lastContactDate for record
@@ -287,11 +299,12 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
     if (!raw) return res.status(404).json({ message: "Not found" });
 
     // 1️⃣ hydrate live client
-    const doc = await loadClientByCaseAndDomain(raw.caseNumber, raw.domain);
+    const doc = await getClientByCaseAndDomain(raw.caseNumber, raw.domain);
     if (!doc) return res.status(404).json({ message: "Client not found" });
 
     // 2️⃣ load today’s schedule
-    const sched = await loadTodaySchedule();
+
+    const sched = await getTodaySchedule();
 
     switch (action) {
       case "prac": {
@@ -316,6 +329,7 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
       case "433a": {
         if (!doc.stagePieces.includes("POAEmail")) {
           doc.stagePieces.push("POAEmail");
+          doc.stagesReceived.push("prac");
         }
         if (
           sched &&
@@ -335,21 +349,71 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
       case "delay": {
         doc.createDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
         doc.status = "active";
+        doc.stagesReceived.push("prac", "f433a");
         await doc.save();
 
         if (sched) {
           sched.emailQueue = sched.emailQueue.filter(
-            (c) => c.caseNumber !== doc.caseNumber
+            (c) => !(c.caseNumber === doc.caseNumber && c.domain === doc.domain)
           );
           sched.textQueue = sched.textQueue.filter(
-            (c) => c.caseNumber !== doc.caseNumber
+            (c) => !(c.caseNumber === doc.caseNumber && c.domain === doc.domain)
           );
           await sched.save();
         }
 
         return res.json({ message: "Client delayed 60 days", client: doc });
       }
+      case "scheduleDaily": {
+        const stagesReceived = doc.stagesReceived || [];
+        const hasPrac = stagesReceived.includes("prac");
 
+        // Step 1: Determine current stage
+        const stage = hasPrac ? "f433a" : "prac";
+
+        // Step 2: Pull sequence
+        const sequence = contactCampaignMap.saleDate?.[stage] || [];
+
+        // Step 3: Determine what's already been sent
+        const alreadySent = new Set(doc.stagePieces || []);
+        const nextStep = sequence.find(
+          (step) => !alreadySent.has(step.stagePiece)
+        );
+
+        if (nextStep) {
+          const contact = {
+            name: doc.name,
+            caseNumber: doc.caseNumber,
+            email: doc.email,
+            cell: doc.cell,
+            domain: doc.domain || "TAG",
+            stagePiece: nextStep.stagePiece,
+            contactType: nextStep.contactType,
+            type: "saleDate",
+          };
+
+          const field =
+            nextStep.contactType === "text" ? "textQueue" : "emailQueue";
+
+          await DailySchedule.findByIdAndUpdate(sched._id, {
+            $push: { [field]: contact },
+          });
+        }
+      }
+      case "removeFromQueue": {
+        const contactFilter = {
+          caseNumber: doc.caseNumber,
+          domain: doc.domain,
+        };
+
+        // Pull from both queues just in case
+        await DailySchedule.findByIdAndUpdate(sched._id, {
+          $pull: {
+            textQueue: contactFilter,
+            emailQueue: contactFilter,
+          },
+        });
+      }
       default:
         return res.status(400).json({ message: "Invalid action" });
     }
@@ -366,19 +430,24 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
 
 async function processReviewedCreateDateClientHandler(req, res, next) {
   try {
-    const { client: rawClient, action } = req.body;
-    if (!rawClient) {
+    console.log("🟢 Hit /reviewCreateDate route"); // Add this
+    const { client, action } = req.body;
+    console.log("📦 Payload received:", { action, client });
+    if (!client) {
       return res.status(404).json({ message: "Client payload not found" });
     }
-    const { caseNumber, domain } = rawClient;
+    const { caseNumber, domain } = client;
+
     // 1️⃣ always load the up-to-date document
-    const doc = await getClientByCaseAndDomain(caseNumber, domain);
+    const doc = await getClientByCaseAndDomain({ caseNumber, domain });
+
     if (!doc) {
       return res.status(404).json({ message: "Client not found" });
     }
 
     // 2️⃣ grab today’s schedule once
     const sched = await getTodaySchedule();
+    const period = await getLatestPeriod();
 
     let updated;
     switch (action) {
@@ -386,7 +455,72 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
         // brand-new createDate client
         doc.createDate = new Date();
         doc.status = "active";
-        doc.reviewDate = null;
+        doc.reviewDates = [...client.reviewDates];
+        updated = await doc.save();
+        return res.json({
+          message: `Client ${caseNumber} added.`,
+          client: updated,
+        });
+      }
+      case "scheduleDaily": {
+        console.log("📨 [scheduleDaily] Starting schedule logic...");
+
+        const stage = period?.createDateStage;
+        console.log("📘 createDateStage:", stage);
+
+        const sequence = contactCampaignMap.createDate?.[stage] || [];
+        console.log(
+          "📋 Contact sequence:",
+          sequence.map((s) => s.stagePiece)
+        );
+
+        const alreadySent = new Set(doc.stagePieces || []);
+
+        const nextStep = sequence.find(
+          (step) => !alreadySent.has(step.stagePiece)
+        );
+
+        if (!nextStep) {
+          console.log("⚠️ No remaining steps — client is fully messaged.");
+          return res.status(200).json({
+            message: "Client is already complete for this stage.",
+            client: doc,
+          });
+        }
+
+        const contact = {
+          name: doc.name,
+          caseNumber: doc.caseNumber,
+          email: doc.email,
+          cell: doc.cell,
+          domain: doc.domain || "TAG",
+          stagePiece: nextStep.stagePiece,
+          contactType: nextStep.contactType,
+          type: "createDate",
+        };
+
+        const field =
+          nextStep.contactType === "text" ? "textQueue" : "emailQueue";
+        console.log(`📬 Pushing to ${field}:`, contact);
+
+        await DailySchedule.findByIdAndUpdate(sched._id, {
+          $push: { [field]: contact },
+        });
+
+        doc.reviewDates = [...client.reviewDates];
+        updated = await doc.save();
+
+        console.log(`🎉 Client ${caseNumber} scheduled for next message.`);
+        return res.json({
+          message: `Client ${caseNumber} added to daily schedule.`,
+          client: updated,
+        });
+      }
+      case "schedulePeriod": {
+        await PeriodContacts.findByIdAndUpdate(period._id, {
+          $addToSet: { createDateClientIDs: doc._id },
+        });
+        doc.reviewDates = [...client.reviewDates];
         updated = await doc.save();
         return res.json({
           message: `Client ${caseNumber} added.`,
@@ -399,7 +533,7 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
         // update status & clear reviewDate
         updated = await Client.findOneAndUpdate(
           { caseNumber, domain },
-          { $set: { status: action, reviewDate: null } },
+          { $set: { status: action } },
           { new: true }
         );
         // 3️⃣ purge from both today's schedule and all periods
@@ -413,7 +547,20 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
           client: updated,
         });
       }
+      case "removeFromQueue": {
+        const contactFilter = {
+          caseNumber: doc.caseNumber,
+          domain: doc.domain,
+        };
 
+        // Pull from both queues just in case
+        await DailySchedule.findByIdAndUpdate(sched._id, {
+          $pull: {
+            textQueue: contactFilter,
+            emailQueue: contactFilter,
+          },
+        });
+      }
       default:
         return res.status(400).json({ message: "Invalid action" });
     }
@@ -424,13 +571,13 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
 
 async function deleteClientHandler(req, res, next) {
   try {
-    const clientId = req.params.id;
-    const { caseNumber } = req.body;
+    const { caseNumber, domain, _id } = req.body;
 
+    const clientId = _id;
     // 1️⃣ Find the client
     const client = clientId
       ? await Client.findById(clientId)
-      : await Client.findOne({ caseNumber });
+      : await Client.findOne({ caseNumber, domain });
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
@@ -443,8 +590,8 @@ async function deleteClientHandler(req, res, next) {
       {},
       {
         $pull: {
-          emailQueue: { caseNumber: client.caseNumber },
-          textQueue: { caseNumber: client.caseNumber },
+          emailQueue: { caseNumber: client.caseNumber, domain: client.domain },
+          textQueue: { caseNumber: client.caseNumber, domain: client.domain },
         },
       }
     );
@@ -455,7 +602,6 @@ async function deleteClientHandler(req, res, next) {
       {
         $pull: {
           createDateClientIDs: client._id.toString(),
-          contactedClientIDs: client._id.toString(),
         },
       }
     );

@@ -76,11 +76,12 @@ const ClientState = (props) => {
     }
   };
 
-  const deleteScheduledClient = async (caseNumber, domain) => {
+  const deleteScheduledClient = async (client) => {
     try {
+      const { caseNumber, domain, _id } = client;
       // sends { caseNumber, domain } in body
       await api.delete("/api/clients/delete", {
-        data: { caseNumber, domain },
+        data: { caseNumber, domain, _id },
       });
       dispatch({ type: "DELETE_SCHEDULED_CLIENT", payload: caseNumber });
     } catch (err) {
@@ -89,7 +90,7 @@ const ClientState = (props) => {
   };
 
   // ───────────── Review handlers ─────────────
-  const reviewSaleDateClient = async (client, action) => {
+  const processReviewedSaleDateClient = async (client, action) => {
     try {
       const res = await api.post("/api/clients/reviewSaleDate", {
         client,
@@ -104,7 +105,7 @@ const ClientState = (props) => {
     }
   };
 
-  const reviewCreateDateClient = async (client, action) => {
+  const processReviewedCreateDateClient = async (client, action) => {
     try {
       const res = await api.post("/api/clients/reviewCreateDate", {
         client,
@@ -136,8 +137,8 @@ const ClientState = (props) => {
         createActivityForClient,
         addScheduledClient,
         deleteScheduledClient,
-        reviewSaleDateClient,
-        reviewCreateDateClient,
+        processReviewedSaleDateClient,
+        processReviewedCreateDateClient,
         skipClient,
       }}
     >

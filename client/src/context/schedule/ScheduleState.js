@@ -45,7 +45,7 @@ const ScheduleState = (props) => {
   // 4. Process review decisions in bulk:
 
   const skipDailyClientProcessing = (client) => {
-    dispatch({ type: "SKIP CLIENT", payload: client.caseNumber });
+    dispatch({ type: "SKIP CLIENT", payload: client });
   };
 
   return (

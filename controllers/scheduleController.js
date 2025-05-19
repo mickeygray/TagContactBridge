@@ -50,6 +50,7 @@ const assignContactMethodAndStagePiece = async (
           console.log(`[processClientList] Auto-POA for ${client.caseNumber}`);
           client.contactType = "email";
           client.stagePiece = "POAEmail";
+          client.type = "saleDate";
           client.stagesReceived = [
             ...new Set([...(client.stagesReceived || []), "prac"]),
           ];
@@ -94,6 +95,8 @@ const assignContactMethodAndStagePiece = async (
           console.log(
             `[processClientList] ${client.caseNumber} has completed all ${stageKey} steps`
           );
+
+          client.stagesReceived.push(stageKey);
           return null;
         }
         const piece = sequence[nextIdx];
@@ -115,16 +118,13 @@ const assignContactMethodAndStagePiece = async (
         );
 
         // 7) Build updated record
-        const updatedStages = [
-          ...new Set([...(client.stagesReceived || []), stageKey]),
-        ];
+
         return {
           ...client,
           contactType: piece.contactType,
           stagePiece: piece.stagePiece,
+          type,
           lastContactDate: new Date(today),
-          stagesReceived: updatedStages,
-          contactedThisPeriod: false,
         };
       })
       .filter(Boolean);
@@ -186,37 +186,49 @@ async function buildDailySchedule(req, res) {
     // 2️⃣ Get clients by period & saleDate (no createDate allowed in sale)
     const periodDoc = await PeriodContacts.findOne();
     const periodIds = periodDoc?.createDateClientIDs || [];
-    const periodClients = await Client.find({ _id: { $in: periodIds } }).lean();
+    const rawPeriodClients = await Client.find({
+      _id: { $in: periodIds },
+    }).lean();
+    const mappedPeriodClients = rawPeriodClients.map((c) => ({
+      ...c,
+      type: "createDate",
+    }));
 
     const sixtyDaysAgo = new Date();
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const saleClients = await Client.find({
+    const rawSaleClients = await Client.find({
       saleDate: { $gte: sixtyDaysAgo },
-      createDate: { $exists: false }, // ⛔ no createDate allowed
+      createDate: { $exists: false },
       status: { $in: ["active", "partial"] },
     }).lean();
+    const mappedSaleClients = rawSaleClients.map((c) => ({
+      ...c,
+      type: "saleDate",
+    }));
 
     console.log(
-      `🔍 Loaded ${periodClients.length} period clients, ` +
-        `${saleClients.length} sale clients`
+      `🔍 Loaded ${rawPeriodClients.length} period clients, ` +
+        `${rawSaleClients.length} sale clients`
     );
 
     // 3️⃣ Validate and enrich clients
-    const fresh = [...periodClients, ...saleClients].map((client) => {
-      const lastContact = client.lastContactDate
-        ? new Date(client.lastContactDate)
-        : null;
-      const sale = client.saleDate ? new Date(client.saleDate) : null;
-      const period = periodDoc?.periodStartDate || null;
+    const fresh = [...mappedPeriodClients, ...mappedSaleClients].map(
+      (client) => {
+        const lastContact = client.lastContactDate
+          ? new Date(client.lastContactDate)
+          : null;
+        const sale = client.saleDate ? new Date(client.saleDate) : null;
+        const period = periodDoc?.periodStartDate || null;
 
-      const dates = [lastContact, sale, period].filter(
-        (d) => d instanceof Date && !isNaN(d)
-      );
-      const sinceTs = Math.max(...dates.map((d) => d.getTime()));
-      client.sinceDate = new Date(sinceTs);
+        const dates = [lastContact, sale, period].filter(
+          (d) => d instanceof Date && !isNaN(d)
+        );
+        const sinceTs = Math.max(...dates.map((d) => d.getTime()));
+        client.sinceDate = new Date(sinceTs);
 
-      return client;
-    });
+        return client;
+      }
+    );
 
     const { verified, partial, toReview } =
       await addVerifiedClientsAndReturnUpdatedLists(fresh);
@@ -226,14 +238,23 @@ async function buildDailySchedule(req, res) {
     );
 
     // 4️⃣ Classify verified into period and sale
-    const saleIds = new Set(saleClients.map((c) => c._id.toString()));
+    const saleIds = new Set(mappedSaleClients.map((c) => c._id.toString()));
 
-    const verifiedPeriod = verified.filter(
-      (c) => !saleIds.has(c._id.toString())
-    );
-    const verifiedSales = verified.filter((c) => saleIds.has(c._id.toString()));
-    const partialPeriod = partial.filter((c) => !saleIds.has(c._id.toString()));
-    const partialSales = partial.filter((c) => saleIds.has(c._id.toString()));
+    const verifiedPeriod = verified
+      .filter((c) => !saleIds.has(c._id.toString()))
+      .map((c) => ({ ...c, type: "createDate" }));
+
+    const verifiedSales = verified
+      .filter((c) => saleIds.has(c._id.toString()))
+      .map((c) => ({ ...c, type: "saleDate" }));
+
+    const partialPeriod = partial
+      .filter((c) => !saleIds.has(c._id.toString()))
+      .map((c) => ({ ...c, type: "createDate" }));
+
+    const partialSales = partial
+      .filter((c) => saleIds.has(c._id.toString()))
+      .map((c) => ({ ...c, type: "saleDate" }));
 
     // 5️⃣ Assign stage pieces
     const {
@@ -259,7 +280,7 @@ async function buildDailySchedule(req, res) {
       ...freshTextQueue.filter(
         (item) =>
           !carriedTextQueue.some(
-            (c) => c.caseNumber === item.caseNumber && c.stage === item.stage
+            (c) => c.caseNumber === item.caseNumber && c.domain === item.domain
           )
       ),
     ];
@@ -427,7 +448,12 @@ async function sendDailyText(req, res, next) {
       }
 
       // — first name only
-      const firstName = (name || "").split(" ")[0];
+      const formatFirstName = (name = "") => {
+        const first = name.split(" ")[0] || "";
+        return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+      };
+
+      const firstName = formatFirstName(name);
 
       // — template lookup
       const libEntry = textMessageLibrary[stagePiece];
@@ -481,35 +507,28 @@ async function sendDailyText(req, res, next) {
     const succeeded = results.filter((r) => r.status === "sent");
     const succeededCases = succeeded.map((r) => r.caseNumber);
 
+    console.log(succeeded);
     await Promise.all(
       succeeded.map((r) => {
-        const upd = { $set: { lastContactDate: new Date() } };
+        const filter = { caseNumber: r.caseNumber, domain: r.domain };
+
+        const upd = {
+          $set: { lastContactDate: new Date() },
+          $addToSet: { stagePieces: r.stagePiece },
+        };
 
         if (REUSABLE_TEXT3.has(r.stagePiece)) {
-          // cycle Text 1 & 2 out, add Text 3 & its stage
           const prefix = r.stagePiece.replace(/ Text 3$/, "");
           upd.$pull = { stagePieces: [`${prefix} Text 1`, `${prefix} Text 2`] };
-          upd.$addToSet = {
-            stagePieces: r.stagePiece,
-            stagesReceived: FINAL_STAGE_PIECES[r.stagePiece],
-          };
         } else if (FINAL_STAGE_PIECES[r.stagePiece]) {
-          // final piece → record piece + mark stage done
-          upd.$addToSet = {
-            stagePieces: r.stagePiece,
-            stagesReceived: FINAL_STAGE_PIECES[r.stagePiece],
-          };
-          // if this is the f433a Text 9 piece, also set createDate = today
+          upd.$addToSet.stagesReceived = FINAL_STAGE_PIECES[r.stagePiece];
+
           if (r.stagePiece === "f433a Text 9") {
             upd.$set.createDate = new Date();
           }
         }
-        // else: only updating lastContactDate
 
-        return Client.findOneAndUpdate(
-          { caseNumber: r.caseNumber, domain: r.domain },
-          upd
-        ).exec();
+        return Client.findOneAndUpdate(filter, upd).exec();
       })
     );
 
@@ -542,49 +561,33 @@ async function sendDailyEmail(req, res, next) {
       `✅ Loaded schedule; ${schedule.emailQueue.length} emails to send.`
     );
 
-    const DOMAINS = ["TAG", "WYNN", "AMITY"];
-    const domainLookup = DOMAINS.reduce((acc, d) => {
-      acc[d] = {
-        calendarScheduleUrl: process.env[`${d}_CALENDAR_SCHEDULE_URL`] || "",
-        url: process.env[`${d}_URL`] || "",
-        clientContactPhone: process.env[`${d}_CLIENT_CONTACT_PHONE`] || "",
-      };
-      return acc;
-    }, {});
-
     const results = await Promise.allSettled(
       schedule.emailQueue.map(async (recip, idx) => {
         console.log(`---\n[${idx + 1}] processing recipient:`, recip);
         const { email, name, caseNumber, domain, stagePiece } = recip;
-
+        const sigVars = {
+          scheduleUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+          url: process.env[`${domain}_URL`] || "",
+          phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
+          processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
+          logoSrc: process.env[`${domain}_LOGO_URL`] || "",
+          contactName: process.env[`${domain}_CONTACT_NAME`] || "",
+        };
         if (!email) {
           console.error(`❌ Missing email for case ${caseNumber}`);
           throw new Error("Missing recipient email");
         }
 
-        if (!domainLookup[domain]) {
-          console.error(`❌ Invalid domain "${domain}" for case ${caseNumber}`);
-          throw new Error(`Invalid domain "${domain}"`);
-        }
-
         // 1) build your vars
-        const vars = domainLookup[domain];
-        console.log(`   signatureVars for ${domain}:`, vars);
 
+        console.log(`   signatureVars for ${domain}:`, sigVars);
         // 2) render signature
         const signatureTpl = rawSignature; // or however you load per-domain
         if (!signatureTpl) {
           console.error(`❌ No signature template for domain "${domain}"`);
           throw new Error(`No signature template for: "${domain}"`);
         }
-        const signatureHtml = signatureTpl({
-          schedulerUrl: vars.calendarScheduleUrl,
-          phone: vars.clientContactPhone,
-          url: vars.url,
-          processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
-          logoSrc: process.env[`${domain}_LOGO_URL`] || "",
-          contactName: process.env[`${domain}_CONTACT_NAME`] || "",
-        });
+        const signatureHtml = signatureTpl(sigVars);
         console.log(`   signatureHtml length: ${signatureHtml.length}`);
 
         // 3) compile main body
@@ -598,12 +601,16 @@ async function sendDailyEmail(req, res, next) {
           console.error(`❌ Template not found at ${bodyPath}`);
           throw new Error("Template not found");
         }
+        const formatName = (str) =>
+          str.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+
+        const formattedName = formatName(name);
         const bodySource = fs.readFileSync(bodyPath, "utf8");
         console.log(`   template source length: ${bodySource.length}`);
         const bodyTpl = hbs.compile(bodySource);
         const html = bodyTpl({
-          name,
-          phone: vars.clientContactPhone,
+          name: formattedName,
+          phone: sigVars.clientContactPhone,
           signature: signatureHtml,
         });
 
@@ -612,9 +619,11 @@ async function sendDailyEmail(req, res, next) {
         const attsDir = path.join(
           __dirname,
           "../Templates/attachments",
-          stagePiece,
+          stagePiece.toLowerCase(),
           domainKey
         );
+
+        console.log(attsDir, "attsDir!");
 
         let atts = [];
         if (fs.existsSync(attsDir) && fs.statSync(attsDir).isDirectory()) {

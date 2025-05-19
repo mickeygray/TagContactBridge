@@ -17,9 +17,26 @@ export default (state, action) => {
     case "SKIP_CLIENT":
       return {
         ...state,
-        // remove any reviewClient whose caseNumber matches the payload
-        reviewClients: state.reviewClients.filter(
-          (c) => c.caseNumber !== action.payload
+        toReview: state.toReview.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
+        ),
+        partial: state.partial.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
+        ),
+        verified: state.verified.filter(
+          (c) =>
+            !(
+              c.caseNumber === action.payload.caseNumber &&
+              c.domain === action.payload.domain
+            )
         ),
       };
     case "SET_RECORD_COUNT":
