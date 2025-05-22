@@ -1,17 +1,13 @@
-// src/components/tools/listManagers/NewClientCreationForm.jsx
 import React, { useState, useContext } from "react";
 import ClientContext from "../../../context/client/clientContext";
 import NewSaleClientAnalysisCard from "../cards/NewSaleClientAnalysisCard";
 
 const NewClientCreationForm = () => {
-  const {
-    addScheduledClient,
-    newClient,
-    // we'll need to clear it once hidden
-    clearNewClient,
-  } = useContext(ClientContext);
+  const { addScheduledClient, newClient, clearNewClient } =
+    useContext(ClientContext);
 
   const [inputFocused, setInputFocused] = useState(false);
+
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -62,13 +58,12 @@ const NewClientCreationForm = () => {
   };
 
   return (
-    <div className="card p-4 mb-6">
-      <h3 className="text-xl font-semibold mb-4">➕ New Client Creation</h3>
+    <div className="new-client-form card p-6 mb-6 rounded-lg shadow-md bg-white">
+      <h3 className="text-2xl font-bold mb-4">➕ Add New Client</h3>
 
-      {/* form */}
       <form
         onSubmit={handleSubmit}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 gap-6"
       >
         {[
           { label: "Full Name", name: "name", type: "text", required: true },
@@ -83,37 +78,37 @@ const NewClientCreationForm = () => {
             onFocus: () => setInputFocused(true),
           },
         ].map(({ label, ...fld }) => (
-          <label key={fld.name} className="flex flex-col">
-            {label}
+          <label key={fld.name} className="form-field flex flex-col">
+            <span className="mb-1 font-medium">{label}</span>
             <input
               {...fld}
               value={formData[fld.name]}
               onChange={handleChange}
-              className="input"
+              className="input border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </label>
         ))}
 
-        <label className="flex flex-col">
-          Client Tier
+        <label className="form-field flex flex-col">
+          <span className="mb-1 font-medium">Client Tier</span>
           <select
             name="autoPOA"
             value={formData.autoPOA}
             onChange={handleChange}
-            className="input"
+            className="input border border-gray-300 rounded px-3 py-2"
           >
             <option value="false">Active Client</option>
             <option value="true">Tier 1</option>
           </select>
         </label>
 
-        <label className="flex flex-col">
-          Domain
+        <label className="form-field flex flex-col">
+          <span className="mb-1 font-medium">Domain</span>
           <select
             name="domain"
             value={formData.domain}
             onChange={handleChange}
-            className="input"
+            className="input border border-gray-300 rounded px-3 py-2"
           >
             <option value="TAG">Tax Advocate Group</option>
             <option value="WYNN">Wynn Tax Solutions</option>
@@ -121,27 +116,37 @@ const NewClientCreationForm = () => {
         </label>
 
         <div className="col-span-full">
-          <button type="submit" className="btn btn-primary">
+          <button
+            type="submit"
+            className="btn btn-primary w-full md:w-auto bg-blue-600 text-white px-5 py-2 rounded hover:bg-blue-700 transition"
+          >
             📤 Submit & Trigger Email
           </button>
         </div>
       </form>
 
-      {/* result */}
-      {newClient && newClient.status !== "inReview" && (
-        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded">
-          <p className="font-medium">
-            ✅ Client added and Practitioner Email sent!
+      {/* Success Confirmation */}
+      {newClient && newClient.client?.status !== "inReview" && (
+        <div className="card bg-green-100 p-4 mt-6 rounded">
+          <p className="font-medium text-green-800">
+            ✅ Client added and Email sent!
           </p>
-          <button onClick={resetForm} className="mt-2 btn btn-sm">
-            Add another client
+          <button
+            onClick={resetForm}
+            className="btn btn-sm mt-2 bg-green-700 text-white px-3 py-1 rounded hover:bg-green-800"
+          >
+            ➕ Add another client
           </button>
         </div>
       )}
 
-      {newClient && newClient.status === "inReview" && (
+      {/* Review Card */}
+      {newClient?.client?.status === "inReview" && (
         <div className="mt-6">
-          <NewSaleClientAnalysisCard client={newClient} onHide={resetForm} />
+          <NewSaleClientAnalysisCard
+            client={newClient.client}
+            onHide={resetForm}
+          />
         </div>
       )}
     </div>

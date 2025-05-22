@@ -168,6 +168,61 @@ async function buildSchedule(req, res, next) {
   }
 }
 
+async function unifiedClientSearch(req, res, next) {
+  try {
+    const {
+      query = "",
+      dateType = "createDate",
+      startDate,
+      domain,
+      endDate,
+      stagePiece,
+      invoiceCount,
+      lastInvoiceAmount,
+      totalPayment,
+    } = req.body;
+
+    const searchConditions = [];
+
+    // 🔍 1. Text search by name, caseNumber, email, or cell
+    if (query) {
+      const q = query.trim();
+      searchConditions.push({ name: new RegExp(q, "i") });
+      searchConditions.push({ caseNumber: new RegExp(q, "i") });
+      searchConditions.push({ email: new RegExp(q, "i") });
+      searchConditions.push({ cell: new RegExp(q, "i") });
+    }
+
+    const filter = {};
+    if (searchConditions.length) filter.$or = searchConditions;
+
+    // 🗓 2. Date filters (createDate or saleDate)
+    if (startDate || endDate) {
+      filter[dateType] = {};
+      if (startDate) filter[dateType].$gte = new Date(startDate);
+      if (endDate) filter[dateType].$lte = new Date(endDate);
+    }
+
+    // 🧾 3. Stage piece
+    if (stagePiece) filter.stagePieces = stagePiece;
+
+    // 💵 4. Numeric filters
+    if (invoiceCount) filter.invoiceCount = { $gte: Number(invoiceCount) };
+    if (lastInvoiceAmount)
+      filter.lastInvoiceAmount = { $gte: Number(lastInvoiceAmount) };
+    if (totalPayment) filter.totalPayment = { $gte: Number(totalPayment) };
+
+    const clients = await Client.find(filter)
+      .sort({ lastContactDate: -1 })
+      .lean();
+
+    return res.json(clients);
+  } catch (err) {
+    console.error("/search error:", err);
+    return res.status(500).json({ message: "Search failed." });
+  }
+}
+
 async function addCreateDateClients(req, res, next) {
   try {
     const rawClients = req.body.clients;
@@ -480,6 +535,58 @@ async function buildDialerList(req, res, next) {
     next(err);
   }
 }
+
+async function buildLienList(req, res, next) {
+  try {
+    const liens = req.body.liens;
+    const validatedLiens = [];
+
+    const normalizePhone = (raw) => raw.replace(/\D/g, "").slice(-10);
+
+    for (const lien of liens) {
+      const phonesToCheck = lien.phones || lien.AllPhones || [];
+      const validPhones = [];
+
+      if (!phonesToCheck.length) continue; // ⛔ skip if no phones
+
+      for (const phone of phonesToCheck) {
+        const normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone.length !== 10) continue; // ⛔ skip malformed
+
+        try {
+          const apiResult = await validatePhone(normalizedPhone);
+          const isClean =
+            apiResult.national_dnc === "N" &&
+            apiResult.state_dnc === "N" &&
+            apiResult.iscell === "Y" &&
+            !["disconnected", "invalid-phone", "ERROR"].includes(
+              apiResult.status
+            );
+
+          if (isClean) {
+            validPhones.push(normalizedPhone);
+          }
+        } catch (err) {
+          console.warn(`Phone validation error (${phone}): ${err.message}`);
+        }
+      }
+
+      if (validPhones.length > 0) {
+        validatedLiens.push({
+          ...lien,
+          phones: validPhones,
+        });
+      }
+      console.log(validatedLiens.length);
+    }
+
+    return res.json({ validatedLiens });
+  } catch (err) {
+    console.error("❌ buildLienList error:", err);
+    next(err);
+  }
+}
+
 async function filterList(req, res, next) {
   try {
     const { clients, domain } = req.body;
@@ -505,5 +612,7 @@ module.exports = {
   filterList,
   buildSchedule,
   buildDialerList,
+  buildLienList,
+  unifiedClientSearch,
   downloadAndEmailDaily,
 };

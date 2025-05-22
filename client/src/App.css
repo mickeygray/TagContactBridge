@@ -15,7 +15,76 @@
   padding: 0;
   box-sizing: border-box;
 }
+.unified-manager {
+  padding: 1rem;
+  background: #fff;
+  border-radius: 0.5rem;
+}
 
+.unified-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.unified-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.unified-input,
+.unified-select {
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 0.375rem;
+}
+
+.unified-input.full,
+.unified-select.full {
+  grid-column: span 2;
+}
+.new-client-form {
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 24px;
+  width: 400px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* Each label + input/select combo */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* All inputs and selects */
+.input {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #3b82f6; /* blue */
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.unified-btn {
+  padding: 0.75rem;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-weight: 600;
+  width: 100%;
+}
 .toast {
   position: fixed;
   top: 60px; /* height of your navbar */

@@ -1,24 +1,24 @@
-import React, { useReducer } from "react";
+import React, { useReducer, useContext } from "react";
 import ClientContext from "./clientContext";
 import clientReducer from "./clientReducer";
 import { useApi } from "../../utils/api";
-
+import MessageContext from "../../context/message/messageContext";
 const ClientState = (props) => {
   const initialState = {
     enrichedClient: null,
     newClient: null,
   };
   const [state, dispatch] = useReducer(clientReducer, initialState);
-
+  const { showMessage, showError } = useContext(MessageContext);
   const api = useApi();
   api.defaults.withCredentials = true;
 
   // ───────────── Document Upload ─────────────
-  const uploadFileToCase = async ({ file, caseID }) => {
+  const uploadFileToCase = async ({ file, caseNumber }) => {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("caseID", caseID);
+      formData.append("caseNumber", caseNumber);
       await api.post("/api/clients/uploadDocument", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -71,6 +71,7 @@ const ClientState = (props) => {
     try {
       const res = await api.post("/api/clients", clientData);
       dispatch({ type: "ADD_SCHEDULED_CLIENT", payload: res.data });
+      showMessage("New Client Alert", `${res.data.message}`);
     } catch (err) {
       console.error("Add scheduled client failed:", err);
     }

@@ -75,7 +75,7 @@ module.exports = {
    * Upload a document into Logics.
    */
   async uploadDocument({
-    caseID,
+    caseNumber,
     comment,
     fileCategoryID,
     fileBuffer,
@@ -83,7 +83,7 @@ module.exports = {
     contentType,
   }) {
     return uploadCaseDocument({
-      caseID,
+      caseNumber,
       comment,
       fileCategoryID,
       fileBuffer,

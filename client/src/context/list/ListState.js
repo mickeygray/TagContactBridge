@@ -10,6 +10,8 @@ const ListState = (props) => {
     verified: [],
     filteredClients: [],
     zeroInvoiceList: [],
+    searchedClients: [],
+    validatedLiens: [],
     toReview: [],
     partial: [],
     periodInfo: null,
@@ -45,6 +47,21 @@ const ListState = (props) => {
         `Failed to post ${formattedData.length} leads: ${msg}`,
         error.response?.status
       );
+    }
+  };
+  const buildLienList = async (liens) => {
+    try {
+      dispatch({ type: "SET_LOADING" }); // optional, if you use loading
+      const res = await api.post("/api/list/buildLienList", { liens });
+      dispatch({
+        type: "SET_VALIDATED_LIENS",
+        payload: res.data.validatedLiens,
+      });
+    } catch (err) {
+      dispatch({
+        type: "LIST_ERROR",
+        payload: err.response?.data?.message || err.message,
+      });
     }
   };
 
@@ -211,6 +228,16 @@ const ListState = (props) => {
   const skipClient = (client) => {
     dispatch({ type: "SKIP_CLIENT", payload: client });
   };
+
+  const searchUnifiedClients = (filters) => async (dispatch) => {
+    try {
+      const res = await api.post("/api/clients/search", filters);
+      dispatch({ type: "SET_SEARCHED_CLIENTS", payload: res.data });
+    } catch (err) {
+      console.error("Search failed:", err);
+      throw err;
+    }
+  };
   return (
     <ListContext.Provider
       value={{
@@ -224,6 +251,9 @@ const ListState = (props) => {
         zeroInvoiceList: state.zeroInvoiceList,
         prospectDialerList: state.prospectDialerList,
         recordCount: state.recordCount,
+        searchedClients: state.searchedClients,
+        validatedLiens: state.validatedLiens,
+        searchUnifiedClients,
         postNCOAList,
         buildPeriod,
         parseZeros,
@@ -231,6 +261,8 @@ const ListState = (props) => {
         filterList,
         clearFilterList,
         downloadAndEmailDaily,
+        searchUnifiedClients,
+        buildLienList,
         buildDialerList,
         addCreateDateClients,
         clearPeriod,

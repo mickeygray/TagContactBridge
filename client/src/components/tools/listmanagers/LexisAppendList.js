@@ -1,14 +1,58 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useContext } from "react";
 import Papa from "papaparse";
-import FileAppendItem from "./FileAppendItem"; // You'll create this component next
+import FileAppendItem from "./FileAppendItem";
+import ListContext from "../../../context/list/listContext";
+import useLexisData from "../../../hooks/useLexisData";
+import { CSVLink } from "react-csv";
 
 const LexisAppendList = () => {
   const [lexisList, setLexisList] = useState([]);
+  const [parsedLiens, setParsedLiens] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(50); // or 25, customizable later
+  const [csvData, setCsvData] = useState([]);
+  const [parsedMap, setParsedMap] = useState({});
+  const itemsPerPage = 50;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = lexisList.slice(indexOfFirstItem, indexOfLastItem);
+
+  const { buildLienList, validatedLiens } = useContext(ListContext);
+  const { buildCSVData } = useLexisData();
+
+  const handleLeadExtracted = (caseID, parsedLead) => {
+    const newLead = {
+      ...parsedLead,
+      "Case #": caseID,
+    };
+
+    setParsedLiens((prev) => [
+      ...prev.filter((lead) => lead["Case #"] !== caseID),
+      newLead,
+    ]);
+
+    setParsedMap((prev) => ({
+      ...prev,
+      [caseID]: true,
+    }));
+
+    setTimeout(() => {
+      setParsedMap((prev) => ({
+        ...prev,
+        [caseID]: false,
+      }));
+    }, 3000);
+  };
+
+  const handleRunDNC = async () => {
+    if (parsedLiens.length === 0) return;
+    await buildLienList(parsedLiens);
+  };
+
+  const handlePrepareCSV = () => {
+    const data = buildCSVData(validatedLiens);
+    setCsvData(data);
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -61,29 +105,31 @@ const LexisAppendList = () => {
 
   const handleFileRemove = useCallback((caseID) => {
     setLexisList((prevList) =>
-      prevList.map((item) =>
-        item["Case #"] === caseID ? { ...item, file: null } : item
-      )
+      prevList.filter((item) => item["Case #"] !== caseID)
     );
   }, []);
-
   return (
     <div className="card">
       <div className="pagination-controls">
         <button
-          onClick={() => setCurrentPage(currentPage - 1)}
+          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
           disabled={currentPage === 1}
         >
           ◀ Prev
         </button>
         <span>Page {currentPage}</span>
         <button
-          onClick={() => setCurrentPage(currentPage + 1)}
+          onClick={() =>
+            setCurrentPage((prev) =>
+              indexOfLastItem >= lexisList.length ? prev : prev + 1
+            )
+          }
           disabled={indexOfLastItem >= lexisList.length}
         >
           Next ▶
         </button>
       </div>
+
       <h3>📂 Lexis Address Match Tool</h3>
       <input type="file" accept=".csv" onChange={handleFileUpload} />
 
@@ -93,10 +139,36 @@ const LexisAppendList = () => {
             <FileAppendItem
               key={index}
               record={entry}
+              isParsed={parsedMap[entry["Case #"]]}
               onFileRemove={handleFileRemove}
+              onLeadExtracted={handleLeadExtracted}
             />
           ))}
         </div>
+      )}
+
+      {validatedLiens.length === 0 && parsedLiens.length > 0 && (
+        <button onClick={handleRunDNC} style={{ marginTop: "20px" }}>
+          🧹 Run DNC Scrub
+        </button>
+      )}
+
+      {validatedLiens.length > 0 && (
+        <>
+          <button
+            className=" btn btn-success"
+            onClick={handlePrepareCSV}
+            style={{ marginTop: "20px" }}
+          >
+            📤 Prepare CSV
+          </button>
+          {"      "}
+          {csvData.length > 0 && (
+            <CSVLink data={csvData} filename="validated_liens.csv">
+              <button className=" btn btn-primary">⬇ Download CSV</button>
+            </CSVLink>
+          )}
+        </>
       )}
     </div>
   );

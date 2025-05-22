@@ -230,6 +230,31 @@ async function sendSaleDateClientEmail(client, stageKey) {
   // 4) subject lookup
   const subject = emailSubjects[stageKey]?.subject || `Update from ${domain}`;
 
+  const domainKey = domain.toLowerCase();
+  const attsDir = path.join(
+    __dirname,
+    "../Templates/attachments",
+    stageKey.toLowerCase(),
+    domainKey
+  );
+  let atts = [];
+  if (fs.existsSync(attsDir) && fs.statSync(attsDir).isDirectory()) {
+    // grab everything in that folder
+    const files = fs.readdirSync(attsDir);
+    for (const filename of files) {
+      const fullPath = path.join(attsDir, filename);
+      // you could optionally filter by extension here
+      atts.push({ filename, path: fullPath });
+    }
+  } else {
+    console.log(`   no attachments folder for ${stageKey}/${domainKey}`);
+  }
+
+  console.log(
+    `   attachments for ${stageKey}/${domainKey}:`,
+    atts.map((a) => a.filename)
+  );
+
   // 5) send mail
   await sendEmail({
     from: `${process.env["TAG_EMAIL_NAME"]} <${process.env["TAG_EMAIL_ADDRESS"]}>`,
@@ -237,6 +262,7 @@ async function sendSaleDateClientEmail(client, stageKey) {
     subject,
     html,
     domain,
+    attachments: atts,
   });
 
   // 6) stamp lastContactDate for record
@@ -278,7 +304,7 @@ async function createScheduledClientHandler(req, res, next) {
     }
 
     // 3) pick first stage & seed stagesReceived + stagePieces
-    const stageKey = client.autoPOA ? "f433aEmail1" : "PracEmail1";
+    const stageKey = client.autoPOA ? "POAEmail" : "PracEmail1";
     client.stagesReceived = client.autoPOA ? ["prac"] : [];
     client.stagePieces = [stageKey];
 

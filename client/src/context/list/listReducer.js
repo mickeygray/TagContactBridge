@@ -39,6 +39,17 @@ export default (state, action) => {
             )
         ),
       };
+    case "SET_SEARCHED_CLIENTS":
+      return {
+        ...state,
+        searchedClients: action.payload || [],
+      };
+    case "SET_VALIDATED_LIENS":
+      return {
+        ...state,
+        validatedLiens: action.payload,
+        loading: false,
+      };
     case "SET_RECORD_COUNT":
       return {
         ...state,

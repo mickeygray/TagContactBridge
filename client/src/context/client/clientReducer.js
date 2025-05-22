@@ -15,7 +15,7 @@ const clientReducer = (state, action) => {
     case "ADD_SCHEDULED_CLIENT":
       return {
         ...state,
-        newClient: action.payload,
+        newClient: action.payload.client,
       };
 
     // Update an existing scheduled client

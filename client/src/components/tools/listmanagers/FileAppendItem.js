@@ -1,10 +1,17 @@
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import ClientContext from "../../../context/client/clientContext";
+import useLexisData from "../../../hooks/useLexisData";
 import CopyableItem from "../../layout/CopyableItem";
 
-const FileAppendItem = ({ record, onFileRemove }) => {
+const FileAppendItem = ({
+  record,
+  onFileRemove,
+  onLeadExtracted,
+  isParsed,
+}) => {
   const { uploadFileToCase } = React.useContext(ClientContext);
+  const { parseSingleLexisFile } = useLexisData();
   const [file, setFile] = useState(null);
 
   const {
@@ -13,17 +20,24 @@ const FileAppendItem = ({ record, onFileRemove }) => {
     Address,
     City,
     State,
-    "Case #": caseID,
+    "Case #": caseNumber,
   } = record;
-  const onDrop = (acceptedFiles) => {
+
+  const onDrop = async (acceptedFiles) => {
     const uploadedFile = acceptedFiles[0];
+    if (!uploadedFile || !caseNumber) return;
+
     setFile(uploadedFile);
 
-    if (uploadedFile && caseID) {
-      uploadFileToCase({
-        file: uploadedFile,
-        caseID,
-      });
+    // ✅ Upload file to Logics
+    uploadFileToCase({ file: uploadedFile, caseNumber });
+
+    // ✅ Parse file locally and pass result back to parent
+    const parsedLead = await parseSingleLexisFile(uploadedFile);
+    if (parsedLead) {
+      onLeadExtracted(caseNumber, parsedLead);
+      setIsParsed(true);
+      setTimeout(() => setIsParsed(false), 3000); // auto-hide after 3s
     }
   };
 
@@ -42,7 +56,7 @@ const FileAppendItem = ({ record, onFileRemove }) => {
         flexWrap: "wrap",
         gap: "8px",
         marginBottom: "10px",
-        backgroundColor: file ? "#e0ffe0" : "#f9f9f9",
+        backgroundColor: isParsed ? "#e0ffe0" : "#f9f9f9",
         border: "1px solid #ccc",
         padding: "10px",
         borderRadius: "6px",
@@ -53,8 +67,8 @@ const FileAppendItem = ({ record, onFileRemove }) => {
       <CopyableItem label="Address" value={Address} />
       <CopyableItem label="City" value={City} />
       <CopyableItem label="State" value={State} />
-      <CopyableItem label="Case #" value={caseID} />
-      {/* 📂 Dropzone */}
+      <CopyableItem label="Case #" value={caseNumber} />
+
       <div
         {...getRootProps()}
         style={{
@@ -68,8 +82,9 @@ const FileAppendItem = ({ record, onFileRemove }) => {
       >
         <input {...getInputProps()} />
         {file ? "✅ File Uploaded" : "📂 Drop TXT"}
-      </div>{" "}
-      <button className="btn-delete" onClick={() => onFileRemove(caseID)}>
+      </div>
+
+      <button className="btn-delete" onClick={() => onFileRemove(caseNumber)}>
         ❌
       </button>
     </div>

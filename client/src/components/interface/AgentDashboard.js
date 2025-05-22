@@ -3,6 +3,7 @@ import LogicsFileReader from "../tools/listmanagers/LogicsFileReader";
 import CallFetcher from "../tools/callmonitor/CallFetcher";
 import LexisAppendList from "../tools/listmanagers/LexisAppendList";
 import PeriodContactsFilter from "../tools/listmanagers/PeriodContactsFilter";
+import UnifiedClientListManager from "../tools/listmanagers/UnifiedClientListManager";
 
 const AgentDashboard = () => {
   const [activeTool, setActiveTool] = useState(null);
@@ -17,8 +18,10 @@ const AgentDashboard = () => {
         return <LexisAppendList />;
       case "period":
         return <PeriodContactsFilter />;
+      case "search":
+        return <UnifiedClientListManager />;
       default:
-        return <p>Please select a tool from the right panel.</p>;
+        return <UnifiedClientListManager />;
     }
   };
 
@@ -63,6 +66,15 @@ const AgentDashboard = () => {
             onClick={() => setActiveTool("period")}
           >
             📋 Period Contacts Filter
+          </button>
+          <br />
+          <button
+            className={`button primary ${
+              activeTool === "search" ? "active" : ""
+            }`}
+            onClick={() => setActiveTool("search")}
+          >
+            📋 Client Search
           </button>
         </div>
       </div>
