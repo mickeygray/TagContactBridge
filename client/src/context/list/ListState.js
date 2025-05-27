@@ -229,10 +229,12 @@ const ListState = (props) => {
     dispatch({ type: "SKIP_CLIENT", payload: client });
   };
 
-  const searchUnifiedClients = (filters) => async (dispatch) => {
+  const searchUnifiedClients = async (filters) => {
     try {
-      const res = await api.post("/api/clients/search", filters);
+      console.log(filters);
+      const res = await api.post("/api/list/search", filters);
       dispatch({ type: "SET_SEARCHED_CLIENTS", payload: res.data });
+      console.log(res.data);
     } catch (err) {
       console.error("Search failed:", err);
       throw err;

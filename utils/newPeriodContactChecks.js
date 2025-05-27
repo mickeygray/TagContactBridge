@@ -129,7 +129,7 @@ async function processInvoices(client) {
       client,
       `[Invoice] mismatch count ${client.invoiceCount}->${count}, amount ${client.lastInvoiceAmount}->${amount}`
     );
-    client.status = "inReview";
+    client.invoiceCountChangeDate = new Date();
   }
 
   // persist “truth”
@@ -360,7 +360,6 @@ async function addVerifiedClientsAndReturnUpdatedLists(freshClients) {
   const toReview = [];
   const partial = [];
   const verified = [];
-  const bulkOps = [];
 
   for (const data of freshClients) {
     // clone incoming data
@@ -404,28 +403,6 @@ async function addVerifiedClientsAndReturnUpdatedLists(freshClients) {
     }
 
     // 5️⃣ Persist all inspection fields in one bulkWrite
-    bulkOps.push({
-      updateOne: {
-        filter: { _id: client._id },
-        update: {
-          $set: {
-            status: client.status,
-            reviewDates: client.reviewDates,
-            reviewMessages: client.reviewMessages,
-            invoiceCount: client.invoiceCount,
-            lastInvoiceAmount: client.lastInvoiceAmount,
-            lastInvoiceDate: client.lastInvoiceDate,
-            totalPayment: client.totalPayment,
-            delinquentAmount: client.delinquentAmount,
-            delinquentDate: client.delinquentDate,
-          },
-        },
-      },
-    });
-  }
-
-  if (bulkOps.length) {
-    await Client.bulkWrite(bulkOps);
   }
 
   return { toReview, partial, verified };

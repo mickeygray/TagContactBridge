@@ -12,11 +12,30 @@ export default function ClientAnalysisCard({
 }) {
   const { name, caseNumber, email, cell, domain, reviewMessages = [] } = client;
 
-  const { enrichClient, enrichedClient, deleteScheduledClient } =
-    useContext(ClientContext);
+  const {
+    enrichClient,
+    enrichedClient,
+    deleteScheduledClient,
+    clearEnrichedClient,
+  } = useContext(ClientContext);
 
   const [showEnriched, setShowEnriched] = useState(false);
 
+  const handleEnrich = async () => {
+    try {
+      await enrichClient(client);
+    } catch (err) {
+      console.error("Failed to enrich client:", err);
+    }
+  };
+
+  const handleClearEnrich = async () => {
+    try {
+      clearEnrichedClient();
+    } catch (err) {
+      console.error("Failed to enrich client:", err);
+    }
+  };
   return (
     <div className="card border p-4 shadow-sm mb-4">
       {/* Header */}
@@ -69,27 +88,21 @@ export default function ClientAnalysisCard({
       </div>
 
       {/* Enrichment trigger */}
-      {!showEnriched && (
+      {enrichedClient === null && (
         <div className="mt-3">
-          <button
-            className="btn btn-outline btn-sm"
-            onClick={() => {
-              enrichClient(client);
-              setShowEnriched(true);
-            }}
-          >
+          <button className="btn btn-outline btn-sm" onClick={handleEnrich}>
             Show Details
           </button>
         </div>
       )}
 
       {/* Enriched View */}
-      {showEnriched && enrichedClient && (
+      {enrichedClient && client.caseNumber === enrichedClient.caseNumber && (
         <div className="mt-4 border-t pt-4">
           <div className="flex justify-between items-center mb-2">
             <h6 className="font-semibold">📊 Enriched Data</h6>
             <button
-              onClick={() => setShowEnriched(false)}
+              onClick={handleClearEnrich}
               className="btn btn-sm btn-outline"
             >
               Hide
@@ -138,7 +151,10 @@ export default function ClientAnalysisCard({
               <div className="mb-3">
                 <h6>📋 Activities</h6>
                 {enrichedClient.filteredActivities.map((act, idx) => (
-                  <CollapsibleNote key={idx} act={act} />
+                  <CollapsibleNote
+                    key={act.CreatedDate + act.Subject}
+                    act={act}
+                  />
                 ))}
               </div>
             )}

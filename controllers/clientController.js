@@ -321,17 +321,19 @@ async function createScheduledClientHandler(req, res, next) {
 }
 async function processReviewedSaleDateClientHandler(req, res, next) {
   try {
-    const { client: raw, action } = req.body;
-    if (!raw) return res.status(404).json({ message: "Not found" });
+    const { client, action } = req.body;
 
+    if (!client) return res.status(404).json({ message: "Not found" });
+
+    const { caseNumber, domain } = client;
     // 1️⃣ hydrate live client
-    const doc = await getClientByCaseAndDomain(raw.caseNumber, raw.domain);
-    if (!doc) return res.status(404).json({ message: "Client not found" });
+    const doc = await getClientByCaseAndDomain(client);
+    if (!client) return res.status(404).json({ message: "Client not found" });
 
     // 2️⃣ load today’s schedule
 
     const sched = await getTodaySchedule();
-
+    console.log(doc);
     switch (action) {
       case "prac": {
         if (!doc.stagePieces.includes("PracEmail1")) {
@@ -425,6 +427,7 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
             $push: { [field]: contact },
           });
         }
+        break;
       }
       case "removeFromQueue": {
         const contactFilter = {
@@ -439,6 +442,7 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
             emailQueue: contactFilter,
           },
         });
+        break;
       }
       default:
         return res.status(400).json({ message: "Invalid action" });
@@ -465,7 +469,7 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
     const { caseNumber, domain } = client;
 
     // 1️⃣ always load the up-to-date document
-    const doc = await getClientByCaseAndDomain({ caseNumber, domain });
+    const doc = await getClientByCaseAndDomain(client);
 
     if (!doc) {
       return res.status(404).json({ message: "Client not found" });
@@ -586,6 +590,7 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
             emailQueue: contactFilter,
           },
         });
+        break;
       }
       default:
         return res.status(400).json({ message: "Invalid action" });

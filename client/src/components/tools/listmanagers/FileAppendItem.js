@@ -36,8 +36,6 @@ const FileAppendItem = ({
     const parsedLead = await parseSingleLexisFile(uploadedFile);
     if (parsedLead) {
       onLeadExtracted(caseNumber, parsedLead);
-      setIsParsed(true);
-      setTimeout(() => setIsParsed(false), 3000); // auto-hide after 3s
     }
   };
 

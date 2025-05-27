@@ -19,6 +19,7 @@ export default function DailySalesClientAnalysisCard({ client }) {
   const handleReview = async (c, action) => {
     try {
       await processReviewedSaleDateClient(c, action);
+      skipDailyClientProcessing(c);
       showMessage("Client", `${action} applied to ${c.caseNumber}`, 200);
       await refreshDailyQueues();
     } catch (err) {

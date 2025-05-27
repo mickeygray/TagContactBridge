@@ -20,7 +20,9 @@ router.post("/createTask", ctrl.createTaskHandler);
 router.post("/createActivity", ctrl.createActivityHandler);
 // scheduled-client CRUD
 router.post("/", ctrl.createScheduledClientHandler);
-router.post("/reviewSaleDate", ctrl.processReviewedSaleDateClientHandler);
+router.post("/reviewSaleDate", (req, res, next) => {
+  ctrl.processReviewedSaleDateClientHandler(req, res, next);
+});
 router.post("/reviewCreateDate", ctrl.processReviewedCreateDateClientHandler);
 router.delete("/delete", ctrl.deleteClientHandler);
 

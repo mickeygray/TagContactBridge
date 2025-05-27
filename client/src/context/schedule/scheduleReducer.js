@@ -27,31 +27,33 @@ const scheduleReducer = (state, action) => {
         ...action.payload,
       };
 
-    case "SKIP_CLIENT":
+    case "SKIP_CLIENT": {
+      const client = action.payload;
       return {
         ...state,
         toReview: state.toReview.filter(
-          (c) =>
+          (item) =>
             !(
-              c.caseNumber === action.payload.caseNumber &&
-              c.domain === action.payload.domain
+              item.caseNumber === client.caseNumber &&
+              item.domain === client.domain
             )
         ),
         emailQueue: state.emailQueue.filter(
-          (c) =>
+          (item) =>
             !(
-              c.caseNumber === action.payload.caseNumber &&
-              c.domain === action.payload.domain
+              item.caseNumber === client.caseNumber &&
+              item.domain === client.domain
             )
         ),
         textQueue: state.textQueue.filter(
-          (c) =>
+          (item) =>
             !(
-              c.caseNumber === action.payload.caseNumber &&
-              c.domain === action.payload.domain
+              item.caseNumber === client.caseNumber &&
+              item.domain === client.domain
             )
         ),
       };
+    }
 
     case "CLEAR_LOADING":
       return {

@@ -63,16 +63,23 @@ const assignContactMethodAndStagePiece = async (
 
         // 2) Figure out which “stage” we’re in
         let stageKey;
+
         if (type === "createDate") {
           stageKey = periodDoc.createDateStage;
         } else {
-          const sr = client.stagesReceived || [];
-          stageKey = sr.length ? sr[sr.length - 1] : null;
-        }
-        console.log(
-          `[processClientList] ${client.caseNumber} stage="${stageKey}"`
-        );
+          const sr = new Set(client.stagesReceived || []);
+          const availableStages = Object.keys(contactCampaignMap[type] || {});
 
+          // Pick the first stage not yet completed
+          stageKey = availableStages.find((stage) => !sr.has(stage));
+
+          if (!stageKey) {
+            console.log(
+              `[processClientList] ${client.caseNumber} has completed all saleDate stages`
+            );
+            return null;
+          }
+        }
         // 3) Grab the ordered sequence array
         const sequence = contactCampaignMap[type]?.[stageKey] || [];
         if (!sequence.length) {
@@ -220,7 +227,7 @@ async function buildDailySchedule(req, res) {
         const sale = client.saleDate ? new Date(client.saleDate) : null;
         const period = periodDoc?.periodStartDate || null;
 
-        const dates = [lastContact, sale, period].filter(
+        const dates = [sale, period].filter(
           (d) => d instanceof Date && !isNaN(d)
         );
         const sinceTs = Math.max(...dates.map((d) => d.getTime()));
@@ -316,15 +323,14 @@ async function buildDailySchedule(req, res) {
         {
           $set: {
             lastContactDate: client.lastContactDate || new Date(),
-            contactedThisPeriod: client.contactedThisPeriod ?? false,
             status: client.status || "active",
-            stage: client.stage,
-            saleDate: client.saleDate,
-            secondPaymentDate: client.secondPaymentDate,
             invoiceCount: client.invoiceCount,
+            reviewDates: [...client.reviewDates],
             lastInvoiceAmount: client.lastInvoiceAmount,
             delinquentAmount: client.delinquentAmount || null,
             delinquentDate: client.delinquentDate || null,
+            totalPayment: client.totalPayment,
+            invoiceCountChangeDate: client.invoiceCountChangeDate,
             domain: client.domain,
             stagePieces: client.stagePieces || [],
           },

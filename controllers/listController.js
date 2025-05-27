@@ -182,6 +182,7 @@ async function unifiedClientSearch(req, res, next) {
       totalPayment,
     } = req.body;
 
+    console.log(req.body);
     const searchConditions = [];
 
     // 🔍 1. Text search by name, caseNumber, email, or cell

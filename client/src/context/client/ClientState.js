@@ -39,6 +39,13 @@ const ClientState = (props) => {
     }
   };
 
+  const clearEnrichedClient = async () => {
+    try {
+      dispatch({ type: "CLEAR_ENRICHMENT" });
+    } catch (err) {
+      console.error("Enrich failed:", err);
+    }
+  };
   const postZeroInvoice = async (caseID) => {
     try {
       const res = await api.post("/api/clients/zeroInvoice", { caseID });
@@ -137,6 +144,7 @@ const ClientState = (props) => {
         createTaskForClient,
         createActivityForClient,
         addScheduledClient,
+        clearEnrichedClient,
         deleteScheduledClient,
         processReviewedSaleDateClient,
         processReviewedCreateDateClient,
