@@ -375,7 +375,13 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
       }
 
       case "delay": {
-        doc.createDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+        // Calculate 60 days from now
+        const futureDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+
+        // Format as clean YYYY-MM-DD string instead of full date object
+        const cleanDateString = futureDate.toISOString().split("T")[0];
+
+        doc.createDate = new Date(cleanDateString + "T00:00:00.000Z");
         doc.status = "active";
         doc.stagesReceived.push("prac", "f433a");
         await doc.save();
@@ -390,7 +396,14 @@ async function processReviewedSaleDateClientHandler(req, res, next) {
           await sched.save();
         }
 
-        return res.json({ message: "Client delayed 60 days", client: doc });
+        // Return the clean date format in response
+        return res.json({
+          message: `Client delayed 60 days until ${cleanDateString}`,
+          client: {
+            ...doc.toObject(),
+            createDate: cleanDateString, // Clean format for frontend
+          },
+        });
       }
       case "scheduleDaily": {
         const stagesReceived = doc.stagesReceived || [];

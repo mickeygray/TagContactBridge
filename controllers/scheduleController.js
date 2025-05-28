@@ -429,6 +429,7 @@ async function sendDailyText(req, res, next) {
         : schedule.textQueue.length;
     const toSend = schedule.textQueue.slice(0, pace);
 
+    console.log(toSend);
     const results = [];
     for (const recip of toSend) {
       const { cell, name, caseNumber, domain, stagePiece } = recip;
@@ -463,6 +464,7 @@ async function sendDailyText(req, res, next) {
 
       // — template lookup
       const libEntry = textMessageLibrary[stagePiece];
+
       if (!libEntry) {
         results.push({
           caseNumber,
@@ -510,6 +512,7 @@ async function sendDailyText(req, res, next) {
       "Client Doc Review Text 3",
     ]);
 
+    console.log(results);
     const succeeded = results.filter((r) => r.status === "sent");
     const succeededCases = succeeded.map((r) => r.caseNumber);
 

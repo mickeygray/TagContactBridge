@@ -2,14 +2,14 @@ const textMessageLibrary = {
   // 🔹 PRAC
   "Prac Text 1": {
     message:
-      "Hi {name}, this is Cameron Pierce from the tax attorney’s office. I’ll be on the line with you as we speak to the IRS directly, it’s how we find out what’s really going on with your case. Call me now at {number} and we’ll get started.",
+      "Hi {name}, this is Cameron Pierce from the tax attorney’s office. I’ll be on the line with you as we speak to the tax authority directly, it’s how we find out what’s really going on with your case. Call me now at {number} and we’ll get started.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "Prac Text 2": {
     message:
-      "{name}, this is Cameron from your tax attorney’s office. The prac call gets us IRS transcripts, balances, and missing returns in real-time, no guessing, just answers. Call me at {number}, or if you need to schedule instead, there’s a link in the last email I sent.",
+      "{name}, this is Cameron from your tax attorney’s office. The prac call gets us offical tax transcripts, balances, and missing returns in real-time, no guessing, just answers. Call me at {number}, or if you need to schedule instead, there’s a link in the last email I sent.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -23,14 +23,14 @@ const textMessageLibrary = {
   },
   "Prac Text 4": {
     message:
-      "Hi {name}, it’s Cameron Pierce with your tax attorney. We can’t move forward without this first IRS call, it’s how we get the facts we need to build your case. Call me back at {number} and let’s knock this out.",
+      "Hi {name}, it’s Cameron Pierce with your tax attorney. We can’t move forward without this first practitioner's phone call, it’s how we get the facts we need to build your case. Call me back at {number} and let’s knock this out.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "Prac Text 5": {
     message:
-      "Hey {name}, Cameron here from your tax attorney. We need to schedule your conference call with the IRS.  Call me when you can: {number}. Also, did you get the email I sent? There’s more info there if you need to schedule.",
+      "Hey {name}, Cameron here from your tax attorney. We need to schedule your call with the tax authority.  Call me when you can: {number}. Also, did you get the email I sent? There’s more info there if you need to schedule.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -58,7 +58,7 @@ const textMessageLibrary = {
   },
   "Prac Text 9": {
     message:
-      "This is Cameron with your tax attorney’s office. If we don’t talk to the IRS now, options start closing fast. Call me at {number}, or check the last email if you absolutely need to schedule.",
+      "This is Cameron with your tax attorney’s office. If we don’t talk to the tax authority now, options start closing fast. Call me at {number}, or check the last email if you absolutely need to schedule.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -72,9 +72,9 @@ const textMessageLibrary = {
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
-  "f33a Text 2": {
+  "f433a Text 2": {
     message:
-      "{name}, it’s Cameron from your tax attorney’s office. The IRS won’t offer any resolution until we submit your 433a, it’s how we prove your financial position. Call me at {number} so we can start gathering that info.",
+      "{name}, it’s Cameron from your tax attorney’s office. The tax authorities won’t offer any resolution until we submit your collection information statement, it’s how we prove your financial position. Call me at {number} so we can start gathering that info.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -88,14 +88,14 @@ const textMessageLibrary = {
   },
   "f433a Text 4": {
     message:
-      "Hi {name}, this is Cameron Pierce from your tax attorney. You’ll want to have your recent income info ready, pay stubs, benefits, anything consistent for the 433a. If you’re unsure, call me at {number} and I’ll talk you through it.",
+      "Hi {name}, this is Cameron Pierce from your tax attorney. You’ll want to have your recent income info ready, pay stubs, benefits, anything consistent for the collection information statement. If you’re unsure, call me at {number} and I’ll talk you through it.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "f433a Text 5": {
     message:
-      "{name}, it’s Cameron from your tax attorney. Make sure to gather your monthly expenses, rent, utilities, insurance, anything that affects your budget for the 433a. Call me at {number} if you have questions, or check the email I sent for more details.",
+      "{name}, it’s Cameron from your tax attorney. Make sure to gather your monthly expenses, rent, utilities, insurance, anything that affects your budget for the collection information statement. Call me at {number} if you have questions, or check the email I sent for more details.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -109,21 +109,21 @@ const textMessageLibrary = {
   },
   "f433a Text 7": {
     message:
-      "Hi {name}, this is Cameron Pierce from your tax attorney. The 433a is the most important step in your case, we can’t do anything else until it’s done. Call me now at {number}. We’re ready when you are.",
+      "Hi {name}, this is Cameron Pierce from your tax attorney. The collection information statement is the most important step in your case, we can’t do anything else until it’s done. Call me now at {number}. We’re ready when you are.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "f433a Text 8": {
     message:
-      "{name}, it’s Cameron with your tax attorney’s office. This call is safe, secure, and we make the 433a easy, but you have to take that first step. Call me at {number}. If you need more information, check the email I sent.",
+      "{name}, it’s Cameron with your tax attorney’s office. This call is safe, secure, and we make the collection information statement easy, but you have to take that first step. Call me at {number}. If you need more information, check the email I sent.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "f433a Text 9": {
     message:
-      "This is Cameron from your tax attorney . If we don’t complete your 433a together, there’s not much else we can do. We’re here for you, but it starts with your call. Reach me at {number}, or check your email if you still need to schedule.",
+      "This is Cameron from your tax attorney . If we don’t complete your collection information statement together, there’s not much else we can do. We’re here for you, but it starts with your call. Reach me at {number}, or check your email if you still need to schedule.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -324,42 +324,42 @@ const textMessageLibrary = {
   },
   "IRS Doc Review Text 1": {
     message:
-      "Hi {name}, Cameron here with your tax attorney. We’ve received an IRS update that may relate to your case. Call me at {number} and I’ll fill you in.",
+      "Hi {name}, Cameron here with your tax attorney. We’ve received an update that may relate to your case. Call me at {number} and I’ll fill you in.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "IRS Doc Review Text 2": {
     message:
-      "{name}, this is Cameron from your tax attorney. We received new IRS guidance that could affect your situation, let’s talk through it. Call me at {number} today.",
+      "{name}, this is Cameron from your tax attorney. We received new state and federal guidance that could affect your situation, let’s talk through it. Call me at {number} today.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "IRS Doc Review Text 3": {
     message:
-      "This is Cameron. We’ve gotten IRS correspondence that may change how we handle your case. We need to speak right away, call me at {number}.",
+      "This is Cameron. We’ve gotten official correspondence that may change how we handle your case. We need to speak right away, call me at {number}.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "IRS Standards Review Text 1": {
     message:
-      "Hi {name}, Cameron here with your tax attorney. We’ve received an IRS update that may relate to your case. Call me at {number} and I’ll fill you in.",
+      "Hi {name}, Cameron here with your tax attorney. We’ve received an update from the taxing authority that may relate to your case. Call me at {number} and I’ll fill you in.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "IRS Standards Review Text 2": {
     message:
-      "{name}, this is Cameron from your tax attorney. We received new IRS guidance that could affect your situation, let’s talk through it. Call me at {number} today.",
+      "{name}, this is Cameron from your tax attorney. We received new state and federal guidance that could affect your situation, let’s talk through it. Call me at {number} today.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "IRS Standards Review Text 3": {
     message:
-      "This is Cameron. We’ve gotten IRS correspondence that may change how we handle your case. We need to speak right away, call me at {number}.",
+      "This is Cameron. We’ve gotten official correspondence that may change how we handle your case. We need to speak right away, call me at {number}.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -368,21 +368,21 @@ const textMessageLibrary = {
   //Update 433a
   "Update433a Text 1": {
     message:
-      "Hi {name}, this is Cameron Pierce from your tax attorney. The IRS has responded and we're reviewing your options, but before we take the next step, we need to make sure your financials are still accurate. Call me at {number} so we can go over it together.",
+      "Hi {name}, this is Cameron Pierce from your tax attorney. Our document submission has been responded to by the tax authority and we're reviewing your options, but before we take the next step, we need to make sure your financials are still accurate. Call me at {number} so we can go over it together.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "Update433a Text 2": {
     message:
-      "{name}, it’s Cameron from your tax attorney’s office. If you’ve had any changes in income, expenses, payment methods, or business activity, we’ll need to update your 433a before we continue. Call {number} and an expert will  walk you through it.",
+      "{name}, it’s Cameron from your tax attorney’s office. If you’ve had any changes in income, expenses, payment methods, or business activity, we’ll need to update your collection information statement before we continue. Call {number} and an expert will  walk you through it.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "Update433a Text 3": {
     message:
-      "Hi {name}, this is Cameron with your tax attorney . Call me at {number} and we’ll take care of your 433a update together, if you need to check the scheduler, the link is in the last email I sent.",
+      "Hi {name}, this is Cameron with your tax attorney . Call me at {number} and we’ll take care of your collection information statement update together, if you need to check the scheduler, the link is in the last email I sent.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -403,14 +403,14 @@ const textMessageLibrary = {
   },
   "Update433a Text 6": {
     message:
-      "This is Cameron with your tax attorney . We’ll also want to verify things like bank accounts and vehicles. Even if it’s a quick check-in, it matters before we respond to the IRS. Call me at {number} or look at the email I sent.",
+      "This is Cameron with your tax attorney . We’ll also want to verify things like bank accounts and vehicles. Even if it’s a quick check-in, it matters before we respond to the tax authority. Call me at {number} or look at the email I sent.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
   },
   "Update433a Text 7": {
     message:
-      "Hi {name}, this is Cameron Pierce from your tax attorney. We’re preparing a response for the IRS, but we can’t submit it without your updated 433a. Call me now at {number}, we’re ready when you are.",
+      "Hi {name}, this is Cameron Pierce from your tax attorney. We’re preparing a response to the latest corrspondence, but we can’t submit it without your updated collection information statement. Call me now at {number}, we’re ready when you are.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -424,7 +424,7 @@ const textMessageLibrary = {
   },
   "Update433a Text 9": {
     message:
-      "This is Cameron from your tax attorney . We can’t proceed without your 433a update, it’s mandatory for our next step with the IRS. Call me at {number}, or check your email to schedule if you haven’t already.",
+      "This is Cameron from your tax attorney . We can’t proceed without your collection information statement update, it’s mandatory for our next steps. Call me at {number}, or check your email to schedule if you haven’t already.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",
@@ -440,7 +440,7 @@ const textMessageLibrary = {
   },
   "PA Text 2": {
     message:
-      "{name}, it’s Cameron from your tax attorney. The IRS considers things like medical hardship, job loss, or family emergencies when reviewing penalty abatement. Call me at {number} and let’s talk about what applies to you.",
+      "{name}, it’s Cameron from your tax attorney. Abatements can take into account things like medical hardship, job loss, or family emergencies when reviewing penalty abatement. Call me at {number} and let’s talk about what applies to you.",
     WYNN: "310-861-4607",
     TAG: "310-620-9976",
     AMITY: "310-598-6669",

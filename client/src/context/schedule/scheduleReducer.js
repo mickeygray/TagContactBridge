@@ -15,7 +15,27 @@ const scheduleReducer = (state, action) => {
         emailQueue: action.payload.emailQueue || [],
         textQueue: action.payload.textQueue || [],
       };
+    case "REFRESH_DAILY_QUEUES":
+      return {
+        ...state,
+        emailQueue: action.payload.emailQueue,
+        textQueue: action.payload.textQueue,
+        toReview: action.payload.toReview,
+        loading: false,
+        error: null,
+      };
 
+    case "REMOVE_FROM_REVIEW":
+      return {
+        ...state,
+        toReview: state.toReview.filter(
+          (client) =>
+            !(
+              client.caseNumber === action.payload.caseNumber &&
+              client.domain === action.payload.domain
+            )
+        ),
+      };
     case "SET_LOADING":
       return {
         ...state,
@@ -54,7 +74,49 @@ const scheduleReducer = (state, action) => {
         ),
       };
     }
-
+    case "SKIP_DAILY_CLIENT":
+      // Optimistically remove from current queues
+      return {
+        ...state,
+        emailQueue: state.emailQueue.filter(
+          (client) =>
+            !(
+              client.caseNumber === action.payload.caseNumber &&
+              client.domain === action.payload.domain
+            )
+        ),
+        textQueue: state.textQueue.filter(
+          (client) =>
+            !(
+              client.caseNumber === action.payload.caseNumber &&
+              client.domain === action.payload.domain
+            )
+        ),
+        toReview: state.toReview.filter(
+          (client) =>
+            !(
+              client.caseNumber === action.payload.caseNumber &&
+              client.domain === action.payload.domain
+            )
+        ),
+      };
+    case "REMOVE_FROM_ALL_QUEUES":
+      const { caseNumber, domain } = action.payload;
+      return {
+        ...state,
+        emailQueue: state.emailQueue.filter(
+          (client) =>
+            !(client.caseNumber === caseNumber && client.domain === domain)
+        ),
+        textQueue: state.textQueue.filter(
+          (client) =>
+            !(client.caseNumber === caseNumber && client.domain === domain)
+        ),
+        toReview: state.toReview.filter(
+          (client) =>
+            !(client.caseNumber === caseNumber && client.domain === domain)
+        ),
+      };
     case "CLEAR_LOADING":
       return {
         ...state,

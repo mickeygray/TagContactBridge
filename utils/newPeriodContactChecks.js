@@ -63,7 +63,15 @@ const approvedAgents = [
 ];
 
 // Keywords to look for in notes
-const keywords = ["swc", "a/s", "cci", "spoke", "call", "message"];
+const keywords = [
+  "swc",
+  "a/s",
+  "cci",
+  "spoke",
+  "call",
+  "message",
+  "sent email",
+];
 
 // Patterns that should trigger a do-not-contact review
 const stopPatterns = [
@@ -234,7 +242,7 @@ async function checkClientActivities(client) {
   const sinceDateMs = client.sinceDate;
   const nowMs = Date.now();
 
-  // 2️⃣ “status changed” outside conversion window
+  // 2️⃣ "status changed" outside conversion window
   for (const a of activities) {
     const ts = new Date(a.CreatedDate).getTime();
     if (ts <= cutoff.getTime()) continue;
@@ -259,20 +267,20 @@ async function checkClientActivities(client) {
     if (m) {
       const newStatus = m[2].trim();
 
-      // — Tier 5 or Non‑Collectible → delete
+      // — Tier 5 or Non‑Collectible → delete
       if (/Tier\s*5/i.test(newStatus) || /Non-Collectible/i.test(newStatus)) {
         await Client.deleteOne({ caseNumber: client.caseNumber });
         return { deleted: true, caseNumber: client.caseNumber };
       }
 
-      // — Tier 1 → POA update for saleDate clients; review for createDate clients
+      // — Tier 1 → POA update for saleDate clients; review for createDate clients
       if (/Tier\s*1/i.test(newStatus)) {
         const isSaleClient = !!client.saleDate && !client.createDate;
         if (isSaleClient) {
           // tag them so the scheduler knows this came via Tier1
           client.autoPOA = true;
 
-          // still record their “poa” stage so you can see it on the client object
+          // still record their "poa" stage so you can see it on the client object
           client.stage = "poa";
           client.stagesReceived = [
             ...new Set([...(client.stagesReceived || []), "poa"]),
@@ -288,7 +296,7 @@ async function checkClientActivities(client) {
         // …else fall back to review
         return stampReview(
           client,
-          `[Activity] Tier 1 status change on ${when}`
+          `[Activity] Tier 1 status change on ${when}`
         );
       }
     }
@@ -296,11 +304,11 @@ async function checkClientActivities(client) {
     // — any other status changed → generic review
     return stampReview(
       client,
-      `[Activity] status changed (“${a.Subject}”) on ${when}`
+      `[Activity] status changed ("${a.Subject}") on ${when}`
     );
   }
 
-  // 3️⃣ “converted to prospect” downgrade (anytime)
+  // 3️⃣ "converted to prospect" downgrade (anytime)
   if (
     activities.some(
       (a) =>
@@ -312,34 +320,49 @@ async function checkClientActivities(client) {
     return client;
   }
 
-  // 4️⃣ Keyword note by approved agent within last 3 business days + no future task
+  // 4️⃣ Keyword note by approved agent - flag any communication
   for (const a of activities) {
     const ts = new Date(a.CreatedDate).getTime();
     if (ts < sinceDateMs) continue;
     if (!approvedAgents.includes(a.CreatedBy)) continue;
+
     const txt = `${a.Subject} ${a.Comment}`.toLowerCase();
     if (!keywords.some((kw) => txt.includes(kw))) continue;
 
-    let tasks = [];
-    try {
-      tasks = await fetchTasks(client.domain, parseInt(client.caseNumber));
-    } catch {
-      tasks = [];
-    }
-    const hasFuture =
-      Array.isArray(tasks) &&
-      tasks.some((t) => new Date(t.DueDate).getTime() > nowMs);
-    if (!hasFuture) {
-      stampReview(
-        client,
-        `[Activity] keyword note by ${a.CreatedBy} without future task`
-      );
-      return client;
-    }
-    break;
+    const when = new Date(ts).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    stampReview(
+      client,
+      `[Activity] agent communication: "${a.Subject}" by ${a.CreatedBy} on ${when}`
+    );
+    return client;
+
+    // TODO: Future task checking logic for iteration 2
+    // let tasks = [];
+    // try {
+    //   tasks = await fetchTasks(client.domain, parseInt(client.caseNumber));
+    // } catch {
+    //   tasks = [];
+    // }
+    // const hasFuture =
+    //   Array.isArray(tasks) &&
+    //   tasks.some((t) => new Date(t.DueDate).getTime() > nowMs);
+    // if (!hasFuture) {
+    //   stampReview(
+    //     client,
+    //     `[Activity] keyword note by ${a.CreatedBy} without future task`
+    //   );
+    //   return client;
+    // }
   }
 
-  // 5️⃣ Explicit “do-not-contact” patterns
+  // 5️⃣ Explicit "do-not-contact" patterns
   for (const a of activities) {
     const txt = `${a.Subject} ${a.Comment}`;
     if (stopPatterns.some((rx) => rx.test(txt))) {
