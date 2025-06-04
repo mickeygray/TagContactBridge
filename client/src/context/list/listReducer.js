@@ -9,6 +9,18 @@ export default (state, action) => {
       return {
         ...state,
       };
+
+    case "ADD_TO_LEXARRAY":
+      return {
+        ...state,
+        lexDataArray: [...state.lexDataArray, action.payload],
+      };
+
+    case "CLEAR_LEXARRAY":
+      return {
+        ...state,
+        lexDataArray: [],
+      };
     case "CLEAR_FILTER_LIST":
       return {
         ...state,
@@ -44,12 +56,24 @@ export default (state, action) => {
         ...state,
         searchedClients: action.payload || [],
       };
-    case "SET_VALIDATED_LIENS":
+    case "SET_VALIDATED_LIEN_LIST": {
+      const combined = [...state.validatedLienList, ...action.payload];
+
+      console.log(combined);
+      // Deduplicate by caseNumber
+      const deduped = Object.values(
+        combined.reduce((acc, item) => {
+          acc[item.caseNumber] = item;
+          return acc;
+        }, {})
+      );
+
       return {
         ...state,
-        validatedLiens: action.payload,
+        validatedLienList: deduped,
         loading: false,
       };
+    }
     case "SET_RECORD_COUNT":
       return {
         ...state,

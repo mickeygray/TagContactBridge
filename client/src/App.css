@@ -194,7 +194,124 @@ a {
   flex-direction: column;
   margin-bottom: 1rem;
 }
+.append-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 0;
+  margin: 0;
+}
 
+.business-analysis-card {
+  background: #fcfdff;
+  border: 1px solid #e1e5ea;
+  border-radius: 14px;
+  padding: 20px 26px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 8px #eef1f4;
+}
+
+.business-analysis-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.business-analysis-name {
+  font-weight: 600;
+  font-size: 1.15rem;
+  color: #28475a;
+}
+
+.business-analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px; /* Tighter columns and rows */
+}
+
+.business-analysis-section-title {
+  font-weight: 700;
+  font-size: 1.02rem;
+  margin-bottom: 8px;
+  color: #2155cd;
+}
+
+.checkbox-list {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important; /* Aligns content flush left */
+  padding: 0 !important;
+  margin: 0 !important;
+  gap: 0 !important;
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: center !important;
+  font-size: 0.97rem !important;
+  gap: 2px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  cursor: pointer !important;
+  line-height: 1.18 !important;
+  font-weight: 400 !important;
+  width: 300px !important;
+  box-sizing: border-box !important;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin-right: -100px !important;
+  margin-left: -80px !important;
+  /* You can even set width if needed */
+}
+
+.business-analysis-section {
+  margin-bottom: 5px !important;
+  padding: 0 !important;
+}
+
+.business-analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+  gap: 8px 16px; /* Tighter columns and rows */
+}
+
+.business-clean-btn {
+  margin-top: 18px;
+  background: linear-gradient(90deg, #007bff, #2155cd);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 28px;
+  font-weight: 600;
+  font-size: 1.04rem;
+  cursor: pointer;
+  box-shadow: 0 1px 6px #e0e6ef;
+  transition: background 0.15s;
+}
+.business-clean-btn:active {
+  background: #1746a2;
+}
+/* Optional: add a subtle background for the group */
+.append-list {
+  background: #fafbfc;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px #eef1f3;
+}
+
+/* Optional: add a little separation for each child item */
+.append-list > * {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px;
+  transition: box-shadow 0.2s;
+}
+.append-list > *:hover {
+  box-shadow: 0 4px 12px #e0e0e070;
+}
 /* Inputs & selects */
 .form-input {
   width: 100%;

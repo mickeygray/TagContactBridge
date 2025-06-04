@@ -1,16 +1,48 @@
 // Simple Tax Record Parser - Pure Functions Only
 const useLexisData = () => {
   // Main parser function
+
+  function cleanString(str) {
+    if (typeof str !== "string") return "";
+    // Remove non-printable/special characters, collapse spaces, trim
+    return str
+      .replace(/â€”/g, "") // Remove the specific mojibake you posted
+      .replace(/â€“/g, "") // Remove short dash artifact
+      .replace(/â€™/g, "'") // Replace curly apostrophe artifact
+      .replace(/â€œ|â€�/g, '"') // Replace curly quote artifacts
+      .replace(/[^\x20-\x7E]/g, "") // Remove most other non-ASCII except basic punctuation
+      .replace(/\s+/g, " ") // Collapse multiple spaces
+      .trim();
+  }
+
+  // Clean every string in an array
+  function cleanStringArray(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(cleanString).filter(Boolean);
+  }
+
+  // Clean an array of objects by a key
+  function cleanArrayOfObjects(arr, keys) {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((obj) => {
+      const cleaned = {};
+      for (const key of keys) {
+        cleaned[key] = cleanString(obj[key]);
+      }
+      return { ...obj, ...cleaned };
+    });
+  }
+
   function parseLexisRecord(text) {
     const parsed = {
       // Person info
-      first: extractFirstName(text),
-      last: extractLastName(text),
-      dob: extractDOB(text),
+      first: cleanString(extractFirstName(text)),
+      last: cleanString(extractLastName(text)),
+      dob: cleanString(extractDOB(text)),
       age: extractAge(text),
-      sex: extractSex(text),
-      ssn5: extractSSN5(text),
-      lexID: extractLexID(text),
+      sex: cleanString(extractSex(text)),
+      ssn5: cleanString(extractSSN5(text)),
+      lexID: cleanString(extractLexID(text)),
 
       // Family info
       hasSpouse: checkHasSpouse(text),
@@ -18,20 +50,29 @@ const useLexisData = () => {
       hasChildren: checkHasChildren(text),
 
       // Addresses
-
-      ownedProperties: extractPropertyValuations(text),
+      ownedProperties: cleanArrayOfObjects(extractPropertyValuations(text), [
+        "address",
+        "city",
+        "state",
+        "zip",
+      ]),
 
       // Tax liens
       taxLiens: extractTaxLiens(text),
-
       // Business info
-      businessConnections: extractBusinessConnections(text),
-      possibleEmployers: extractPossibleEmployers(text),
-      professionalLicenses: extractProfessionalLicenses(text), // Will be set after businesses are extracted
+      businessConnections: cleanArrayOfObjects(
+        extractBusinessConnections(text),
+        ["name", "address", "role"]
+      ),
+      possibleEmployers: cleanArrayOfObjects(extractPossibleEmployers(text), [
+        "name",
+        "address",
+      ]),
+      professionalLicenses: extractProfessionalLicenses(text),
 
       // Contact info
-      phones: extractPhones(text),
-      emails: extractEmails(text),
+      phones: cleanStringArray(extractPhones(text)),
+      emails: cleanStringArray(extractEmails(text)),
     };
 
     console.log(parsed);
@@ -247,15 +288,23 @@ const useLexisData = () => {
       const type = match[2].includes("Federal") ? "Federal" : "State";
       const amount = parseFloat(match[3].replace(/,/g, ""));
       const date = match[4];
+      const creditorIndex = lienSection.findIndex((line) =>
+        /^Creditor\s*1\b/i.test(line.trim())
+      );
 
+      let plaintiff = "";
+      if (creditorIndex !== -1 && creditorIndex + 1 < lienSection.length) {
+        plaintiff = lienSection[creditorIndex + 1].trim();
+      }
       const lienObj = {
         type: type,
         amount: amount,
         date: date,
         plaintiff:
-          type === "Federal"
+          plaintiff ||
+          (type === "Federal"
             ? "Internal Revenue Service"
-            : "State Tax Authority",
+            : "State Tax Authority"),
         status: isRelease ? "Release" : "Active",
       };
 
@@ -478,38 +527,33 @@ const useLexisData = () => {
   }
 
   // Build business contact list for CSV
-  function buildBusinessContactList(parsedClients) {
-    const contacts = [];
+  function buildBusinessContactList(validatedLienList) {
+    return validatedLienList
+      .filter((item) => {
+        const hasContacts =
+          (Array.isArray(item.phones) && item.phones.length > 0) ||
+          (Array.isArray(item.emails) && item.emails.length > 0);
 
-    parsedClients.forEach((client) => {
-      if (!client.businesses || client.businesses.length === 0) return;
+        const hasBiz =
+          (Array.isArray(item.businessConnections) &&
+            item.businessConnections.length > 0) ||
+          (Array.isArray(item.possibleEmployers) &&
+            item.possibleEmployers.length > 0) ||
+          (Array.isArray(item.professionalLicenses) &&
+            item.professionalLicenses.length > 0);
 
-      client.businesses.forEach((business) => {
-        // Associate emails/phones with business
-        const bizEmails = client.emails.filter((email) => {
-          const domain = email.split("@")[1];
-          const bizNameClean = business.name
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, "");
-          return domain.includes(bizNameClean) || email.includes(bizNameClean);
-        });
-
-        contacts.push({
-          "Business Name": business.name,
-          Address: business.address || client.currentAddress?.street || "",
-          City: business.city || client.currentAddress?.city || "",
-          State: business.state || client.currentAddress?.state || "",
-          Zip: business.zip || client.currentAddress?.zip || "",
-          Email: bizEmails.join("; ") || client.emails.join("; "),
-          Phone: client.phones.join("; "),
-          "Person Role": business.role,
-          "Person Name": `${client.first} ${client.last}`.trim(),
-          LexID: client.lexID || "",
-        });
-      });
-    });
-
-    return contacts;
+        return hasContacts && hasBiz;
+      })
+      .map((item) => ({
+        caseNumber: item.caseNumber || "",
+        name: item["First Name"] + " " + item["Last Name"] || "",
+        lexID: item.lexID || "",
+        businessConnections: item.businessConnections || [],
+        possibleEmployers: item.possibleEmployers || [],
+        professionalLicenses: item.professionalLicenses || [],
+        phones: item.phones || [],
+        emails: item.emails || [],
+      }));
   }
 
   // Build summary text for Logics
@@ -580,11 +624,37 @@ Sex:          ${client.sex}
 LexID:        ${client.lexID || "Unknown"}
 SSN (5):      ${client.ssn5 || "Unknown"}
 
+-- Contact Info --
+Phones: ${client.phones.join(", ") || "None"}
+Emails: ${client.emails.join(", ") || "None"}
+
+-- Tax Liens --
+Federal:      ${federalLiens.length} ($${federalLiens
+      .reduce((s, l) => s + l.amount, 0)
+      .toLocaleString()})
+State:        ${stateLiens.length} ($${stateLiens
+      .reduce((s, l) => s + l.amount, 0)
+      .toLocaleString()})
+Total Amount: $${totalLienAmount.toLocaleString()}
+
+Active Liens:
+${lienLines}
+
 -- Family --
 Has Spouse:   ${client.hasSpouse ? "Yes" : "No"}${
       client.spouseDeceased ? " (Deceased)" : ""
     }
 Has Children: ${client.hasChildren ? "Yes" : "No"}
+
+-- Business Profile --
+Business Connections:
+${businessConnText}
+
+Possible Employers:
+${employerText}
+
+Professional Licenses:
+${licenseText.trim()}
 
 -- Property Valuations (2021+ Assessed) --
 ${
@@ -602,94 +672,91 @@ ${
     : "  None"
 }
 
-
--- Business Profile --
-Business Connections:
-${businessConnText}
-
-Possible Employers:
-${employerText}
-
-Professional Licenses:
-${licenseText.trim()}
-
-
--- Tax Liens --
-Federal:      ${federalLiens.length} ($${federalLiens
-      .reduce((s, l) => s + l.amount, 0)
-      .toLocaleString()})
-State:        ${stateLiens.length} ($${stateLiens
-      .reduce((s, l) => s + l.amount, 0)
-      .toLocaleString()})
-Total Amount: $${totalLienAmount.toLocaleString()}
-
-Active Liens:
-${lienLines}
-
--- Contact Info --
-Phones: ${client.phones.join(", ") || "None"}
-Emails: ${client.emails.join(", ") || "None"}
 `.trim();
   }
-  function buildDialerList(parsedClients) {
+  function buildEmailCsv(validatedLienList) {
     const rows = [];
-
-    parsedClients.forEach((client) => {
-      // 1. Pick the most recent lien by date (mm/dd/yyyy)
-      let mostRecentLien = null;
-      if (Array.isArray(client.taxLiens) && client.taxLiens.length) {
-        mostRecentLien = client.taxLiens
-          .filter((l) => l.date)
-          .sort((a, b) => {
-            // Parse date as yyyy-mm-dd for comparison
-            const da = a.date.split("/").reverse().join("-");
-            const db = b.date.split("/").reverse().join("-");
-            return db.localeCompare(da); // descending order
-          })[0];
+    validatedLienList.forEach((item) => {
+      if (!item.caseNumber) return;
+      const emails = Array.isArray(item.emails) ? item.emails : [];
+      if (emails.length === 0) {
+        return;
       }
-
-      // 2. Format phone numbers
-      const phones =
-        client.phones && client.phones.length ? client.phones : [""];
-
-      // 3. Output first row with all info and first phone
-      rows.push({
-        first: client.first || "",
-        last: client.last || "",
-        address: client.currentAddress ? client.currentAddress.full : "",
-        phone: phones[0],
-        lienAmount: mostRecentLien
-          ? `$${(mostRecentLien.amount || 0).toLocaleString()}`
-          : "",
-        lienPlaintiff: mostRecentLien ? mostRecentLien.plaintiff : "",
-        lienType: mostRecentLien ? mostRecentLien.type : "",
-        lienDate: mostRecentLien ? mostRecentLien.date : "",
-        email: client.emails && client.emails.length ? client.emails[0] : "",
-      });
-
-      // 4. Output additional phones (if any)
-      for (let i = 1; i < phones.length; i++) {
+      emails.forEach((email, idx) => {
         rows.push({
-          first: "",
-          last: "",
-          address: "",
-          phone: phones[i],
-          lienAmount: "",
-          lienPlaintiff: "",
-          lienType: "",
-          lienDate: "",
-          email: "",
+          caseNumber: idx === 0 ? item.caseNumber : "",
+          name: idx === 0 ? item["First Name"] + " " + item["Last Name"] : "",
+          lienAmount: idx === 0 ? item.taxLiens?.[0]?.amount : "",
+          plaintiff: idx === 0 ? item.taxLiens?.[0]?.plaintiff : "",
+          email: email,
         });
+      });
+    });
+    return rows;
+  }
+  function buildDialerCsv(validatedLienList) {
+    const rows = [];
+    validatedLienList.forEach((item) => {
+      const phones = Array.isArray(item.phones) ? item.phones : [];
+      if (!item.caseNumber) return;
+      if (phones.length === 0) {
+        return;
       }
+      phones.forEach((phone, idx) => {
+        rows.push({
+          caseNumber: idx === 0 ? item.caseNumber : "",
+          name: idx === 0 ? item["First Name"] + " " + item["Last Name"] : "",
+          lienAmount: idx === 0 ? item.taxLiens?.[0]?.amount : "",
+          plaintiff: idx === 0 ? item.taxLiens?.[0]?.plaintiff : "",
+          phone: phone,
+        });
+      });
     });
 
     return rows;
   }
+
+  const buildBusinessCsv = (businessList) => {
+    return businessList.map((item) => {
+      // Handle businessConnections
+      const business =
+        (item.businessConnections && item.businessConnections[0]) || {};
+      // Handle possibleEmployers
+      const employer =
+        (item.possibleEmployers && item.possibleEmployers[0]) || {};
+      // Handle professionalLicenses
+      const license =
+        (item.professionalLicenses && item.professionalLicenses[0]) || {};
+
+      return {
+        caseNumber: item.caseNumber || "",
+        name: item["First Name"] + " " + item["Last Name"] || "",
+        lexID: item.lexID || "",
+        // Phones/Emails as semicolon-separated strings
+        phones: Array.isArray(item.phones) ? item.phones.join("; ") : "",
+        emails: Array.isArray(item.emails) ? item.emails.join("; ") : "",
+
+        // Business Connection fields (always present, empty if no value)
+        businessConnectionName: business.name || "",
+
+        // Employer fields (always present, empty if no value)
+        employerName: employer.name || "",
+        employerLastSeen: employer.lastSeen || "",
+
+        // Professional License fields (always present, empty if no value)
+        licenseType: license.type || "",
+        licenseBoard: license.board || "",
+      };
+    });
+  };
+
   return {
     parseLexisRecord,
     buildBusinessContactList,
     buildSummaryText,
-    buildDialerList,
+    buildDialerCsv,
+    buildBusinessCsv,
+    buildEmailCsv,
   };
 };
 export default useLexisData;

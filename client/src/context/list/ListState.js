@@ -11,7 +11,8 @@ const ListState = (props) => {
     filteredClients: [],
     zeroInvoiceList: [],
     searchedClients: [],
-    validatedLiens: [],
+    validatedLienList: [],
+    lexDataArray: [],
     toReview: [],
     partial: [],
     periodInfo: null,
@@ -49,13 +50,14 @@ const ListState = (props) => {
       );
     }
   };
-  const buildLienList = async (liens) => {
+  const buildLienList = async (lexDataArray) => {
     try {
-      dispatch({ type: "SET_LOADING" }); // optional, if you use loading
-      const res = await api.post("/api/list/buildLienList", { liens });
+      dispatch({ type: "SET_LOADING" });
+      const res = await api.post("/api/list/buildLienList", { lexDataArray });
+      console.log(res.data);
       dispatch({
-        type: "SET_VALIDATED_LIENS",
-        payload: res.data.validatedLiens,
+        type: "SET_VALIDATED_LIEN_LIST",
+        payload: res.data.validatedLienList,
       });
     } catch (err) {
       dispatch({
@@ -229,6 +231,15 @@ const ListState = (props) => {
     dispatch({ type: "SKIP_CLIENT", payload: client });
   };
 
+  const addToLexDataArray = (parsedData) => {
+    console.log(parsedData);
+    dispatch({ type: "ADD_TO_LEXARRAY", payload: parsedData });
+  };
+
+  const clearLexDataArray = () => {
+    dispatch({ type: "ADD_TO_LEXARRAY" });
+  };
+
   const searchUnifiedClients = async (filters) => {
     try {
       console.log(filters);
@@ -254,8 +265,10 @@ const ListState = (props) => {
         prospectDialerList: state.prospectDialerList,
         recordCount: state.recordCount,
         searchedClients: state.searchedClients,
-        validatedLiens: state.validatedLiens,
+        validatedLienList: state.validatedLienList,
+        lexDataArray: state.lexDataArray,
         searchUnifiedClients,
+        addToLexDataArray,
         postNCOAList,
         buildPeriod,
         parseZeros,
@@ -268,6 +281,7 @@ const ListState = (props) => {
         buildDialerList,
         addCreateDateClients,
         clearPeriod,
+        clearLexDataArray,
         removeClientFromUploadList,
         fetchReviewClients,
       }}

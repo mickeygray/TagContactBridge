@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import ClientContext from "../../../context/client/clientContext";
+import ListContext from "../../../context/list/listContext";
 import useLexisData from "../../../hooks/useLexisData";
 import CopyableItem from "../../layout/CopyableItem";
 
@@ -12,6 +13,7 @@ const FileAppendItem = ({
   isParsed,
 }) => {
   const { uploadFileToCase } = React.useContext(ClientContext);
+  const { addToLexDataArray } = React.useContext(ListContext);
   const { parseLexisRecord, buildSummaryText } = useLexisData();
   const [file, setFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -39,7 +41,7 @@ const FileAppendItem = ({
       // Parse the file
       const parsedData = parseLexisRecord(fileContent);
 
-      // Set isBusinessOwner flag
+      addToLexDataArray({ ...record, ...parsedData });
 
       // Generate summary text
       const summaryText = buildSummaryText(parsedData);

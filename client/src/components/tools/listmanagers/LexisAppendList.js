@@ -1,7 +1,9 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useContext } from "react";
 import Papa from "papaparse";
 import FileAppendItem from "./FileAppendItem";
+import BusinessAnalysisItem from "./BusinessAnalysisItem";
 import useLexisData from "../../../hooks/useLexisData";
+import ListContext from "../../../context/list/listContext";
 import { CSVLink } from "react-csv";
 
 const LexisAppendList = () => {
@@ -9,21 +11,34 @@ const LexisAppendList = () => {
   const [lienList, setLienList] = useState([]);
   // State to hold only parsed leads that are business owners
   const [businessList, setBusinessList] = useState([]);
+  const [activeList, setActiveList] = useState("liens"); // "leads" or "business"
+
   // Used for download and pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = lienList.slice(indexOfFirstItem, indexOfLastItem);
+  const paginatedList = activeList === "business" ? businessList : lienList;
+  const currentItems = paginatedList.slice(indexOfFirstItem, indexOfLastItem);
 
+  const { validatedLienList, lexDataArray, clearLexDataArray, buildLienList } =
+    useContext(ListContext);
   // Import the correct builder functions
   const {
-    parseLexisRecord,
     buildBusinessContactList,
-    buildDialerList,
-    buildSummaryText,
+    buildBusinessCsv,
+    buildDialerCsv,
+    buildEmailCsv,
   } = useLexisData();
 
+  function getTodayYYYYMMDD() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0"); // Months are 0-based
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${dd}-${mm}-${yyyy}`;
+  }
+  const datePrefix = getTodayYYYYMMDD();
   // Called after file drop & parse in FileAppendItem
   const handleLeadExtracted = (caseNumber, parsedLead) => {
     // Always update lienList
@@ -39,7 +54,13 @@ const LexisAppendList = () => {
       ]);
     }
   };
-
+  const handleBusinessCleaned = (cleaned) => {
+    setBusinessList((prev) =>
+      prev.map((item) =>
+        item.caseNumber === cleaned.caseNumber ? cleaned : item
+      )
+    );
+  };
   // Parse CSV and add to state (will trigger FileAppendItem drop zone for each)
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -87,30 +108,22 @@ const LexisAppendList = () => {
   }, []);
 
   // For downloads
-  const dialerCSV = buildDialerList(lienList);
-  const businessCSV = buildBusinessContactList(businessList);
 
-  // Summaries for all parsed leads (could also just use lienList or businessList)
-  const handleExportSummaries = () => {
-    if (!lienList.length) return;
-    const allSummaries = lienList
-      .map(buildSummaryText)
-      .join("\n\n" + "=".repeat(50) + "\n\n");
-    const blob = new Blob([allSummaries], {
-      type: "text/plain;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `client_summaries_${
-      new Date().toISOString().split("T")[0]
-    }.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleBusinessValidationListBuild = () => {
+    const businessContactList = buildBusinessContactList(validatedLienList);
+    setBusinessList(businessContactList);
+    setActiveList("business");
   };
 
+  const clearBusinessInfo = () => {
+    setBusinessList([]);
+    clearLexDataArray();
+    setActiveList("liens");
+  };
+  // Summaries for all parsed leads (could also just use lienList or businessList)
+
   return (
-    <div className="card">
+    <div>
       <div className="pagination-controls">
         <button
           onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
@@ -135,7 +148,7 @@ const LexisAppendList = () => {
       <input type="file" accept=".csv" onChange={handleFileUpload} />
 
       {/* FileAppendItem: after CSV upload, lets user drop the TXT and parseLexisRecord it */}
-      {lienList.length > 0 && (
+      {lienList.length > 0 && activeList === "liens" && (
         <div className="append-list">
           {currentItems.map((entry, index) => (
             <FileAppendItem
@@ -149,22 +162,75 @@ const LexisAppendList = () => {
         </div>
       )}
 
+      {businessList.length > 0 && activeList === "business" && (
+        <div>
+          {currentItems.map((entry, i) => (
+            <BusinessAnalysisItem
+              key={entry.caseNumber || i}
+              entry={entry}
+              onCleaned={handleBusinessCleaned}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Download buttons */}
+
+      <button
+        className="btn btn-secondary"
+        onClick={() => buildLienList(lexDataArray)}
+        style={{ marginLeft: 12 }}
+      >
+        Scrub Liens
+      </button>
       <div style={{ marginTop: 32 }}>
-        <CSVLink data={dialerCSV} filename="dialer_list.csv">
-          <button className="btn btn-primary">⬇ Download Dialer CSV</button>
-        </CSVLink>
-        <CSVLink data={businessCSV} filename="business_contacts.csv">
-          <button className="btn btn-secondary" style={{ marginLeft: 12 }}>
-            ⬇ Download Business Contacts CSV
-          </button>
-        </CSVLink>
-        <button
-          className="btn btn-warning"
+        <CSVLink
+          data={buildDialerCsv(validatedLienList)}
+          filename={`${datePrefix}_dialer-list.csv`}
+          onClick={() => buildDialerCsv(validatedLienList)}
+          className="btn btn-secondary"
           style={{ marginLeft: 12 }}
-          onClick={handleExportSummaries}
         >
-          📄 Download All Summaries (.txt)
+          Download Dialer CSV
+        </CSVLink>
+
+        <CSVLink
+          data={buildEmailCsv(validatedLienList)}
+          filename={`${datePrefix}_email-list.csv`}
+          onClick={() => buildDialerCsv(validatedLienList)}
+          className="btn btn-primary"
+          style={{ marginLeft: 12 }}
+        >
+          Download Email CSV
+        </CSVLink>
+
+        {activeList === "liens" ? (
+          <button
+            onClick={handleBusinessValidationListBuild}
+            className="btn btn-danger"
+            style={{ marginLeft: 12 }}
+          >
+            Run Business Validation Tool
+          </button>
+        ) : (
+          <CSVLink
+            data={buildBusinessCsv(businessList)}
+            filename={`${datePrefix}_business-list.csv`}
+          >
+            <button className="btn btn-primary" style={{ marginLeft: 12 }}>
+              {" "}
+              Download Business Report
+            </button>
+          </CSVLink>
+        )}
+
+        <button
+          onClick={() => clearBusinessInfo()}
+          className="btn btn-primary"
+          style={{ marginLeft: 12 }}
+        >
+          {" "}
+          Clear Scrape Data
         </button>
       </div>
     </div>

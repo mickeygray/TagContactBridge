@@ -548,69 +548,153 @@ async function buildDialerList(req, res, next) {
 
 async function buildLienList(req, res, next) {
   try {
-    const liens = req.body.liens;
-    const validatedLiens = [];
+    const liens = req.body.lexDataArray;
+
+    console.log(liens, "liens");
 
     const normalizePhone = (raw) => raw.replace(/\D/g, "").slice(-10);
 
-    for (const lien of liens) {
-      // Phones
-      const rawPhones = lien.phones || lien.AllPhones || [];
-      const phonesToCheck = rawPhones.map((p) =>
-        typeof p === "string" ? { number: p } : p
-      );
-      const validPhones = [];
+    async function buildPhoneList() {
+      const phoneList = [];
 
-      for (const phoneObj of phonesToCheck) {
-        const rawNumber = phoneObj.number || "";
-        const normalizedPhone = normalizePhone(rawNumber);
-        if (normalizedPhone.length !== 10) continue;
+      for (const lien of liens) {
+        const rawPhones = lien.phones || lien.AllPhones || [];
+        const phonesToCheck = Array.isArray(rawPhones)
+          ? rawPhones
+          : rawPhones
+          ? [rawPhones]
+          : [];
+        const validPhonesSet = new Set();
 
-        try {
-          const apiResult = await validatePhone(normalizedPhone);
-          const isClean =
-            apiResult.national_dnc === "N" &&
-            apiResult.state_dnc === "N" &&
-            apiResult.iscell === "Y" &&
-            !["disconnected", "invalid-phone", "ERROR"].includes(
-              apiResult.status
+        for (const phone of phonesToCheck) {
+          const rawNumber =
+            typeof phone === "string" ? phone : phone.number || "";
+          const normalizedPhone = normalizePhone(rawNumber);
+          if (normalizedPhone.length !== 10) continue;
+          try {
+            const apiResult = await validatePhone(normalizedPhone);
+
+            const isClean =
+              apiResult.national_dnc === "N" &&
+              apiResult.state_dnc === "N" &&
+              !["disconnected", "invalid-phone", "ERROR"].includes(
+                apiResult.status
+              );
+            if (isClean) {
+              validPhonesSet.add(normalizedPhone);
+            }
+          } catch (err) {
+            console.warn(
+              `Phone validation error (${rawNumber}): ${err.message}`
             );
-          if (isClean) {
-            validPhones.push({ ...phoneObj, normalized: normalizedPhone });
           }
-        } catch (err) {
-          console.warn(`Phone validation error (${rawNumber}): ${err.message}`);
+        }
+
+        // Only push liens with at least one valid phone
+        if (validPhonesSet.size > 0) {
+          phoneList.push({
+            ...lien,
+            phones: Array.from(validPhonesSet),
+          });
         }
       }
-
-      // Emails
-      const rawEmails = lien.emails || lien.AllEmails || [];
-      const emailsToCheck = Array.isArray(rawEmails) ? rawEmails : [rawEmails];
-      const validEmails = [];
-
-      for (const email of emailsToCheck) {
-        if (!email) continue;
-        try {
-          const isValid = await validateEmail(email);
-          if (isValid) {
-            validEmails.push(email);
-          }
-        } catch (err) {
-          console.warn(`Email validation error (${email}): ${err.message}`);
-        }
-      }
-
-      // Add if at least one valid phone OR email
-      if (validPhones.length > 0 || validEmails.length > 0) {
-        validatedLiens.push({
-          ...lien,
-          phones: validPhones,
-          emails: validEmails,
-        });
-      }
+      return phoneList;
     }
 
-    return res.json({ validatedLiens });
+    async function buildEmailList() {
+      const emailList = [];
+
+      for (const lien of liens) {
+        const rawEmails = lien.emails || lien.AllEmails || [];
+        const emailsToCheck = Array.isArray(rawEmails)
+          ? rawEmails
+          : rawEmails
+          ? [rawEmails]
+          : [];
+        const validEmailsSet = new Set();
+
+        for (const email of emailsToCheck) {
+          if (!email) continue;
+          try {
+            const isValid = await validateEmail(email);
+
+            const lowerEmail = email.toLowerCase();
+            if (isValid === "valid") {
+              validEmailsSet.add(lowerEmail);
+            }
+          } catch (err) {
+            console.warn(`Email validation error (${email}): ${err.message}`);
+          }
+        }
+
+        if (validEmailsSet.size > 0) {
+          emailList.push({
+            ...lien,
+            emails: Array.from(validEmailsSet),
+          });
+        }
+      }
+      return emailList;
+    }
+
+    // Run both at the same time:
+    const [validatedPhones, validatedEmails] = await Promise.all([
+      buildPhoneList(),
+      buildEmailList(),
+    ]);
+    function combineValidatedLists(validatedPhones, validatedEmails) {
+      const combinedMap = {};
+
+      // Start with phones
+      validatedPhones.forEach((item) => {
+        if (!item.caseNumber) return;
+        combinedMap[item.caseNumber] = {
+          ...item,
+          phones: Array.isArray(item.phones) ? item.phones : [item.phones],
+          emails: [],
+        };
+      });
+
+      // Add in emails
+      validatedEmails.forEach((item) => {
+        if (!item.caseNumber) return;
+        if (!combinedMap[item.caseNumber]) {
+          // If not present, create new
+          combinedMap[item.caseNumber] = {
+            ...item,
+            phones: [],
+            emails: Array.isArray(item.emails) ? item.emails : [item.emails],
+          };
+        } else {
+          // If present, merge emails in
+          const prevEmails = combinedMap[item.caseNumber].emails || [];
+          const newEmails = Array.isArray(item.emails)
+            ? item.emails
+            : [item.emails];
+          combinedMap[item.caseNumber].emails = Array.from(
+            new Set([...prevEmails, ...newEmails])
+          );
+        }
+      });
+
+      // If you want to ensure no duplicate phones within the same caseNumber:
+      Object.values(combinedMap).forEach((entry) => {
+        if (Array.isArray(entry.phones)) {
+          entry.phones = Array.from(new Set(entry.phones));
+        }
+      });
+
+      return Object.values(combinedMap);
+    }
+    const validatedLienList = combineValidatedLists(
+      validatedPhones,
+      validatedEmails
+    );
+    // Now finalList is an array: one object per unique caseNumber, with both phones & emails
+
+    return res.json({
+      validatedLienList,
+    });
   } catch (err) {
     console.error("❌ buildLienList error:", err);
     next(err);
