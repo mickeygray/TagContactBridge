@@ -1,3 +1,4 @@
+// FileAppendItem.js
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import ClientContext from "../../../context/client/clientContext";
@@ -11,8 +12,9 @@ const FileAppendItem = ({
   isParsed,
 }) => {
   const { uploadFileToCase } = React.useContext(ClientContext);
-  const { parseSingleLexisFile } = useLexisData();
+  const { parseLexisRecord, buildSummaryText } = useLexisData();
   const [file, setFile] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const {
     "First Name": firstName,
@@ -20,29 +22,50 @@ const FileAppendItem = ({
     Address,
     City,
     State,
-    "Case #": caseNumber,
+    caseNumber,
   } = record;
 
   const onDrop = async (acceptedFiles) => {
     const uploadedFile = acceptedFiles[0];
     if (!uploadedFile || !caseNumber) return;
 
+    setIsProcessing(true);
     setFile(uploadedFile);
 
-    // ✅ Upload file to Logics
-    uploadFileToCase({ file: uploadedFile, caseNumber });
+    try {
+      // Read file content
+      const fileContent = await uploadedFile.text();
 
-    // ✅ Parse file locally and pass result back to parent
-    const parsedLead = await parseSingleLexisFile(uploadedFile);
-    if (parsedLead) {
-      onLeadExtracted(caseNumber, parsedLead);
+      // Parse the file
+      const parsedData = parseLexisRecord(fileContent);
+
+      // Set isBusinessOwner flag
+
+      // Generate summary text
+      const summaryText = buildSummaryText(parsedData);
+
+      // Create a new file with the summary text
+      const summaryFile = new File([summaryText], `${caseNumber}_summary.txt`, {
+        type: "text/plain",
+      });
+
+      // Upload summary to Logics
+      await uploadFileToCase({ file: summaryFile, caseNumber });
+
+      // Pass parsed data back to parent
+      onLeadExtracted(caseNumber, parsedData);
+    } catch (error) {
+      console.error("Error processing file:", error);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: ".txt",
+    accept: { "text/plain": [".txt"] },
     multiple: false,
+    disabled: isProcessing,
   });
 
   return (
@@ -58,6 +81,7 @@ const FileAppendItem = ({
         border: "1px solid #ccc",
         padding: "10px",
         borderRadius: "6px",
+        opacity: isProcessing ? 0.7 : 1,
       }}
     >
       <CopyableItem label="First" value={firstName} />
@@ -65,7 +89,7 @@ const FileAppendItem = ({
       <CopyableItem label="Address" value={Address} />
       <CopyableItem label="City" value={City} />
       <CopyableItem label="State" value={State} />
-      <CopyableItem label="Case #" value={caseNumber} />
+      <CopyableItem label="CaseNumber" value={caseNumber} />
 
       <div
         {...getRootProps()}
@@ -73,16 +97,24 @@ const FileAppendItem = ({
           border: "2px dashed #888",
           borderRadius: "6px",
           padding: "6px 12px",
-          cursor: "pointer",
+          cursor: isProcessing ? "wait" : "pointer",
           backgroundColor: isDragActive ? "#d0eaff" : "#fff",
           color: "#333",
         }}
       >
         <input {...getInputProps()} />
-        {file ? "✅ File Uploaded" : "📂 Drop TXT"}
+        {isProcessing
+          ? "⏳ Processing..."
+          : isParsed
+          ? "✅ File Uploaded"
+          : "📂 Drop TXT"}
       </div>
 
-      <button className="btn-delete" onClick={() => onFileRemove(caseNumber)}>
+      <button
+        className="btn-delete"
+        onClick={() => onFileRemove(caseNumber)}
+        disabled={isProcessing}
+      >
         ❌
       </button>
     </div>

@@ -9,8 +9,14 @@ const settlementOfficers = require("../libraries/settlementOfficers");
 const {
   addVerifiedClientsAndReturnUpdatedLists,
 } = require("../utils/newPeriodContactChecks");
-const { validatePhone } = require("../services/validationService");
+const {
+  validatePhone,
+  validateEmail,
+} = require("../services/validationService");
 const ValidatedPhone = require("../models/ValidatedPhone");
+
+// Initialize NeverBounce client
+
 const {
   downloadLatestZip,
   unzipPassworded,
@@ -537,6 +543,9 @@ async function buildDialerList(req, res, next) {
   }
 }
 
+// 2. Your existing phone validation function assumed available
+// async function validatePhone(number) { ... }
+
 async function buildLienList(req, res, next) {
   try {
     const liens = req.body.liens;
@@ -545,14 +554,17 @@ async function buildLienList(req, res, next) {
     const normalizePhone = (raw) => raw.replace(/\D/g, "").slice(-10);
 
     for (const lien of liens) {
-      const phonesToCheck = lien.phones || lien.AllPhones || [];
+      // Phones
+      const rawPhones = lien.phones || lien.AllPhones || [];
+      const phonesToCheck = rawPhones.map((p) =>
+        typeof p === "string" ? { number: p } : p
+      );
       const validPhones = [];
 
-      if (!phonesToCheck.length) continue; // ⛔ skip if no phones
-
-      for (const phone of phonesToCheck) {
-        const normalizedPhone = normalizePhone(phone);
-        if (normalizedPhone.length !== 10) continue; // ⛔ skip malformed
+      for (const phoneObj of phonesToCheck) {
+        const rawNumber = phoneObj.number || "";
+        const normalizedPhone = normalizePhone(rawNumber);
+        if (normalizedPhone.length !== 10) continue;
 
         try {
           const apiResult = await validatePhone(normalizedPhone);
@@ -563,22 +575,39 @@ async function buildLienList(req, res, next) {
             !["disconnected", "invalid-phone", "ERROR"].includes(
               apiResult.status
             );
-
           if (isClean) {
-            validPhones.push(normalizedPhone);
+            validPhones.push({ ...phoneObj, normalized: normalizedPhone });
           }
         } catch (err) {
-          console.warn(`Phone validation error (${phone}): ${err.message}`);
+          console.warn(`Phone validation error (${rawNumber}): ${err.message}`);
         }
       }
 
-      if (validPhones.length > 0) {
+      // Emails
+      const rawEmails = lien.emails || lien.AllEmails || [];
+      const emailsToCheck = Array.isArray(rawEmails) ? rawEmails : [rawEmails];
+      const validEmails = [];
+
+      for (const email of emailsToCheck) {
+        if (!email) continue;
+        try {
+          const isValid = await validateEmail(email);
+          if (isValid) {
+            validEmails.push(email);
+          }
+        } catch (err) {
+          console.warn(`Email validation error (${email}): ${err.message}`);
+        }
+      }
+
+      // Add if at least one valid phone OR email
+      if (validPhones.length > 0 || validEmails.length > 0) {
         validatedLiens.push({
           ...lien,
           phones: validPhones,
+          emails: validEmails,
         });
       }
-      console.log(validatedLiens.length);
     }
 
     return res.json({ validatedLiens });
@@ -587,7 +616,6 @@ async function buildLienList(req, res, next) {
     next(err);
   }
 }
-
 async function filterList(req, res, next) {
   try {
     const { clients, domain } = req.body;

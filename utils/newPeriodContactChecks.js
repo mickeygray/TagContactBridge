@@ -60,6 +60,7 @@ const approvedAgents = [
   "Jonathan Haro",
   "Dani Pearson",
   "Jake Wallace",
+  "Leo Collins",
 ];
 
 // Keywords to look for in notes

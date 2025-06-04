@@ -1,81 +1,66 @@
-import React, { useState, useCallback, useContext } from "react";
+import React, { useState, useCallback } from "react";
 import Papa from "papaparse";
 import FileAppendItem from "./FileAppendItem";
-import ListContext from "../../../context/list/listContext";
 import useLexisData from "../../../hooks/useLexisData";
 import { CSVLink } from "react-csv";
 
 const LexisAppendList = () => {
-  const [lexisList, setLexisList] = useState([]);
-  const [parsedLiens, setParsedLiens] = useState([]);
+  // State to hold all parsed leads (ALL go here)
+  const [lienList, setLienList] = useState([]);
+  // State to hold only parsed leads that are business owners
+  const [businessList, setBusinessList] = useState([]);
+  // Used for download and pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const [csvData, setCsvData] = useState([]);
-  const [parsedMap, setParsedMap] = useState({});
   const itemsPerPage = 50;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = lexisList.slice(indexOfFirstItem, indexOfLastItem);
+  const currentItems = lienList.slice(indexOfFirstItem, indexOfLastItem);
 
-  const { buildLienList, validatedLiens } = useContext(ListContext);
-  const { buildCSVData } = useLexisData();
+  // Import the correct builder functions
+  const {
+    parseLexisRecord,
+    buildBusinessContactList,
+    buildDialerList,
+    buildSummaryText,
+  } = useLexisData();
 
-  const handleLeadExtracted = (caseID, parsedLead) => {
-    const newLead = {
-      ...parsedLead,
-      "Case #": caseID,
-    };
-
-    setParsedLiens((prev) => [
-      ...prev.filter((lead) => lead["Case #"] !== caseID),
-      newLead,
+  // Called after file drop & parse in FileAppendItem
+  const handleLeadExtracted = (caseNumber, parsedLead) => {
+    // Always update lienList
+    setLienList((prev) => [
+      ...prev.filter((l) => l.caseNumber !== caseNumber),
+      { ...parsedLead, caseNumber },
     ]);
-
-    setParsedMap((prev) => ({
-      ...prev,
-      [caseID]: true,
-    }));
-
-    setTimeout(() => {
-      setParsedMap((prev) => ({
-        ...prev,
-        [caseID]: false,
-      }));
-    }, 3000);
+    // Only update businessList if business owner
+    if (parsedLead.isBusinessOwner) {
+      setBusinessList((prev) => [
+        ...prev.filter((l) => l.caseNumber !== caseNumber),
+        { ...parsedLead, caseNumber },
+      ]);
+    }
   };
 
-  const handleRunDNC = async () => {
-    if (parsedLiens.length === 0) return;
-    await buildLienList(parsedLiens);
-  };
-
-  const handlePrepareCSV = () => {
-    const data = buildCSVData(validatedLiens);
-    setCsvData(data);
-  };
-
+  // Parse CSV and add to state (will trigger FileAppendItem drop zone for each)
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
 
     reader.onload = (event) => {
       const cleanedText = event.target.result
         .replace(/\u0000/g, "")
-        .replace(/\r/g, "")
-        .replace(/" +/g, '"')
-        .replace(/"/g, "")
-        .trim();
-
+        .replace(/\r/g, "");
       Papa.parse(cleanedText, {
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
-          const normalizeKeys = (entry) => {
+          // Normalize fields/keys
+          const cleanedData = results.data.map((entry) => {
             const cleaned = {};
             for (const key in entry) {
               if (key) {
-                const newKey = key.replace(/\s+/g, " ").trim();
+                let newKey = key.replace(/\s+/g, " ").trim();
+                if (newKey === "Case #") newKey = "caseNumber";
                 cleaned[newKey] =
                   typeof entry[key] === "string"
                     ? entry[key].trim()
@@ -83,31 +68,47 @@ const LexisAppendList = () => {
               }
             }
             return cleaned;
-          };
-
-          const cleanedData = results.data.map(normalizeKeys);
-
-          const filtered = cleanedData.filter(
-            (entry) =>
-              entry["First Name"] && entry["Last Name"] && entry["Case #"]
-          );
-
-          setLexisList(filtered);
-        },
-        error: (error) => {
-          console.error("❌ PapaParse Error:", error);
+          });
+          setLienList(cleanedData); // this is your CSV table, will render FileAppendItems
         },
       });
     };
-
     reader.readAsText(file);
   };
 
-  const handleFileRemove = useCallback((caseID) => {
-    setLexisList((prevList) =>
-      prevList.filter((item) => item["Case #"] !== caseID)
+  // Remove file/lead by caseNumber from both lists
+  const handleFileRemove = useCallback((caseNumber) => {
+    setLienList((prev) =>
+      prev.filter((item) => item.caseNumber !== caseNumber)
+    );
+    setBusinessList((prev) =>
+      prev.filter((item) => item.caseNumber !== caseNumber)
     );
   }, []);
+
+  // For downloads
+  const dialerCSV = buildDialerList(lienList);
+  const businessCSV = buildBusinessContactList(businessList);
+
+  // Summaries for all parsed leads (could also just use lienList or businessList)
+  const handleExportSummaries = () => {
+    if (!lienList.length) return;
+    const allSummaries = lienList
+      .map(buildSummaryText)
+      .join("\n\n" + "=".repeat(50) + "\n\n");
+    const blob = new Blob([allSummaries], {
+      type: "text/plain;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `client_summaries_${
+      new Date().toISOString().split("T")[0]
+    }.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="card">
       <div className="pagination-controls">
@@ -121,10 +122,10 @@ const LexisAppendList = () => {
         <button
           onClick={() =>
             setCurrentPage((prev) =>
-              indexOfLastItem >= lexisList.length ? prev : prev + 1
+              indexOfLastItem >= lienList.length ? prev : prev + 1
             )
           }
-          disabled={indexOfLastItem >= lexisList.length}
+          disabled={indexOfLastItem >= lienList.length}
         >
           Next ▶
         </button>
@@ -133,13 +134,14 @@ const LexisAppendList = () => {
       <h3>📂 Lexis Address Match Tool</h3>
       <input type="file" accept=".csv" onChange={handleFileUpload} />
 
-      {lexisList.length > 0 && (
+      {/* FileAppendItem: after CSV upload, lets user drop the TXT and parseLexisRecord it */}
+      {lienList.length > 0 && (
         <div className="append-list">
           {currentItems.map((entry, index) => (
             <FileAppendItem
-              key={index}
+              key={entry.caseNumber || index}
               record={entry}
-              isParsed={parsedMap[entry["Case #"]]}
+              isParsed={!!entry.isParsed}
               onFileRemove={handleFileRemove}
               onLeadExtracted={handleLeadExtracted}
             />
@@ -147,29 +149,24 @@ const LexisAppendList = () => {
         </div>
       )}
 
-      {validatedLiens.length === 0 && parsedLiens.length > 0 && (
-        <button onClick={handleRunDNC} style={{ marginTop: "20px" }}>
-          🧹 Run DNC Scrub
-        </button>
-      )}
-
-      {validatedLiens.length > 0 && (
-        <>
-          <button
-            className=" btn btn-success"
-            onClick={handlePrepareCSV}
-            style={{ marginTop: "20px" }}
-          >
-            📤 Prepare CSV
+      {/* Download buttons */}
+      <div style={{ marginTop: 32 }}>
+        <CSVLink data={dialerCSV} filename="dialer_list.csv">
+          <button className="btn btn-primary">⬇ Download Dialer CSV</button>
+        </CSVLink>
+        <CSVLink data={businessCSV} filename="business_contacts.csv">
+          <button className="btn btn-secondary" style={{ marginLeft: 12 }}>
+            ⬇ Download Business Contacts CSV
           </button>
-          {"      "}
-          {csvData.length > 0 && (
-            <CSVLink data={csvData} filename="validated_liens.csv">
-              <button className=" btn btn-primary">⬇ Download CSV</button>
-            </CSVLink>
-          )}
-        </>
-      )}
+        </CSVLink>
+        <button
+          className="btn btn-warning"
+          style={{ marginLeft: 12 }}
+          onClick={handleExportSummaries}
+        >
+          📄 Download All Summaries (.txt)
+        </button>
+      </div>
     </div>
   );
 };

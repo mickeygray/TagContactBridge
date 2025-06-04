@@ -1,6 +1,6 @@
 // services/validationService.js
 const axios = require("axios");
-
+const client = new NeverBounce({ apiKey: process.env.NEVERBOUNCE_API_KEY });
 const BASE = process.env.REAL_VALIDATION_URL;
 const TOKEN = process.env.REAL_VALIDATION_API_KEY;
 
@@ -33,7 +33,19 @@ async function validatePhones(phones) {
   return results;
 }
 
+async function validateEmail(email) {
+  try {
+    const result = await client.single.check(email);
+    // NeverBounce "result" property is 0 for valid
+    return result.result === 0; // 0 = valid, 1 = invalid, 2 = disposable, etc.
+  } catch (err) {
+    console.warn(`Email validation error (${email}): ${err.message}`);
+    return false;
+  }
+}
+
 module.exports = {
   validatePhone,
+  validateEmail,
   validatePhones,
 };
