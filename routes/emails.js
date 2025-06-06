@@ -9,6 +9,8 @@ const {
 } = require("../middleware/authMiddleware");
 const { sendDailyEmail } = require("../controllers/scheduleController");
 const router = express.Router();
+const compileSignatureTpl = require("../libraries/rawSignature");
+const emailSubjects = require("../libraries/emailSubjects");
 
 // Protect all email routes
 router.use(authMiddleware, requireAdmin);
@@ -20,16 +22,19 @@ router.use(authMiddleware, requireAdmin);
  */
 router.post("/send", async (req, res, next) => {
   try {
-    const { list, template } = req.body;
+    const { list, template, domain, subject, attachment } = req.body;
     if (!Array.isArray(list) || !template) {
       return res
         .status(400)
         .json({ message: "Missing required fields: list or template" });
     }
+
+    console.log(req.body);
     const domainHostMap = {
       TAG: "taxadvocategroup.com",
       WYNN: "wynntaxsolutions.com",
       AMITY: "amitytaxgroup.com",
+      TGC: "taxgroupconsultants.com",
     };
     // load & compile the body template from marketingemails/
     const bodyPath = path.join(
@@ -42,31 +47,27 @@ router.post("/send", async (req, res, next) => {
         .status(404)
         .json({ message: `Template not found: ${template}` });
     }
+    console.log("🔧 Compiling body template");
+
     const bodySource = fs.readFileSync(bodyPath, "utf8");
     const bodyTpl = hbs.compile(bodySource);
-
     const results = await Promise.allSettled(
       list.map(async (recip) => {
-        const {
-          email,
-          name,
-          caseNumber,
-          token,
-          domain,
-          senderEmailPrefix,
-          senderName,
-        } = recip;
+        const { email, name, senderEmailPrefix, senderName } = recip;
+
         if (!email) {
           throw new Error("Invalid recipient (missing email)");
         }
-        if (!["TAG", "WYNN", "AMITY"].includes(domain)) {
+        if (!["TAG", "WYNN", "AMITY", "TGC"].includes(domain)) {
           throw new Error(`Invalid domain "${domain}"`);
         }
         const host = domainHostMap[domain];
         const from = `${senderName} <${senderEmailPrefix}@${host}>`;
         // 1) gather per-domain env vars
         const vars = {
-          scheduleUrl: process.env[`${domain}_CALENDAR_SCHEDULE_URL`] || "",
+          scheduleUrl:
+            process.env[`${domain}_CALENDAR_SCHEDULE_URL`] ||
+            process.env.TAG_CALENDAR_SCHEDULE_URL,
           url: process.env[`${domain}_URL`] || "",
           phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
           processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
@@ -75,8 +76,8 @@ router.post("/send", async (req, res, next) => {
         };
 
         // 2) render signature
-        const signatureTpl = loadSignatureTpl(domain);
-        const signatureHtml = signatureTpl(vars);
+
+        const signatureHtml = compileSignatureTpl(vars);
 
         // 3) render body, injecting {{{signature}}}
         const html = bodyTpl({
@@ -86,13 +87,6 @@ router.post("/send", async (req, res, next) => {
         });
 
         // 4) collect attachments for this marketing template
-        const atts = [];
-        for (const fn of attachmentsMapping[template] || []) {
-          const p = path.join(__dirname, "../Templates/attachments", fn);
-          if (fs.existsSync(p)) {
-            atts.push({ filename: fn, path: p });
-          }
-        }
 
         // 5) pick subject (fallback to a generic)
         const subject =
@@ -106,12 +100,12 @@ router.post("/send", async (req, res, next) => {
           subject,
           html,
           domain,
-          attachments: atts,
         });
 
         return { email, status: "sent" };
       })
     );
+    console.log(results);
 
     res.json({ results });
   } catch (err) {

@@ -24,10 +24,10 @@ const EmailState = ({ children }) => {
    * @param {string} domain (e.g. 'taxadvocate', 'wynn', 'amity')
    * @param {Object} payload
    */
-  const sendEmails = async (domain, emailPayload) => {
+  const sendEmails = async (emailPayload) => {
     dispatch({ type: "SENDING_EMAILS" });
     try {
-      const response = await api.post(`/api/emails/${domain}`, emailPayload);
+      const response = await api.post(`/api/emails/send`, emailPayload);
       dispatch({ type: "EMAILS_SENT", payload: response.data.message });
     } catch (error) {
       console.error("Error sending emails:", error);

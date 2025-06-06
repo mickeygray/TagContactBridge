@@ -11,7 +11,6 @@ const scheduleReducer = (state, action) => {
     case "REFRESH_QUEUES":
       return {
         ...state,
-        toReview: action.payload.toReview || [],
         emailQueue: action.payload.emailQueue || [],
         textQueue: action.payload.textQueue || [],
       };
@@ -20,7 +19,6 @@ const scheduleReducer = (state, action) => {
         ...state,
         emailQueue: action.payload.emailQueue,
         textQueue: action.payload.textQueue,
-        toReview: action.payload.toReview,
         loading: false,
         error: null,
       };

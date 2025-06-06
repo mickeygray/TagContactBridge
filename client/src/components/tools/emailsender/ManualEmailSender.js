@@ -40,10 +40,11 @@ const originators = [
   { settlementOfficer: "Dani Pearson", emailPrefix: "dpearson" },
   { settlementOfficer: "Kassy Burton", emailPrefix: "kburton" },
   { settlementOfficer: "Andrew Wells", emailPrefix: "awells" },
+  { settlementOfficer: "Cameron Pierce", emailPrefix: "Cameron" },
 ];
 
 export default function ManualEmailSender() {
-  const { sendEmail } = useContext(EmailContext);
+  const { sendEmails } = useContext(EmailContext);
 
   const { filterList, filteredList, clearFilteredList } =
     useContext(ListContext);
@@ -142,7 +143,7 @@ export default function ManualEmailSender() {
     }
 
     // 2) pick your list
-    const rawList = filteredList.length > 0 ? filteredList : uploadedList;
+    const rawList = uploadedList;
     if (rawList.length === 0) {
       setMessage("No recipients to send to.");
       return;
@@ -171,9 +172,8 @@ export default function ManualEmailSender() {
 
     // 5) send
     try {
-      await sendEmail(emailPayload);
+      await sendEmails(emailPayload);
       setMessage("✅ Emails sent successfully!");
-      clearFilteredList();
     } catch (err) {
       console.error("Error sending emails:", err);
       setMessage("❌ Error sending emails.");
@@ -285,10 +285,7 @@ export default function ManualEmailSender() {
       </select>
 
       {/* Filter button */}
-      <button
-        onClick={handleFilterList}
-        disabled={filtering || (!uploadedList.length && !filteredList.length)}
-      >
+      <button onClick={handleFilterList} disabled={filtering}>
         {filtering ? "Filtering…" : "Filter List"}
       </button>
 
@@ -306,6 +303,7 @@ export default function ManualEmailSender() {
           <option value="TAG">TAG</option>
           <option value="WYNN">WYNN</option>
           <option value="AMITY">AMITY</option>
+          <option value="TGC">TGC</option>
         </select>
       </div>
 

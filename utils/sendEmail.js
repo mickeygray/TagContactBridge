@@ -11,6 +11,9 @@ const getTransporter = (domain) => {
     case "AMITY":
       apiKey = process.env.AMITY_API_KEY;
       break;
+    case "TGC":
+      apiKey = process.env.TGC_API_KEY;
+      break;
     case "TAG":
     default:
       apiKey = process.env.TAXAD_API_KEY;
@@ -47,16 +50,18 @@ const sendEmail = async ({
   from,
   attachments,
 }) => {
+  console.log(to, subject, text, html, domain, from, attachments);
   const transporter = getTransporter(domain);
 
   const fromMap = {
     TAG: `${process.env.TAG_EMAIL_NAME} <${process.env.TAG_EMAIL_ADDRESS}>`,
     WYNN: `${process.env.WYNN_EMAIL_NAME} <${process.env.WYNN_EMAIL_ADDRESS}>`,
     AMITY: `${process.env.AMITY_EMAIL_NAME} <${process.env.AMITY_EMAIL_ADDRESS}>`,
+    TGC: `${process.env.TGC_EMAIL_ADDRESS}`,
   };
   const fromEmail = fromMap[domain?.toUpperCase()] || from;
   const mailOptions = {
-    from: from ? from : fromEmail,
+    from: "cameron <cameron@taxgroupconsultants.com",
     to,
     subject,
     text: text || "",
