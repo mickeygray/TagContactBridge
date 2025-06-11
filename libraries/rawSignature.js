@@ -9,14 +9,7 @@ const rawSignatureTpl = `
             >Schedule Your Call</a>
   </p>
 
-  <div style="width:100%; max-width:600px; margin-top:20px;
-              border-top:1px solid #ccc; padding-top:10px;
-              font-family:Arial,sans-serif; font-size:14px;">
-    If you are returning documents, please send them to
-    <a href="mailto:{{processingEmail}}" style="color:#000;text-decoration:none;">
-      {{processingEmail}}
-    </a>
-  </div>
+
 
   <table style="width:100%;max-width:600px;margin-top:20px;
                 border-top:1px solid #ccc;padding-top:10px;
@@ -25,7 +18,7 @@ const rawSignatureTpl = `
       <td style="width:40%;padding-right:20px;text-align:center;
                  vertical-align:middle;">
         <img src="{{logoSrc}}" alt="Logo"
-             style="max-width:100%;height:auto;display:block;"/>
+             style="max-width:100%;height:150px; width:125px;display:block;"/>
       </td>
       <td style="width:60%;text-align:left;vertical-align:middle;
                  padding-left:20px;">
@@ -36,7 +29,7 @@ const rawSignatureTpl = `
         <a href="{{url}}" style="color:#000;text-decoration:none;">
           {{url}}
         </a>
-        
+
       </td>
     </tr>
   </table>

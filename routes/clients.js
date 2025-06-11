@@ -24,6 +24,6 @@ router.post("/reviewSaleDate", (req, res, next) => {
   ctrl.processReviewedSaleDateClientHandler(req, res, next);
 });
 router.post("/reviewCreateDate", ctrl.processReviewedCreateDateClientHandler);
-router.delete("/delete", ctrl.deleteClientHandler);
+router.post("/delete", ctrl.deleteClientHandler);
 
 module.exports = router;

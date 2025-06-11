@@ -472,7 +472,8 @@ async function downloadAndEmailDaily(req, res, next) {
     await sendEmail({
       to: process.env.ADMIN_EMAIL,
       from: process.env.ADMIN_EMAIL,
-      subject: "Your Daily Report",
+      domain: "TAG",
+      subject: "Daily Drop",
       html: "<p>Please see the attached files.</p>",
       attachments,
     });

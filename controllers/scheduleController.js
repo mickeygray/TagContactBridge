@@ -247,21 +247,33 @@ async function buildDailySchedule(req, res) {
     // 4️⃣ Classify verified into period and sale
     const saleIds = new Set(mappedSaleClients.map((c) => c._id.toString()));
 
-    const verifiedPeriod = verified
-      .filter((c) => !saleIds.has(c._id.toString()))
-      .map((c) => ({ ...c, type: "createDate" }));
+    const verifiedPeriod =
+      rawPeriodClients.length > 0
+        ? verified
+            .filter((c) => !saleIds.has(c._id.toString()))
+            .map((c) => ({ ...c, type: "createDate" }))
+        : [];
 
-    const verifiedSales = verified
-      .filter((c) => saleIds.has(c._id.toString()))
-      .map((c) => ({ ...c, type: "saleDate" }));
+    const verifiedSales =
+      rawSaleClients.length > 0
+        ? verified
+            .filter((c) => saleIds.has(c._id.toString()))
+            .map((c) => ({ ...c, type: "saleDate" }))
+        : [];
 
-    const partialPeriod = partial
-      .filter((c) => !saleIds.has(c._id.toString()))
-      .map((c) => ({ ...c, type: "createDate" }));
+    const partialPeriod =
+      rawPeriodClients.length > 0
+        ? partial
+            .filter((c) => !saleIds.has(c._id.toString()))
+            .map((c) => ({ ...c, type: "createDate" }))
+        : [];
 
-    const partialSales = partial
-      .filter((c) => saleIds.has(c._id.toString()))
-      .map((c) => ({ ...c, type: "saleDate" }));
+    const partialSales =
+      rawSaleClients.length > 0
+        ? partial
+            .filter((c) => saleIds.has(c._id.toString()))
+            .map((c) => ({ ...c, type: "saleDate" }))
+        : [];
 
     // 5️⃣ Assign stage pieces
     const {

@@ -62,7 +62,7 @@ router.post("/send", async (req, res, next) => {
           throw new Error(`Invalid domain "${domain}"`);
         }
         const host = domainHostMap[domain];
-        const from = `${senderName} <${senderEmailPrefix}@${host}>`;
+        const from = `Cameron Pierce @ Tax Group Consultants  <${senderEmailPrefix}@${host}>`;
         // 1) gather per-domain env vars
         const vars = {
           scheduleUrl:
@@ -91,7 +91,7 @@ router.post("/send", async (req, res, next) => {
         // 5) pick subject (fallback to a generic)
         const subject =
           (emailSubjects[template] && emailSubjects[template].subject) ||
-          `Update from ${domain}`;
+          `Important 2025 Tax Law Changes`;
 
         // 6) send
         await sendEmail({

@@ -88,7 +88,7 @@ const ClientState = (props) => {
     try {
       const { caseNumber, domain, _id } = client;
       // sends { caseNumber, domain } in body
-      await api.delete("/api/clients/delete", {
+      await api.post("/api/clients/delete", {
         data: { caseNumber, domain, _id },
       });
       dispatch({ type: "DELETE_SCHEDULED_CLIENT", payload: caseNumber });

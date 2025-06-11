@@ -615,7 +615,7 @@ async function processReviewedCreateDateClientHandler(req, res, next) {
 
 async function deleteClientHandler(req, res, next) {
   try {
-    const { caseNumber, domain, _id } = req.body;
+    const { caseNumber, domain, _id } = req.body.data;
 
     const clientId = _id;
     // 1️⃣ Find the client
