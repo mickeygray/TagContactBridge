@@ -18,8 +18,8 @@ const getTransporter = (domain) => {
         port: 587,
         secure: false,
         auth: {
-          user: "cameron@taxgroupconsultants.com",
-          pass: "Pay@ttention39!",
+          user: process.env.TGC_SMTP_USER,
+          pass: process.env.TGC_SMTP_PASS,
         },
       });
     case "TAG":
