@@ -56,7 +56,7 @@ const NCOAUploader = () => {
                 }\nLien Amount: ${entry["Amount"] || "N/A"}\nPlaintiff: ${
                   entry["Plantiff"] || "N/A"
                 }\nFiling Date: ${entry["Filing Date"] || "N/A"}`,
-                SourceName: "Risk Direct Mail",
+                SourceName: "ABC",
               };
             } catch (error) {
               console.error("Error formatting entry:", entry, error);

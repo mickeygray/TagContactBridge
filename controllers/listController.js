@@ -241,8 +241,7 @@ async function addCreateDateClients(req, res, next) {
     const { added, reviewList } = await addVerifiedClientsAndReturnReviewList(
       rawClients
     );
-    console.log(added.length);
-    console.log(reviewList.length);
+
     // Send back both lists
     return res.json({
       added, // Array of Client docs that were just created

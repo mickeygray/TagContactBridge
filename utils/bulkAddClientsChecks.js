@@ -248,7 +248,26 @@ async function addVerifiedClientsAndReturnReviewList(rawClients) {
     console.timeEnd(`⏱️ Total time for ${data.caseNumber}`);
   }
 
-  const added = toSave.length ? await Client.insertMany(toSave) : [];
+  const filtered = toSave.filter(
+    (item) =>
+      item.name &&
+      item.name.trim() &&
+      item.email &&
+      item.email.trim() &&
+      item.cell &&
+      item.cell.trim()
+  );
+  const added = [];
+  for (const obj of filtered) {
+    try {
+      await Client.create(obj);
+      console.log(`✅ Saved: ${obj.name}`);
+      added.push(obj);
+    } catch (err) {
+      console.error(`❌ Failed to save:`, obj, err.message);
+    }
+  }
+
   console.log(
     `[Import] added=${added.length}, reviewList=${reviewList.length}`
   );

@@ -2,33 +2,7 @@ import React, { useState, useContext } from "react";
 import { csv } from "csvtojson";
 import EmailContext from "../../../context/email/emailContext";
 import ListContext from "../../../context/list/listContext";
-const emailTemplates = [
-  "welcome",
-  "transcripts-1",
-  "433a-1",
-  "433a-1Wynn",
-  "433a-1Amity",
-  "433a-2",
-  "marketing-1",
-  "marketing-2",
-  "marketing-3",
-  "TaxReturns-1",
-  "TaxReturns-2",
-  "TaxReturnsWynn-1",
-  "TaxReturnsWynn-2",
-  "TaxReturnsAmity-1",
-  "past-due",
-  "past-dueWynn",
-  "important-update",
-  "Extensions-1",
-  "TCG-1",
-  "Extensions-1Amity",
-  "poa-tag",
-  "tax-organizer-urgent",
-  "tax-organizer-urgent-2",
-  "tax-organizer-urgent-3",
-  "tax-organizer-urgent-amity",
-];
+const emailTemplates = ["TCG-1", "TCG-2", "TCG-3", "TCG-4"];
 
 const originators = [
   { settlementOfficer: "Eva Gray", emailPrefix: "egray" },

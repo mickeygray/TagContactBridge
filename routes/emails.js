@@ -89,9 +89,27 @@ router.post("/send", async (req, res, next) => {
         // 4) collect attachments for this marketing template
 
         // 5) pick subject (fallback to a generic)
-        const subject =
-          (emailSubjects[template] && emailSubjects[template].subject) ||
-          `Important 2025 Tax Law Changes`;
+        let subject;
+
+        switch (template) {
+          case "TCG-1":
+            subject =
+              "Tax Law Changes May Impact Your Income or Business Liability";
+            break;
+          case "TCG-2":
+            subject = "Every Day You Wait, Your Personal Tax Debt Grows";
+            break;
+          case "TCG-3":
+            subject = "Your Tax Situation Requires Immediate Attention";
+            break;
+          case "TCG-4":
+            subject =
+              "Hiring a Tax Specialist Could Save Your Business or Save You Thousands";
+            break;
+          default:
+            subject = "Hiring a Tax Specialist Could Save You Thousands";
+            break;
+        }
 
         // 6) send
         await sendEmail({

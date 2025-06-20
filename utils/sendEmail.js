@@ -13,15 +13,7 @@ const getTransporter = (domain) => {
       break;
     case "TGC":
       apiKey = process.env.TGC_API_KEY;
-      return nodemailer.createTransport({
-        host: "send.smtp.com",
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.TGC_SMTP_USER,
-          pass: process.env.TGC_SMTP_PASS,
-        },
-      });
+      break;
     case "TAG":
     default:
       apiKey = process.env.TAXAD_API_KEY;
@@ -37,6 +29,16 @@ const getTransporter = (domain) => {
       pass: apiKey,
     },
   });
+
+  /*  return nodemailer.createTransport({
+        host: "send.smtp.com",
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.TGC_SMTP_USER,
+          pass: process.env.TGC_SMTP_PASS,
+        },
+      }); */
 };
 
 /**

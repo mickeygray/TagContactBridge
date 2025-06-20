@@ -32,7 +32,21 @@ async function postCaseFile(domain, payload) {
 
   return resp.data;
 }
+async function updateCaseStatus(domain, caseId, statusId) {
+  const domainConfig = config[domain] || config.TAG;
+  const url = `${domainConfig.baseUrl}/publicapi/V3/UpdateCase/UpdateCase`;
+  const payload = {
+    CaseID: parseInt(caseId, 10),
+    StatusID: statusId,
+  };
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: domainConfig.apiKey,
+  };
 
+  const resp = await axios.post(url, payload, { headers });
+  return resp.data;
+}
 async function uploadCaseDocument({
   caseNumber,
   comment,
@@ -152,9 +166,52 @@ async function createZeroInvoice(domain, caseNumber) {
   });
   return resp.data;
 }
+async function createActivityLoop(domain, caseId, comment) {
+  // 1️⃣ Fetch existing activities for the case
+  const activities = await getActivities(domain, caseId);
 
+  // 2️⃣ Look for PB CALL LOG activity
+  const existing = activities.find((act) => act.Subject === "PB CALL LOG");
+  const url = `${config[domain].baseUrl}/publicapi/V3/CaseActivity/Activity`;
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: config[domain].apiKey,
+  };
+
+  if (existing && existing.ActivityID) {
+    // 3a️⃣ Update existing activity
+    await axios.post(
+      url,
+      {
+        ActivityID: existing.ActivityID,
+        CaseID: parseInt(caseId, 10),
+        Comment: comment,
+      },
+      { headers }
+    );
+  } else {
+    // 3b️⃣ Create new activity
+    await axios.post(
+      url,
+      {
+        CaseID: parseInt(caseId, 10),
+        ActivityType: "Note", // adjust as needed
+        Subject: "PB CALL LOG",
+        Comment: comment,
+        Popup: false,
+        Pin: false,
+      },
+      { headers }
+    );
+  }
+
+  // 4️⃣ Return the comment for use in summaries
+  return comment;
+}
 module.exports = {
   uploadCaseDocument,
+  createActivityLoop,
+  updateCaseStatus,
   postCaseFile,
   createZeroInvoice,
   fetchBillingSummary,

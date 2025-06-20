@@ -18,7 +18,7 @@ const rawSignatureTpl = `
       <td style="width:40%;padding-right:20px;text-align:center;
                  vertical-align:middle;">
         <img src="{{logoSrc}}" alt="Logo"
-             style="max-width:100%;height:150px; width:125px;display:block;"/>
+             style="max-width:100%;height:100px; width:50px;display:block;"/>
       </td>
       <td style="width:60%;text-align:left;vertical-align:middle;
                  padding-left:20px;">
@@ -31,7 +31,18 @@ const rawSignatureTpl = `
         </a>
 
       </td>
-    </tr>
+    </tr>      
+    <tr>
+        <td
+          align="center"
+          style="padding: 30px 0 0; font-size: 13px; color: #777"
+        >
+          <p>
+            If you'd like to unsubscribe from future emails, click
+            <a href="<%asm_global_unsubscribe_url%>">here</a>.
+          </p>
+        </td>
+      </tr>
   </table>
 `;
 
