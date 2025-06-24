@@ -13,36 +13,14 @@ const Navbar = () => {
   const oauthEnabled = process.env.REACT_APP_ENABLE_OAUTH === "true";
   return (
     <nav className="navbar p-1 mb-1 card grid grid-2">
-      <div>
-        <Link to="/" className="logo">
-          📇 TagContactBridge
-        </Link>
-      </div>
+      <div>📇 TagContactBridge</div>
       <div className="grid" style={{ justifyContent: "end", gap: "1rem" }}>
         {isAuthenticated && (
           <>
-            {user.role === "admin" && (
-              <>
-                <Link to="/admin" className="btn btn-outline">
-                  Admin
-                </Link>
-              </>
-            )}
-            {user.marketingAccess && (
-              <>
-                <Link to="/management" className="btn btn-outline">
-                  Marketing Tools
-                </Link>
-                <Link to="/agent" className="btn btn-outline">
-                  Agent Dashboard
-                </Link>
-              </>
-            )}
-            {user.role === "agent" && (
-              <Link to="/agent" className="btn btn-outline">
-                Agent Dashboard
-              </Link>
-            )}
+            <Link to="/" className="btn btn-outline">
+              Marketing Tools
+            </Link>
+
             <button className="btn btn-outline" onClick={handleLogout}>
               Logout
             </button>

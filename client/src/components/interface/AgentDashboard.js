@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import LogicsFileReader from "../tools/listmanagers/LogicsFileReader";
-import CallFetcher from "../tools/callmonitor/CallFetcher";
-import LexisAppendList from "../tools/listmanagers/LexisAppendList";
+import ManualEmailSender from "../tools/emailsender/ManualEmailSender";
+import TextMessageSender from "../tools/textsender/TextMessageSender";
+import NCOAUploader from "../tools/listmanagers/NCOAUploader";
+import ScheduleFunnelDashboard from "../tools/schedulemanager/ScheduleFunnelDashboard";
 import PeriodContactsFilter from "../tools/listmanagers/PeriodContactsFilter";
 import UnifiedClientListManager from "../tools/listmanagers/UnifiedClientListManager";
 
@@ -12,16 +14,20 @@ const AgentDashboard = () => {
     switch (activeTool) {
       case "logics":
         return <LogicsFileReader />;
-      case "calls":
-        return <CallFetcher />;
-      case "lexis":
-        return <LexisAppendList />;
       case "period":
         return <PeriodContactsFilter />;
       case "search":
         return <UnifiedClientListManager />;
+      case "email":
+        return <ManualEmailSender />;
+      case "text":
+        return <TextMessageSender />;
+      case "mail":
+        return <NCOAUploader />;
+      case "daily":
+        return <ScheduleFunnelDashboard />;
       default:
-        return <UnifiedClientListManager />;
+        return <LogicsFileReader />;
     }
   };
 
@@ -31,32 +37,32 @@ const AgentDashboard = () => {
 
       <div className="panel-container">
         <div className="card">
-          <h3>🛠️ Agent Tools</h3>
+          <h3>🛠️ Marketing Tools</h3>
           <button
             className={`button primary ${
               activeTool === "logics" ? "active" : ""
             }`}
             onClick={() => setActiveTool("logics")}
           >
-            📁 Logics File Reader
+            📁 List Upload Tool
           </button>
           <br />
           <button
             className={`button primary ${
-              activeTool === "calls" ? "active" : ""
+              activeTool === "text" ? "active" : ""
             }`}
-            onClick={() => setActiveTool("calls")}
+            onClick={() => setActiveTool("text")}
           >
-            📞 Call Fetcher
+            📞 Text Message Sender
           </button>
           <br />
           <button
             className={`button primary ${
-              activeTool === "lexis" ? "active" : ""
+              activeTool === "email" ? "active" : ""
             }`}
-            onClick={() => setActiveTool("lexis")}
+            onClick={() => setActiveTool("email")}
           >
-            📋 Lexis Append List
+            📋 Marketing Emails
           </button>{" "}
           <br />
           <button
@@ -65,7 +71,7 @@ const AgentDashboard = () => {
             }`}
             onClick={() => setActiveTool("period")}
           >
-            📋 Period Contacts Filter
+            📋 Aged Clients Marketing List
           </button>
           <br />
           <button
@@ -75,6 +81,24 @@ const AgentDashboard = () => {
             onClick={() => setActiveTool("search")}
           >
             📋 Client Search
+          </button>
+          <br />
+          <button
+            className={`button primary ${
+              activeTool === "mail" ? "active" : ""
+            }`}
+            onClick={() => setActiveTool("mail")}
+          >
+            📋 Direct Mail List
+          </button>
+          <br />
+          <button
+            className={`button primary ${
+              activeTool === "daily" ? "active" : ""
+            }`}
+            onClick={() => setActiveTool("daily")}
+          >
+            📋 Daily Client Contacts
           </button>
         </div>
       </div>

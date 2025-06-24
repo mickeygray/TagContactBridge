@@ -433,7 +433,7 @@ async function downloadAndEmailDaily(req, res, next) {
       federalCount = allRows.filter((r) =>
         /Federal Tax/i.test(r.FILE_TYPE || "")
       ).length;
-
+      /*
       // 5b) filter‑out rule: PLAINTIFF “State of …” or STATE “OR”
       const STATES = ["Oregon", "Texas", "Florida", "Tennessee", "Washington"];
       const STATE_OF_RE = new RegExp(`^State of (?:${STATES.join("|")})`, "i");
@@ -465,15 +465,15 @@ async function downloadAndEmailDaily(req, res, next) {
         { filename: path.basename(mailingPath), path: mailingPath },
         { filename: path.basename(dedupsPath), path: dedupsPath }
       );
+      */
     }
 
     // ─── 6) Send the email with all attachments ─────────────────────
     await sendEmail({
-      to: process.env.ADMIN_EMAIL,
+      to: process.env.MAILHOUSE_EMAIL,
       from: process.env.ADMIN_EMAIL,
-      domain: "TAG",
       subject: "Daily Drop",
-      html: "<p>Please see the attached files.</p>",
+      html: "<p>Please see the attached file.</p>",
       attachments,
     });
 

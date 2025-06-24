@@ -5,11 +5,11 @@
   "scripts": {
     "start": "cross-env PORT=5000 node server.js",
     "server": "cross-env PORT=5000 nodemon --max-old-space-size=32768 server.js",
-    "webhook": "cross-env PORT=4000 node webhook.js",
+    "webhook": "cross-env PORT=4000 nodemon webhook.js",
     "client": "cross-env PORT=3000 npm --max_old_space_size=16384 start --prefix client",
     "clientinstall": "npm install --prefix client",
-    "ngrok": "ngrok http 4000",
-    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run webhook\" ",
+    "ngrok": "\"C:\\users\\admin\\downloads\\ngrok-v3-stable-windows-amd64\\ngrok.exe\"  http 4000 --authtoken 2ynBQ5EMFLRajiQW94jn782Y9tz_83XSTp6r5apcrihyGtU3G --hostname tag-webhook.ngrok.app --log=stdout --log-level=debug",
+    "dev": "concurrently --names \"API,WEBHOOK,NGROK\"  -c \"cyan,green,magenta\"  \"npm run server\" \"npm run webhook\" \"npm run ngrok\"",
     "install": "npm install && npm install --prefix client && npm run build --prefix client"
   },
   "author": "",

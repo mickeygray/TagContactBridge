@@ -76,10 +76,12 @@ app.use((req, res, next) => {
   next();
 });
 app.post("/pb/calldone", async (req, res) => {
-  console.log("📥 Incoming PB payload:", JSON.stringify(req.body, null, 2));
-  const { status, contact, custom_fields } = req.body;
-  const domain = (contact["Logics Database"] || "TAG").toString().toUpperCase();
-  const caseId = parseInt(contact["Case ID"]);
+  const { status, contact, custom_fields, outbound_caller_id } = req.body;
+
+  const domain = (custom_fields["Logics Database"] || "TAG")
+    .toString()
+    .toUpperCase();
+  const caseId = parseInt(custom_fields["Case ID"]);
   if (!caseId) return res.status(400).send("Missing lead_id");
 
   const key = status.replace(/\s+/g, "_").toUpperCase();
@@ -87,9 +89,11 @@ app.post("/pb/calldone", async (req, res) => {
   try {
     // 1) Voicemail texts
     if (VOICEMAIL_STATUSES.includes(key)) {
-      await sendText({
+      console.log("reached this loop");
+      await sendTextMessage({
         phoneNumber: contact.phone,
-        content: MESSAGE_TEMPLATES[key](),
+        trackingNumber: outbound_caller_id,
+        message: MESSAGE_TEMPLATES[key](),
       });
       actionLog.push({ domain, caseId, action: "sms:voicemail" });
     }

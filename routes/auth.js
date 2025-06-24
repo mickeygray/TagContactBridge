@@ -144,9 +144,10 @@ router.post("/login", loginLimiter, async (req, res) => {
     );
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // HTTPS only in prod
-      sameSite: "Strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      secure: false, // allow on HTTP for dev
+      sameSite: "lax", // allow on top-level GETs and most XHRs
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: "/", // one week
     });
     res.json({ token });
   } catch (err) {

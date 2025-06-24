@@ -4,6 +4,7 @@ const config = {
   TAG: {
     baseUrl: process.env.TAG_LOGICS_API_URL, // e.g. "https://taxag.irslogics.com/publicapi/2020-02-22"
     apiKey: process.env.LOGICS_API_KEY,
+    secret: process.env.TAG_LOGICS_SECRET,
   },
   WYNN: {
     baseUrl: process.env.WYNN_LOGICS_API_URL, // e.g. "https://wynntax.logiqs.com/publicapi/2020-02-22"
@@ -34,7 +35,7 @@ async function postCaseFile(domain, payload) {
 }
 async function updateCaseStatus(domain, caseId, statusId) {
   const domainConfig = config[domain] || config.TAG;
-  const url = `${domainConfig.baseUrl}/publicapi/V3/UpdateCase/UpdateCase`;
+  const url = `${domainConfig.baseUrl}/UpdateCase/UpdateCase`;
   const payload = {
     CaseID: parseInt(caseId, 10),
     StatusID: statusId,
@@ -75,11 +76,26 @@ async function uploadCaseDocument({
 
 /** Fetch raw activity array for a case */
 async function fetchActivities(domain, caseNumber) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
-  const resp = await axios.get(`${baseUrl}/cases/activity`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseNumber) },
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
+
+  // Build the full URL
+  const url = `${baseUrl}/CaseActivity/Activity`;
+
+  console.log("→ Logics GET", url, { CaseID: caseNumber });
+
+  const resp = await axios.get(url, {
+    // Basic Auth header: Authorization: Basic base64(apiKey:secret)
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
+    params: {
+      CaseID: parseInt(caseNumber, 10),
+    },
   });
-  return resp.data;
+
+  console.log(resp.data);
+  return resp.data.Data;
 }
 
 /** Fetch raw invoice array for a case */
@@ -168,11 +184,11 @@ async function createZeroInvoice(domain, caseNumber) {
 }
 async function createActivityLoop(domain, caseId, comment) {
   // 1️⃣ Fetch existing activities for the case
-  const activities = await getActivities(domain, caseId);
+  const activities = await fetchActivities(domain, caseId);
 
   // 2️⃣ Look for PB CALL LOG activity
   const existing = activities.find((act) => act.Subject === "PB CALL LOG");
-  const url = `${config[domain].baseUrl}/publicapi/V3/CaseActivity/Activity`;
+  const url = `${config[domain].baseUrl}/CaseActivity/Activity`;
   const headers = {
     "Content-Type": "application/json",
     apikey: config[domain].apiKey,

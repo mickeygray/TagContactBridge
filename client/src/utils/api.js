@@ -6,7 +6,10 @@ import { useContext } from "react";
 export function useApi() {
   const { startLoading, stopLoading, showError } = useContext(MessageContext);
 
-  const instance = axios.create({ baseURL: process.env.REACT_APP_API_URL });
+  const instance = axios.create({
+    baseURL: "",
+    withCredentials: true,
+  });
 
   instance.interceptors.request.use(
     (config) => {

@@ -45,29 +45,12 @@ function AppContent() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/invite/:token" element={<Register />} />
-
-        <Route
-          path="/admin"
-          element={
-            <PrivateRoute requiredRole="admin">
-              <AdminPanel />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/management"
-          element={
-            <PrivateRoute requiredRole="admin">
-              <ManagementDashboard />
-            </PrivateRoute>
-          }
-        />
         <Route
           path="/unauthorized"
           element={<div>You are not authorized to view this page.</div>}
         />
         <Route
-          path="/agent"
+          path="/"
           element={
             <PrivateRoute>
               <AgentDashboard />
