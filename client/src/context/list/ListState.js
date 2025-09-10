@@ -12,6 +12,7 @@ const ListState = (props) => {
     zeroInvoiceList: [],
     searchedClients: [],
     validatedLienList: [],
+    prospectDialerList: [],
     lexDataArray: [],
     toReview: [],
     partial: [],
@@ -194,6 +195,8 @@ const ListState = (props) => {
         type: "PROSPECT_DIALER",
         payload: res.data.dialerList,
       });
+
+      console.log(res.data.dialerList);
     } catch (err) {
       dispatch({
         type: "LIST_ERROR",

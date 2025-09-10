@@ -61,45 +61,37 @@ export default function useAdvanceData(defaultDomain = "TAG") {
     reader.readAsText(file);
   };
   const parseRawLeadData = (rawData) => {
-    const uniqueAddresses = new Set(); // Set to track unique addresses
-
-    return rawData
-      .filter((entry) => {
-        // Ensure the "Debtor" field contains a LexID
-        const nameRegex = /^(.*?),\s*(.*?)\nLexID\(sm\):\n(\d+)/;
-        return nameRegex.test(entry["Debtor"]);
-      })
+    // 1) Parse every entry (including “Lien Release”) into a common shape
+    const parsed = rawData
       .map((entry) => {
         try {
+          // Regexes / helpers
           const nameRegex = /^(.*?),\s*(.*?)\nLexID\(sm\):\n(\d+)/;
           const filingRegex =
             /Filing Date:(\d{1,2}\/\d{1,2}\/\d{4}).*?Amount:\$(\d{1,3}(?:,\d{3})*|\d+)/s;
-          const certificateNumberRegex = /Certificate Number:(\w+)/;
           const filingNumberRegex = /Filing Number:([\w\d]+)/;
+          const certificateNumberRegex = /Certificate Number:(\w+)/;
           const filingOfficeRegex = /Filing Office:(.*)$/m;
-
-          // Capitalize First Letter of Each Word
-          const toSentenceCase = (str) => {
-            return str
+          const toSentenceCase = (str) =>
+            str
               ? str
                   .toLowerCase()
                   .split(" ")
-                  .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                  .map((w) => w[0].toUpperCase() + w.slice(1))
                   .join(" ")
               : "";
-          };
 
-          // Extract Name and LexID
+          // Extract Name & LexID
           const nameMatch = entry["Debtor"].match(nameRegex);
           const fullName = nameMatch
             ? toSentenceCase(`${nameMatch[2]} ${nameMatch[1]}`)
             : null;
           const lexID = nameMatch ? nameMatch[3] : null;
 
-          // Extract Filing Details
+          // Extract Filing Date & Amount
           const filingMatch = entry["Filing"]?.match(filingRegex);
           const filingDate = filingMatch ? filingMatch[1] : null;
-          const amount = filingMatch
+          const rawAmount = filingMatch
             ? parseInt(filingMatch[2].replace(/,/g, ""), 10)
             : null;
 
@@ -107,30 +99,24 @@ export default function useAdvanceData(defaultDomain = "TAG") {
           const filingNumberMatch = entry["Filing"]?.match(filingNumberRegex);
           const filingNumber = filingNumberMatch ? filingNumberMatch[1] : "N/A";
 
-          // Extract Certificate Number (Federal Liens Only)
+          // Extract Certificate & Office (Federal liens only)
           const certificateNumberMatch = entry["Filing"]?.match(
             certificateNumberRegex
           );
           const certificateNumber = certificateNumberMatch
             ? certificateNumberMatch[1]
             : null;
-
-          // Extract Filing Office (Federal Liens Only)
           const filingOfficeMatch = entry["Filing"]?.match(filingOfficeRegex);
           const filingOffice = filingOfficeMatch
             ? filingOfficeMatch[1].trim()
             : null;
 
-          // Extract Address Details
+          // Extract Address, City, State, Zip, County
           const addressLines = entry["Address"]?.split("\n") || [];
           const address = addressLines[0]
             ? toSentenceCase(addressLines[0])
             : "";
           const cityStateZip = addressLines[1] || "";
-          const county = addressLines[2]
-            ? toSentenceCase(addressLines[2].replace("COUNTY", "").trim())
-            : "";
-
           const cityStateZipParts = cityStateZip.match(
             /(.+),\s([A-Z]{2})\s(\d{5})/
           );
@@ -139,66 +125,60 @@ export default function useAdvanceData(defaultDomain = "TAG") {
             : null;
           const state = cityStateZipParts ? cityStateZipParts[2] : null;
           const zip = cityStateZipParts ? cityStateZipParts[3] : null;
+          const county = addressLines[2]
+            ? toSentenceCase(addressLines[2].replace("COUNTY", "").trim())
+            : "";
 
-          // Determine Lien Type
-          const isStateTaxLien = entry["Filing"]?.match(
-            /STATE TAX LIEN|STATE TAX WARRANT/
+          // Determine Lien Type (including Releases)
+          const isRelease = /LIEN RELEASE|RELEASE OF LIEN/i.test(
+            entry["Filing"] || ""
           );
-
-          const isFederalTaxLien =
-            entry["Filing"]?.includes("FEDERAL TAX LIEN");
-          const lienType = isStateTaxLien
+          const isStateTaxLien = /STATE TAX LIEN|STATE TAX WARRANT/.test(
+            entry["Filing"] || ""
+          );
+          const isFederalTaxLien = (entry["Filing"] || "").includes(
+            "FEDERAL TAX LIEN"
+          );
+          const lienType = isRelease
+            ? "Lien Release"
+            : isStateTaxLien
             ? "State Tax Lien"
             : isFederalTaxLien
             ? "Federal Tax Lien"
             : "Unknown";
 
-          // Determine Authority Field
+          // Authority & Plaintiff
           const authority = isStateTaxLien
             ? "State Taxing Authority"
             : isFederalTaxLien
             ? "Federal Taxing Authority"
+            : isRelease
+            ? "Release Authority"
             : "Unknown";
-
-          // Extract Plaintiff
           const plaintiff = entry["Creditor"]
             ? toSentenceCase(entry["Creditor"])
             : null;
 
-          // Calculate Settlement and Savings
-          const settlementAmount = amount * 0.05;
-          const savings = amount - settlementAmount;
+          // Settlement & Savings (only for personal)
+          const settlementRaw = rawAmount * 0.05;
+          const savingsRaw = rawAmount - settlementRaw;
+          const fmt = (v) =>
+            new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: "USD",
+            }).format(v || 0);
 
-          // Generate Notice and Response Dates
+          // Notice & Response Dates
           const today = new Date();
           const tomorrow = new Date(today);
           tomorrow.setDate(today.getDate() + 1);
-          const noticeDate = `${(tomorrow.getMonth() + 1)
-            .toString()
-            .padStart(2, "0")}/${tomorrow
-            .getDate()
-            .toString()
-            .padStart(2, "0")}/${tomorrow.getFullYear()}`;
           const nextWeek = new Date(tomorrow);
           nextWeek.setDate(tomorrow.getDate() + 7);
-          const responseDate = `${(nextWeek.getMonth() + 1)
-            .toString()
-            .padStart(2, "0")}/${nextWeek
-            .getDate()
-            .toString()
-            .padStart(2, "0")}/${nextWeek.getFullYear()}`;
-
-          const formatCurrency = (value) => {
-            if (value == null || isNaN(value)) return "$0.00";
-            return new Intl.NumberFormat("en-US", {
-              style: "currency",
-              currency: "USD",
-            }).format(value);
-          };
-
-          const formattedAmount = formatCurrency(amount);
-          const formattedSettlementAmount = formatCurrency(settlementAmount);
-          const formattedSavings = formatCurrency(savings);
+          const fmtDate = (d) =>
+            `${(d.getMonth() + 1).toString().padStart(2, "0")}/${d
+              .getDate()
+              .toString()
+              .padStart(2, "0")}/${d.getFullYear()}`;
 
           return {
             fullName,
@@ -209,33 +189,66 @@ export default function useAdvanceData(defaultDomain = "TAG") {
             zip,
             county,
             filingDate,
-            amount: formattedAmount,
-            lienType,
-            plaintiff,
-            filingNumber, // Now correctly extracted for both State and Federal tax liens
-            authority,
+            rawAmount,
+            amount: fmt(rawAmount),
+            filingNumber,
             certificateNumber: isFederalTaxLien ? certificateNumber : null,
             filingOffice: isFederalTaxLien ? filingOffice : null,
-            settlementAmount: formattedSettlementAmount,
-            savings: formattedSavings,
-            noticeDate,
-            responseDate,
+            lienType,
+            authority,
+            plaintiff,
+            settlementAmount: lexID && !isRelease ? fmt(settlementRaw) : null,
+            savings: lexID && !isRelease ? fmt(savingsRaw) : null,
+            noticeDate: fmtDate(tomorrow),
+            responseDate: fmtDate(nextWeek),
           };
-        } catch (error) {
-          console.error("Error parsing entry:", entry, error);
+        } catch (err) {
+          console.error("Error parsing entry:", err, entry);
           return null;
         }
       })
-      .filter((entry) => entry !== null && entry.lienType !== "Unknown")
-      .filter((entry) => {
-        // Filter out duplicates by address
-        if (uniqueAddresses.has(entry.address)) {
-          return false; // Skip duplicate address
-        } else {
-          uniqueAddresses.add(entry.address);
-          return true; // Keep unique address
+      // Keep only known liens & releases
+      .filter((e) => e && e.lienType !== "Unknown");
+
+    // 2) Build suppression set from all “Lien Release” entries
+    const releaseKeySet = new Set(
+      parsed
+        .filter((e) => e.lienType === "Lien Release")
+        .map((e) => `${e.address}|${e.rawAmount}`)
+    );
+
+    // 3) Collect personal liens (lexID present), skipping releases & suppressions
+    const personalAddresses = new Set();
+    const personalLiens = [];
+    for (const e of parsed) {
+      if (e.lexID && e.lienType !== "Lien Release") {
+        const key = `${e.address}|${e.rawAmount}`;
+        if (!releaseKeySet.has(key) && !personalAddresses.has(e.address)) {
+          personalAddresses.add(e.address);
+          personalLiens.push(e);
         }
-      });
+      }
+    }
+
+    // 4) Collect business liens (no lexID), skipping releases, suppressions, and personal overlaps
+    const businessAddresses = new Set();
+    const businessLiens = [];
+    for (const e of parsed) {
+      if (!e.lexID && e.lienType !== "Lien Release") {
+        const key = `${e.address}|${e.rawAmount}`;
+        if (
+          !releaseKeySet.has(key) &&
+          !personalAddresses.has(e.address) &&
+          !businessAddresses.has(e.address)
+        ) {
+          businessAddresses.add(e.address);
+          businessLiens.push(e);
+        }
+      }
+    }
+
+    // Final return: two clean lists
+    return { personalLiens, businessLiens };
   };
 
   // Multiple CSVs for dialer

@@ -8,7 +8,9 @@ const listRoutes = require("./routes/list");
 const callRoutes = require("./routes/recording");
 const clientRoutes = require("./routes/clients");
 const path = require("path");
-require("dotenv").config();
+require("dotenv").config({
+  path: "C:\\Users\\Admin\\Code\\TagContactBridge\\.env",
+});
 
 const connectDB = require("./config/db");
 connectDB();

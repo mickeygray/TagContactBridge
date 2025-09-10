@@ -24,28 +24,39 @@ const config = {
  * @returns {Promise<Object>} response.data from the Logics API
  */
 async function postCaseFile(domain, payload) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
-  const url = `${baseUrl}/cases/casefile?apikey=${apiKey}`;
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
+  const url = `${baseUrl}/Case/CaseFile`;
 
   const resp = await axios.post(url, payload, {
     headers: { "Content-Type": "application/json" },
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
   });
 
   return resp.data;
 }
-async function updateCaseStatus(domain, caseId, statusId) {
+async function updateCaseStatus(domain, statusId, searchPhone) {
   const domainConfig = config[domain] || config.TAG;
-  const url = `${domainConfig.baseUrl}/UpdateCase/UpdateCase`;
+  const { baseUrl, apiKey, secret } = domainConfig;
+  const url = `${baseUrl}/UpdateCase/UpdateCase`;
   const payload = {
-    CaseID: parseInt(caseId, 10),
-    StatusID: statusId,
+    SearchPhone: searchPhone,
+    StatusID: parseInt(statusId),
   };
   const headers = {
     "Content-Type": "application/json",
-    apikey: domainConfig.apiKey,
   };
 
-  const resp = await axios.post(url, payload, { headers });
+  const resp = await axios.post(url, payload, {
+    headers,
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
+  });
+  console.log(resp.data);
   return resp.data;
 }
 async function uploadCaseDocument({
@@ -58,17 +69,21 @@ async function uploadCaseDocument({
 }) {
   const formData = new FormData();
   formData.append("file", fileBuffer, { filename, contentType });
-
+  const domainConfig = config[domain] || config.TAG;
+  const { baseUrl, apiKey, secret } = domainConfig;
   const url =
-    `https://taxag.irslogics.com/publicapi/2020-02-22/documents/casedocument` +
-    `?apikey=${process.env.LOGICS_API_KEY}` +
-    `&CaseID=${caseNumber}` +
+    `${baseUrl}/Documents/CaseDocument` +
+    `?CaseID=${caseNumber}` +
     `&Comment=${encodeURIComponent(comment)}` +
     `&FileCategoryID=${fileCategoryID}`;
 
   const resp = await axios.post(url, formData, {
     headers: {
       ...formData.getHeaders(),
+    },
+    auth: {
+      username: apiKey,
+      password: secret,
     },
   });
   return resp.data;
@@ -100,18 +115,26 @@ async function fetchActivities(domain, caseNumber) {
 
 /** Fetch raw invoice array for a case */
 async function fetchInvoices(domain, caseID) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
-  const resp = await axios.get(`${baseUrl}/billing/caseinvoice`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseID) },
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
+  const resp = await axios.get(`${baseUrl}/Billing/CaseInvoice`, {
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
+    params: { CaseID: parseInt(caseID) },
   });
   console.log(resp.data, "invoiceData");
-  return JSON.parse(resp.data.data || "[]");
+  return resp.data.Data;
 }
 
 async function fetchTasks(domain, caseID) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
   const resp = await axios.get(`${baseUrl}/task/task`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseID) },
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
+    params: { CaseID: parseInt(caseID) },
   });
   console.log(resp.data, "taskData");
   return JSON.parse(resp.data.data || "[]");
@@ -119,42 +142,34 @@ async function fetchTasks(domain, caseID) {
 
 /** Fetch raw payment array for a case */
 async function fetchPayments(domain, caseNumber) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
   const resp = await axios.get(`${baseUrl}/billing/casepayment`, {
-    params: { apikey: apiKey, CaseID: parseInt(caseNumber) },
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
+    params: { CaseID: parseInt(caseNumber) },
   });
   return JSON.parse(resp.data.data || "[]");
 }
 
 async function fetchBillingSummary(domain, caseNumber) {
-  const configMap = {
-    TAG: {
-      baseUrl: process.env.TAG_LOGICS_API_URL,
-      apiKey: process.env.LOGICS_API_KEY,
-    },
-    WYNN: {
-      baseUrl: process.env.WYNN_LOGICS_API_URL,
-      apiKey: process.env.WYNN_LOGICS_API_KEY,
-    },
-    AMITY: {
-      baseUrl: process.env.AMITY_LOGICS_API_URL,
-      apiKey: process.env.AMITY_LOGICS_API_KEY,
-    },
-  };
-
-  const config = configMap[domain] || configMap.TAG;
-  const endpoint = "billing/casebillingsummary";
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
+  const endpoint = "Billing/CaseBillingSummary";
 
   try {
-    const response = await axios.get(`${config.baseUrl}${endpoint}`, {
+    const response = await axios.get(`${baseUrl}${endpoint}`, {
+      auth: {
+        username: apiKey,
+        password: secret,
+      },
       params: {
-        apikey: config.apiKey,
         CaseID: parseInt(caseNumber),
       },
     });
 
-    const summary = response.data.data;
-    console.log(summary);
+    const summary = response.data.Data;
+
     return summary;
   } catch (error) {
     console.error(
@@ -165,7 +180,7 @@ async function fetchBillingSummary(domain, caseNumber) {
 }
 
 async function createZeroInvoice(domain, caseNumber) {
-  const { baseUrl, apiKey } = config[domain] || config.TAG;
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
   const payload = {
     caseID: parseInt(caseNumber),
     invoiceTypeID: 7,
@@ -176,9 +191,13 @@ async function createZeroInvoice(domain, caseNumber) {
     description: "NO A.S.",
     TagID: 3,
   };
-  const url = `${baseUrl}/Billing/caseinvoice?apikey=${apiKey}`;
+  const url = `${baseUrl}/Billing/caseinvoice`;
   const resp = await axios.post(url, payload, {
     headers: { "Content-Type": "application/json" },
+    auth: {
+      username: apiKey,
+      password: secret,
+    },
   });
   return resp.data;
 }
@@ -189,35 +208,31 @@ async function createActivityLoop(domain, caseId, comment) {
   // 2️⃣ Look for PB CALL LOG activity
   const existing = activities.find((act) => act.Subject === "PB CALL LOG");
   const url = `${config[domain].baseUrl}/CaseActivity/Activity`;
+
+  const { apiKey, secret } = config[domain];
   const headers = {
     "Content-Type": "application/json",
-    apikey: config[domain].apiKey,
   };
 
-  if (existing && existing.ActivityID) {
-    // 3a️⃣ Update existing activity
-    await axios.post(
-      url,
-      {
-        ActivityID: existing.ActivityID,
-        CaseID: parseInt(caseId, 10),
-        Comment: comment,
-      },
-      { headers }
-    );
-  } else {
+  if (!existing && !existing.ActivityID) {
     // 3b️⃣ Create new activity
     await axios.post(
       url,
       {
         CaseID: parseInt(caseId, 10),
-        ActivityType: "Note", // adjust as needed
+        ActivityType: "General", // adjust as needed
         Subject: "PB CALL LOG",
         Comment: comment,
         Popup: false,
-        Pin: false,
+        Pin: true,
       },
-      { headers }
+      {
+        headers,
+        auth: {
+          username: apiKey,
+          password: secret,
+        },
+      }
     );
   }
 

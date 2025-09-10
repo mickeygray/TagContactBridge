@@ -10,7 +10,7 @@ const LogicsFileReader = () => {
   const [error, setError] = useState("");
   const [domain, setDomain] = useState("TAG");
   const [mode, setMode] = useState("bulkUpload"); // bulkUpload | zeroInvoice | prospectDialer | advanceScrape
-
+  const [liens, setLiens] = useState({ personalLiens: [], businessLiens: [] });
   // Context actions
   const {
     addCreateDateClients,
@@ -22,6 +22,7 @@ const LogicsFileReader = () => {
   const { startLoading, stopLoading, showMessage, showError } =
     useContext(MessageContext);
 
+  console.log(prospectDialerList);
   // 1. Bulk Upload CSV Handler
   const handleBulkUploadCsv = (file) => {
     setError("");
@@ -147,201 +148,193 @@ const LogicsFileReader = () => {
       });
   };
   const parseRawLeadData = (rawData) => {
-    console.log("parseRawLeadData input:", rawData);
+    // 1) Parse every entry (including “Lien Release”) into a common shape
+    const parsed = rawData
+      .map((entry) => {
+        try {
+          // ——— Regexes & helpers ———
+          const nameRegex = /^(.*?),\s*(.*?)\nLexID\(sm\):\n(\d+)/;
+          const filingRegex =
+            /Filing Date:(\d{1,2}\/\d{1,2}\/\d{4}).*?Amount:\$(\d{1,3}(?:,\d{3})*|\d+)/s;
+          const filingNumberRegex = /Filing Number:([\w\d]+)/;
+          const certificateNumberRegex = /Certificate Number:(\w+)/;
+          const filingOfficeRegex = /Filing Office:(.*)$/m;
+          const toSentenceCase = (str) =>
+            str
+              ? str
+                  .toLowerCase()
+                  .split(" ")
+                  .map((w) => w[0].toUpperCase() + w.slice(1))
+                  .join(" ")
+              : "";
 
-    const uniqueAddresses = new Set();
+          // ——— Extract Name & LexID ———
+          const debtorRaw = entry["Debtor"] || "";
+          const nameMatch = debtorRaw.match(nameRegex);
+          const fullName = nameMatch
+            ? toSentenceCase(`${nameMatch[2]} ${nameMatch[1]}`)
+            : null;
+          const lexID = nameMatch ? nameMatch[3] : null;
 
-    // Step 1: Filter out entries with no LexID in "Debtor"
-    const filtered = rawData.filter((entry) => {
-      const nameRegex = /^(.*?),\s*(.*?)\nLexID\(sm\):\n(\d+)/;
-      const result = nameRegex.test(entry["Debtor"]);
-      if (!result) {
-        console.log("Filtered out (no LexID match):", entry);
-      }
-      return result;
-    });
+          // For business (no lexID), grab the first line of Debtor
+          const businessName =
+            !lexID && debtorRaw
+              ? toSentenceCase(debtorRaw.split("\n")[0])
+              : null;
 
-    console.log("After LexID filter:", filtered);
+          // ——— Extract Filing Date & Amount ———
+          const filingMatch = (entry["Filing"] || "").match(filingRegex);
+          const filingDate = filingMatch ? filingMatch[1] : null;
+          const rawAmount = filingMatch
+            ? parseInt(filingMatch[2].replace(/,/g, ""), 10)
+            : null;
 
-    // Step 2: Map and parse all fields
-    const mapped = filtered.map((entry) => {
-      try {
-        const nameRegex = /^(.*?),\s*(.*?)\nLexID\(sm\):\n(\d+)/;
-        const filingRegex =
-          /Filing Date:(\d{1,2}\/\d{1,2}\/\d{4}).*?Amount:\$(\d{1,3}(?:,\d{3})*|\d+)/s;
-        const certificateNumberRegex = /Certificate Number:(\w+)/;
-        const filingNumberRegex = /Filing Number:([\w\d]+)/;
-        const filingOfficeRegex = /Filing Office:(.*)$/m;
+          // ——— Filing Number ———
+          const filingNumberMatch = (entry["Filing"] || "").match(
+            filingNumberRegex
+          );
+          const filingNumber = filingNumberMatch ? filingNumberMatch[1] : "N/A";
 
-        const toSentenceCase = (str) => {
-          return str
-            ? str
-                .toLowerCase()
-                .split(" ")
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                .join(" ")
-            : "";
-        };
+          // ——— Certificate & Office ———
+          const certMatch = (entry["Filing"] || "").match(
+            certificateNumberRegex
+          );
+          const certNum = certMatch ? certMatch[1] : null;
+          const officeMatch = (entry["Filing"] || "").match(filingOfficeRegex);
+          const filingOffice = officeMatch ? officeMatch[1].trim() : null;
 
-        // Extract Name and LexID
-        const nameMatch = entry["Debtor"].match(nameRegex);
-        const fullName = nameMatch
-          ? toSentenceCase(`${nameMatch[2]} ${nameMatch[1]}`)
-          : null;
-        const lexID = nameMatch ? nameMatch[3] : null;
+          // ——— Address, City, State, Zip, County ———
+          const addressLines = (entry["Address"] || "").split("\n");
+          const address = toSentenceCase(addressLines[0] || "");
+          const cityStateZip = addressLines[1] || "";
+          const cityStateZipParts = cityStateZip.match(
+            /(.+),\s([A-Z]{2})\s(\d{5})/
+          );
+          const city = cityStateZipParts
+            ? toSentenceCase(cityStateZipParts[1])
+            : null;
+          const state = cityStateZipParts ? cityStateZipParts[2] : null;
+          const zip = cityStateZipParts ? cityStateZipParts[3] : null;
+          const county = toSentenceCase(
+            (addressLines[2] || "").replace("COUNTY", "").trim()
+          );
 
-        // Extract Filing Details
-        const filingMatch = entry["Filing"]?.match(filingRegex);
-        const filingDate = filingMatch ? filingMatch[1] : null;
-        const amount = filingMatch
-          ? parseInt(filingMatch[2].replace(/,/g, ""), 10)
-          : null;
+          // ——— Determine Lien Type (including Releases) ———
+          const filingText = entry["Filing"] || "";
+          const isRelease = /LIEN RELEASE|RELEASE OF LIEN/i.test(filingText);
+          const isStateTaxLien = /STATE TAX LIEN|STATE TAX WARRANT/.test(
+            filingText
+          );
+          const isFederalTaxLien = filingText.includes("FEDERAL TAX LIEN");
+          const lienType = isRelease
+            ? "Lien Release"
+            : isStateTaxLien
+            ? "State Tax Lien"
+            : isFederalTaxLien
+            ? "Federal Tax Lien"
+            : "Unknown";
 
-        // Extract Filing Number
-        const filingNumberMatch = entry["Filing"]?.match(filingNumberRegex);
-        const filingNumber = filingNumberMatch ? filingNumberMatch[1] : "N/A";
+          // ——— Authority & Plaintiff ———
+          const authority = isRelease
+            ? "Release Authority"
+            : isStateTaxLien
+            ? "State Taxing Authority"
+            : isFederalTaxLien
+            ? "Federal Taxing Authority"
+            : "Unknown";
+          const plaintiff = toSentenceCase(entry["Creditor"] || "");
 
-        // Extract Certificate Number (Federal Liens Only)
-        const certificateNumberMatch = entry["Filing"]?.match(
-          certificateNumberRegex
-        );
-        const certificateNumber = certificateNumberMatch
-          ? certificateNumberMatch[1]
-          : null;
+          // ——— Settlement & Savings (only for personal) ———
+          const settlementRaw = rawAmount * 0.05;
+          const savingsRaw = rawAmount - settlementRaw;
+          const fmt = (v) =>
+            new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: "USD",
+            }).format(v || 0);
 
-        // Extract Filing Office (Federal Liens Only)
-        const filingOfficeMatch = entry["Filing"]?.match(filingOfficeRegex);
-        const filingOffice = filingOfficeMatch
-          ? filingOfficeMatch[1].trim()
-          : null;
+          // ——— Notice & Response Dates ———
+          const today = new Date();
+          const tomorrow = new Date(today);
+          tomorrow.setDate(today.getDate() + 1);
+          const nextWeek = new Date(tomorrow);
+          nextWeek.setDate(tomorrow.getDate() + 7);
+          const fmtDate = (d) =>
+            `${(d.getMonth() + 1).toString().padStart(2, "0")}/${d
+              .getDate()
+              .toString()
+              .padStart(2, "0")}/${d.getFullYear()}`;
 
-        // Extract Address Details
-        const addressLines = entry["Address"]?.split("\n") || [];
-        const address = addressLines[0]
-          ? toSentenceCase(addressLines[0].trim())
-          : "";
-        const cityStateZip = addressLines[1] || "";
-        const county = addressLines[2]
-          ? toSentenceCase(addressLines[2].replace("COUNTY", "").trim())
-          : "";
+          return {
+            fullName,
+            businessName,
+            lexID,
+            address,
+            city,
+            state,
+            zip,
+            county,
+            filingDate,
+            rawAmount,
+            amount: fmt(rawAmount),
+            filingNumber,
+            certificateNumber: isFederalTaxLien ? certNum : null,
+            filingOffice: isFederalTaxLien ? filingOffice : null,
+            lienType,
+            authority,
+            plaintiff,
+            settlementAmount: !isRelease && lexID ? fmt(settlementRaw) : null,
+            savings: !isRelease && lexID ? fmt(savingsRaw) : null,
+            noticeDate: fmtDate(tomorrow),
+            responseDate: fmtDate(nextWeek),
+          };
+        } catch (err) {
+          console.error("Error parsing entry:", err, entry);
+          return null;
+        }
+      })
+      // Keep only known liens & releases
+      .filter((e) => e && e.lienType !== "Unknown");
 
-        const cityStateZipParts = cityStateZip.match(
-          /(.+),\s([A-Z]{2})\s(\d{5})/
-        );
-        const city = cityStateZipParts
-          ? toSentenceCase(cityStateZipParts[1])
-          : null;
-        const state = cityStateZipParts ? cityStateZipParts[2] : null;
-        const zip = cityStateZipParts ? cityStateZipParts[3] : null;
-
-        // Determine Lien Type
-        const isStateTaxLien = entry["Filing"]?.match(
-          /STATE TAX LIEN|STATE TAX WARRANT/
-        );
-        const isFederalTaxLien = entry["Filing"]?.includes("FEDERAL TAX LIEN");
-        const lienType = isStateTaxLien
-          ? "State Tax Lien"
-          : isFederalTaxLien
-          ? "Federal Tax Lien"
-          : "Unknown";
-
-        // Determine Authority Field
-        const authority = isStateTaxLien
-          ? "State Taxing Authority"
-          : isFederalTaxLien
-          ? "Federal Taxing Authority"
-          : "Unknown";
-
-        // Extract Plaintiff
-        const plaintiff = entry["Creditor"]
-          ? toSentenceCase(entry["Creditor"])
-          : null;
-
-        // Calculate Settlement and Savings
-        const settlementAmount = amount ? amount * 0.05 : 0;
-        const savings = amount ? amount - settlementAmount : 0;
-
-        // Generate Notice and Response Dates
-        const today = new Date();
-        const tomorrow = new Date(today);
-        tomorrow.setDate(today.getDate() + 1);
-        const noticeDate = `${(tomorrow.getMonth() + 1)
-          .toString()
-          .padStart(2, "0")}/${tomorrow
-          .getDate()
-          .toString()
-          .padStart(2, "0")}/${tomorrow.getFullYear()}`;
-        const nextWeek = new Date(tomorrow);
-        nextWeek.setDate(tomorrow.getDate() + 7);
-        const responseDate = `${(nextWeek.getMonth() + 1)
-          .toString()
-          .padStart(2, "0")}/${nextWeek
-          .getDate()
-          .toString()
-          .padStart(2, "0")}/${nextWeek.getFullYear()}`;
-
-        const formatCurrency = (value) => {
-          if (value == null || isNaN(value)) return "$0.00";
-          return new Intl.NumberFormat("en-US", {
-            style: "currency",
-            currency: "USD",
-          }).format(value);
-        };
-
-        const formattedAmount = formatCurrency(amount);
-        const formattedSettlementAmount = formatCurrency(settlementAmount);
-        const formattedSavings = formatCurrency(savings);
-
-        const parsedObj = {
-          fullName,
-          lexID,
-          address,
-          city,
-          state,
-          zip,
-          county,
-          filingDate,
-          amount: formattedAmount,
-          lienType,
-          plaintiff,
-          filingNumber,
-          authority,
-          certificateNumber: isFederalTaxLien ? certificateNumber : null,
-          filingOffice: isFederalTaxLien ? filingOffice : null,
-          settlementAmount: formattedSettlementAmount,
-          savings: formattedSavings,
-          noticeDate,
-          responseDate,
-        };
-        console.log("Parsed object:", parsedObj);
-        return parsedObj;
-      } catch (error) {
-        console.error("Error parsing entry:", entry, error);
-        return null;
-      }
-    });
-
-    console.log("After map (parsed rows):", mapped);
-
-    // Step 3: Filter out nulls and 'Unknown' liens
-    const filteredParsed = mapped.filter(
-      (entry) => entry !== null && entry.lienType !== "Unknown"
+    // 2) Build suppression set from all “Lien Release” entries
+    const releaseKeySet = new Set(
+      parsed
+        .filter((e) => e.lienType === "Lien Release")
+        .map((e) => `${e.address}|${e.rawAmount}`)
     );
-    console.log("After filter out null/unknown:", filteredParsed);
 
-    // Step 4: Deduplicate by address
-    const deduped = filteredParsed.filter((entry) => {
-      if (uniqueAddresses.has(entry.address)) {
-        console.log("Duplicate address filtered out:", entry.address);
-        return false;
-      } else {
-        uniqueAddresses.add(entry.address);
-        return true;
+    // 3) Collect personal liens (lexID present), skipping releases & suppressions
+    const personalAddresses = new Set();
+    const personalLiens = [];
+    for (const e of parsed) {
+      if (e.lexID && e.lienType !== "Lien Release") {
+        const key = `${e.address}|${e.rawAmount}`;
+        if (!releaseKeySet.has(key) && !personalAddresses.has(e.address)) {
+          personalAddresses.add(e.address);
+          personalLiens.push(e);
+        }
       }
-    });
+    }
 
-    console.log("After deduplication:", deduped);
-    return deduped;
+    // 4) Collect business liens (no lexID), skipping releases, suppressions, and personal overlaps
+    const businessAddresses = new Set();
+    const businessLiens = [];
+    for (const e of parsed) {
+      if (!e.lexID && e.lienType !== "Lien Release") {
+        const key = `${e.address}|${e.rawAmount}`;
+        if (
+          !releaseKeySet.has(key) &&
+          !personalAddresses.has(e.address) &&
+          !businessAddresses.has(e.address)
+        ) {
+          businessAddresses.add(e.address);
+          businessLiens.push(e);
+        }
+      }
+    }
+
+    // Final return: two clean lists
+    return { personalLiens, businessLiens };
   };
 
   // 4. Advance Scrape XLSX Handler (multiple files)
@@ -351,7 +344,6 @@ const LogicsFileReader = () => {
     if (files.length === 0) return;
 
     let allRows = [];
-    let isFirstFile = true;
 
     const processXlsx = (file, isFirst) =>
       new Promise((resolve, reject) => {
@@ -398,7 +390,6 @@ const LogicsFileReader = () => {
           }
 
           const filteredRows = rawJsonData.slice(startIndex + 1);
-
           console.log(`[${file.name}] Data rows (after header):`, filteredRows);
 
           // Convert to objects
@@ -414,6 +405,7 @@ const LogicsFileReader = () => {
         reader.readAsArrayBuffer(file);
       });
 
+    // Process all files, then parse and set liens
     Promise.all(files.map((file, i) => processXlsx(file, i === 0)))
       .then((arrays) => {
         arrays.forEach((arr, idx) => {
@@ -422,12 +414,12 @@ const LogicsFileReader = () => {
         });
         console.log("All merged rows before parsing:", allRows);
 
-        // Pipe to your parser
+        // Pipe to your parser (which now returns { personalLiens, businessLiens })
         const formatted = parseRawLeadData(allRows);
-
         console.log("Formatted rows after parseRawLeadData:", formatted);
 
-        setClients(formatted);
+        // Store into liens state instead of clients
+        setLiens(formatted);
         setError("");
       })
       .catch((err) => {
@@ -457,11 +449,11 @@ const LogicsFileReader = () => {
   };
 
   // Export XLSX (for advanceScrape)
-  const exportToXLSX = () => {
-    const ws = XLSX.utils.json_to_sheet(clients);
+  const exportToXLSX = (data, sheetName, fileName) => {
+    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data");
-    XLSX.writeFile(wb, "AdvanceScrape.xlsx", { bookType: "xlsx" });
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, fileName, { bookType: "xlsx" });
   };
 
   // run the selected tool (no action for advanceScrape)
@@ -499,7 +491,7 @@ const LogicsFileReader = () => {
       stopLoading();
     }
   };
-
+  console.log(zeroInvoiceList);
   return (
     <div className="card">
       <h3>📂 Bulk Lead Upload</h3>
@@ -539,25 +531,36 @@ const LogicsFileReader = () => {
         className="mb-2"
       />
 
-      {mode === "advanceScrape" ? (
-        <button
-          onClick={exportToXLSX}
-          className="btn btn-primary"
-          disabled={clients.length === 0}
-        >
-          Download Advance Scrape XLSX
-        </button>
-      ) : (
-        <button onClick={exportToCSV} className="btn btn-primary">
-          Download{" "}
-          {mode === "bulkUpload"
-            ? "Mapped CSV"
-            : mode === "zeroInvoice"
-            ? "Zero Invoices CSV"
-            : mode === "prospectDialer"
-            ? "Dialer CSV"
-            : null}
-        </button>
+      {mode === "advanceScrape" && (
+        <div className="advance-scrape-buttons">
+          <button
+            onClick={() =>
+              exportToXLSX(
+                liens.personalLiens,
+                "Personal Liens",
+                "Advance_Personal_Liens.xlsx"
+              )
+            }
+            className="btn btn-primary ml-2"
+            disabled={liens.personalLiens.length === 0}
+          >
+            Download Personal Liens
+          </button>
+
+          <button
+            onClick={() =>
+              exportToXLSX(
+                liens.businessLiens,
+                "Business Liens",
+                "Advance_Business_Liens.xlsx"
+              )
+            }
+            className="btn btn-primary ml-2"
+            disabled={liens.businessLiens.length === 0}
+          >
+            Download Business Liens
+          </button>
+        </div>
       )}
 
       {/* Action button, not shown for advanceScrape */}
@@ -572,14 +575,22 @@ const LogicsFileReader = () => {
             : null}
         </button>
       )}
-
+      {mode === "prospectDialer" && prospectDialerList.length > 0 && (
+        <button onClick={exportToCSV} className="btn btn-primary ml-2">
+          Download Prospect List
+        </button>
+      )}
       {mode === "prospectDialer" && (
         <p className="mb-2 text-sm text-gray-700">
           {clients.length} valid {clients.length === 1 ? "number" : "numbers"}{" "}
           loaded
         </p>
       )}
-
+      {mode === "zeroInvoice" && zeroInvoiceList.length > 0 && (
+        <button onClick={exportToCSV} className="btn btn-primary ml-2">
+          Download Prospect List
+        </button>
+      )}
       {mode === "bulkUpload" && <NewCreateClientAnalysisList />}
     </div>
   );

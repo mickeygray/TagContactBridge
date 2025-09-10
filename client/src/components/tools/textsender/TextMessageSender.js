@@ -45,6 +45,16 @@ const predefinedMessages = [
     text: "Hi {name}. This is Cameron from the tax attorney's office. We recently received documents for your case and need to discuss them. Can you call 818-937-0439 so we can review them. ",
     trackingNumber: "818-937-0439",
   },
+  {
+    name: "Semi Annual Review",
+    text: "{name}, this is your Tax Attorney's office. In conjunction with the fiscal year, we are reviewing all active clients and updating financials. Business owners be advised that part of this process will also include P and L review and preparing quarterly payments. Please give us a call when you have a moment. ",
+    trackingNumber: "818-937-0439",
+  },
+  {
+    name: "Extension Text",
+    text: "{name}, The 2024 filing extension deadline is fast approaching.  Filing late can lead to the IRS revoking your protected status or increasing their collection actions. Contact us at 818-722-9677 to stay on track. ",
+    trackingNumber: "818-722-9677",
+  },
 ];
 
 const TextMessageSender = () => {

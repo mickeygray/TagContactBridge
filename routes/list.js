@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Client = require("../models/Client");
+const cron = require("node-cron");
 const {
   authMiddleware,
   requireAdmin,
@@ -24,7 +25,19 @@ router.use(authMiddleware, requireAdmin);
 
 // Bulk import leads into both TAG & WYNN
 // POST /api/list/postNCOA
-
+cron.schedule(
+  "0 2-7 * * 1-5", // minute hour day-of-month month day-of-week
+  () => {
+    console.log("⏰ Running downloadAndEmailDaily via cron…");
+    downloadAndEmailDaily().catch((err) => {
+      console.error("❌ downloadAndEmailDaily failed:", err);
+    });
+  },
+  {
+    scheduled: true,
+    timezone: "America/Los_Angeles", // adjust to your office timezone
+  }
+);
 router.post("/download-and-email-daily", downloadAndEmailDaily);
 router.post("/postNCOA", postNCOA);
 router.post("/search", unifiedClientSearch);

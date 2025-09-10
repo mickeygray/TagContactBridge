@@ -50,28 +50,34 @@ function collectFiles(dir) {
  * POST /api/list/postNCOA
  */
 async function postNCOA(req, res, next) {
-  try {
-    const leads = req.body;
-    console.log("Received", req.body.length, "leads");
-    if (!Array.isArray(leads) || leads.length === 0) {
-      return res.status(400).json({ message: "No leads provided." });
-    }
+  const leads = req.body;
+  const BATCH_SIZE = 100;
+  const results = [];
 
-    // Send to both TAG and WYNN
-    const results = await Promise.all(
-      leads.map(async (lead) => {
-        // TAG
-        const tagResult = await logicsService.postCaseFile("TAG", lead);
-        // WYNN
-        //const wynnResult = await logicsService.postCaseFile("WYNN", lead);
-        return { lead, tagResult };
+  // slice into batches of 100
+  for (let i = 0; i < leads.length; i += BATCH_SIZE) {
+    const batch = leads.slice(i, i + BATCH_SIZE);
+
+    // fire this batch in parallel
+    const batchResults = await Promise.all(
+      batch.map(async (lead) => {
+        try {
+          return {
+            lead,
+            tagResult: await logicsService.postCaseFile("TAG", lead),
+          };
+        } catch (err) {
+          return { lead, error: err.response?.data || err.message };
+        }
       })
     );
 
-    res.json({ message: "Leads posted to TAG & WYNN", results });
-  } catch (err) {
-    next(err);
+    results.push(...batchResults);
+    // optional: small delay to avoid hammering them
+    await new Promise((r) => setTimeout(r, 200));
   }
+
+  res.json({ message: "Leads posted to TAG", results });
 }
 
 /**
@@ -260,7 +266,7 @@ async function parseZeroInvoices(req, res, next) {
     }
 
     const zeroInvoices = [];
-
+    console.log(rawClients);
     for (const client of rawClients) {
       let invoices;
       try {
@@ -274,10 +280,11 @@ async function parseZeroInvoices(req, res, next) {
         );
         continue; // skip this client on fetch error
       }
-
+      console.log(invoices);
       if (!Array.isArray(invoices)) continue;
       const officerMap = settlementOfficers[client.domain] || {};
       for (const inv of invoices) {
+        console.log(inv);
         const amount = inv.UnitPrice ?? inv.Amount ?? 0;
         if (amount === 0) {
           const id = parseInt(inv.CreatedBy);
@@ -378,6 +385,54 @@ function dedupeByRules(rows) {
 }
 
 async function downloadAndEmailDaily(req, res, next) {
+  // --- simple once-per-day guard using a tiny flag file ---
+  const fs = require("fs");
+  const path = require("path");
+  const TIMEZONE = "America/Los_Angeles";
+  const RUNTIME_DIR = path.join(process.cwd(), "runtime");
+  const FLAG_FILE = path.join(RUNTIME_DIR, "daily-drop.flag"); // stores YYYY-MM-DD
+
+  function todayInLA() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date()); // YYYY-MM-DD
+  }
+  function readFlag() {
+    try {
+      return fs.readFileSync(FLAG_FILE, "utf8").trim();
+    } catch {
+      return null;
+    }
+  }
+  function writeFlag(dateStr) {
+    if (!fs.existsSync(RUNTIME_DIR))
+      fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+    fs.writeFileSync(FLAG_FILE, `${dateStr}\n`, "utf8");
+  }
+
+  // prevent overlapping runs in the same process
+  if (downloadAndEmailDaily._inFlight) {
+    if (res)
+      return res.json({ success: true, skipped: true, reason: "in-flight" });
+    return;
+  }
+
+  const today = todayInLA();
+  if (readFlag() === today) {
+    if (res)
+      return res.json({
+        success: true,
+        skipped: true,
+        reason: "already-ran-today",
+      });
+    return;
+  }
+
+  downloadAndEmailDaily._inFlight = true;
+
   try {
     // ─── 1) Prepare a clean directory ────────────────────────────────
     if (fs.existsSync(DAILY_DIR)) {
@@ -394,7 +449,7 @@ async function downloadAndEmailDaily(req, res, next) {
     // ─── 3) Unzip in place ──────────────────────────────────────────
     await unzipPassworded(finalZip, DAILY_DIR, process.env.SFTP_ZIP_PASSWORD);
 
-    // ─── 4) Collect all non‑.zip files as attachments ───────────────
+    // ─── 4) Collect all non-.zip files as attachments ───────────────
     const attachments = fs
       .readdirSync(DAILY_DIR)
       .filter((f) => !f.toLowerCase().endsWith(".zip"))
@@ -433,8 +488,9 @@ async function downloadAndEmailDaily(req, res, next) {
       federalCount = allRows.filter((r) =>
         /Federal Tax/i.test(r.FILE_TYPE || "")
       ).length;
+
       /*
-      // 5b) filter‑out rule: PLAINTIFF “State of …” or STATE “OR”
+      // 5b) filter-out rule: PLAINTIFF “State of …” or STATE “OR”
       const STATES = ["Oregon", "Texas", "Florida", "Tennessee", "Washington"];
       const STATE_OF_RE = new RegExp(`^State of (?:${STATES.join("|")})`, "i");
       const filtered = allRows.filter(
@@ -448,12 +504,12 @@ async function downloadAndEmailDaily(req, res, next) {
       const dropped = filtered.filter((r) => !survivors.includes(r));
 
       // 5e) write out your two CSVs, swapping roles
-      const today = new Date().toISOString().split("T")[0]; // YYYY‑MM‑DD
+      const todayIso = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
       const mailingPath = path.join(
         DAILY_DIR,
-        `DirectMail${today}mailinglist.csv`
+        `DirectMail${todayIso}mailinglist.csv`
       );
-      const dedupsPath = path.join(DAILY_DIR, `DirectMail${today}dedups.csv`);
+      const dedupsPath = path.join(DAILY_DIR, `DirectMail${todayIso}dedups.csv`);
 
       // survivors → mailinglist
       fs.writeFileSync(mailingPath, Papa.unparse(survivors), "utf8");
@@ -477,18 +533,38 @@ async function downloadAndEmailDaily(req, res, next) {
       attachments,
     });
 
+    await sendEmail({
+      to: [
+        "manderson@taxadvocategroup.com",
+        "jpineda@taxadvocategroup.com",
+        "mgray@taxadvocategroup.com",
+      ],
+      from: process.env.ADMIN_EMAIL,
+      subject: `Daily Drop - ${new Date()}`,
+      html: `<p>Total Liens: ${totalCount}, State Liens:${stateCount}, Federal Liens:${federalCount}</p>`,
+    });
+
     // ─── 7) Cleanup ────────────────────────────────────────────────
     fs.rmSync(DAILY_DIR, { recursive: true, force: true });
 
+    // mark success for today so subsequent calls skip
+    writeFlag(today);
+
     // ─── 8) Return your record counts ──────────────────────────────
-    res.json({
-      success: true,
-      recordCount: { totalCount, stateCount, federalCount },
-    });
+    if (res) {
+      return res.json({
+        success: true,
+        recordCount: { totalCount, stateCount, federalCount },
+      });
+    }
   } catch (err) {
-    next(err);
+    if (next) return next(err);
+    throw err;
+  } finally {
+    downloadAndEmailDaily._inFlight = false;
   }
 }
+downloadAndEmailDaily._inFlight = false;
 
 async function buildDialerList(req, res, next) {
   try {

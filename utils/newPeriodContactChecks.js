@@ -171,7 +171,7 @@ async function flagAndUpdateDelinquent(client, maxTotalPayments = null) {
 
     return client;
   }
-
+  console.log(summary);
   const pastDue = summary.PastDue ?? 0;
   const paidAmount = summary.PaidAmount ?? 0;
 

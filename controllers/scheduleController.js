@@ -246,7 +246,7 @@ async function buildDailySchedule(req, res) {
 
     // 4️⃣ Classify verified into period and sale
     const saleIds = new Set(mappedSaleClients.map((c) => c._id.toString()));
-
+    console.log(saleIds);
     const verifiedPeriod =
       rawPeriodClients.length > 0
         ? verified
