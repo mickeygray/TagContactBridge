@@ -9,10 +9,12 @@ const config = {
   WYNN: {
     baseUrl: process.env.WYNN_LOGICS_API_URL, // e.g. "https://wynntax.logiqs.com/publicapi/2020-02-22"
     apiKey: process.env.WYNN_LOGICS_API_KEY,
+    secret: process.env.WYNN_LOGICS_SECRET,
   },
   AMITY: {
     baseUrl: process.env.AMITY_LOGICS_API_URL, // if/when you need Amity file imports
     apiKey: process.env.AMITY_LOGICS_API_KEY,
+    secret: process.env.AMITY_LOGICS_SECRET,
   },
 };
 
@@ -91,6 +93,7 @@ async function uploadCaseDocument({
 
 /** Fetch raw activity array for a case */
 async function fetchActivities(domain, caseNumber) {
+  console.log(domain);
   const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
 
   // Build the full URL
@@ -239,12 +242,73 @@ async function createActivityLoop(domain, caseId, comment) {
   // 4️⃣ Return the comment for use in summaries
   return comment;
 }
+
+async function fetchCaseAccountContact(domain, caseId) {
+  const { baseUrl, apiKey, secret } = config[domain];
+  const url = `${baseUrl}/Billing/CaseAccount`;
+
+  // Some tenants accept CaseID as a header, others as a query param.
+  const tryHeader = () =>
+    axios.get(url, {
+      headers: {
+        // CaseID header per your sample
+        CaseID: String(caseId),
+        "Content-Type": "application/json",
+      },
+      auth: { username: apiKey, password: secret },
+      timeout: 20000,
+    });
+
+  const tryQuery = () =>
+    axios.get(`${url}?CaseID=${encodeURIComponent(caseId)}`, {
+      headers: { "Content-Type": "application/json" },
+      auth: { username: apiKey, password: secret },
+      timeout: 20000,
+    });
+
+  let resp;
+  try {
+    resp = await tryHeader();
+  } catch (e) {
+    // fallback to query param approach
+    resp = await tryQuery();
+  }
+
+  const payload = resp?.data || {};
+  if (payload.Success !== true) {
+    return {
+      caseId,
+      phone: "",
+      email: "",
+      error: payload?.message || "Lookup failed",
+    };
+  }
+
+  // Handle API returning stringified JSON in `data`
+  let records = payload.data;
+  if (typeof records === "string") {
+    try {
+      records = JSON.parse(records);
+    } catch {
+      records = [];
+    }
+  }
+  if (!Array.isArray(records)) records = [];
+
+  // Prefer PrimaryAccount, otherwise first record
+  const acct = records.find((r) => r.PrimaryAccount) || records[0] || {};
+  const phone = (acct.PhoneNo || "").trim();
+  const email = (acct.EmailID || "").trim();
+
+  return { caseId, phone, email };
+}
 module.exports = {
   uploadCaseDocument,
   createActivityLoop,
   updateCaseStatus,
   postCaseFile,
   createZeroInvoice,
+  fetchCaseAccountContact,
   fetchBillingSummary,
   fetchActivities,
   fetchInvoices,

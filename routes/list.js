@@ -14,6 +14,7 @@ const {
   buildDialerList,
   filterList,
   buildLienList,
+  appendContactInfoHandler,
   downloadAndEmailDaily,
   unifiedClientSearch,
 } = require("../controllers/listController");
@@ -50,7 +51,7 @@ router.post("/buildLienList", buildLienList);
 // Placeholder: build marketing schedule list
 // GET /api/list/buildSchedule
 router.post("/buildPeriod", buildSchedule);
-
+router.post("/appendContactInfo", appendContactInfoHandler);
 router.post("/validate", buildDialerList);
 
 router.post("/filterList", filterList);

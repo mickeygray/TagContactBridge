@@ -2,7 +2,7 @@ import React, { useState, useContext } from "react";
 import { csv } from "csvtojson";
 import EmailContext from "../../../context/email/emailContext";
 import ListContext from "../../../context/list/listContext";
-const emailTemplates = ["TCG-1", "TCG-2", "TCG-3", "TCG-4"];
+const emailTemplates = ["wynn-followup", "TaxOrganizer2026", "TCG-3", "TCG-4"];
 
 const originators = [
   { settlementOfficer: "Eva Gray", emailPrefix: "egray" },
@@ -108,14 +108,6 @@ export default function ManualEmailSender() {
   // === Send ===
   const handleSendEmails = async () => {
     // 1) basic validation
-    if (!subject || !selectedTemplate) {
-      setMessage("Please select template & subject.");
-      return;
-    }
-    if (!domain) {
-      setMessage("Please pick a domain gateway.");
-      return;
-    }
 
     // 2) pick your list
     const rawList = uploadedList;
@@ -272,13 +264,7 @@ export default function ManualEmailSender() {
           value={domain || ""}
           onChange={(e) => setDomain(e.target.value)}
         >
-          <option value="" disabled>
-            Select domain
-          </option>
-          <option value="TAG">TAG</option>
           <option value="WYNN">WYNN</option>
-          <option value="AMITY">AMITY</option>
-          <option value="TGC">TGC</option>
         </select>
       </div>
 

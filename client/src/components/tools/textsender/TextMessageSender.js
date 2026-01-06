@@ -31,8 +31,8 @@ const predefinedMessages = [
     trackingNumber: "310-945-2810",
   },
   {
-    name: "433a followup",
-    text: "Hi {name}. This is Cameron from your tax attorneys office. \n\n The Tax Filing deadline is today. We want to make sure you have submitted everything we need to file for you or take appropriate action to file an extension.\n\nIf you have not submitted anything, you need to call us today.If we have spoken to you already, please disregard this message. \n\nCall 818-926-4286, please do not respond via text. ",
+    name: "2026 Tax Filing 1",
+    text: "Hi {name}. This is your tax attorney's office. We are preparing to file 2025 for all active clients, and want to update your case so that we can submit all necessary paperwork in a timely manner. Call 818-926-4286 and a senior consultant will help you get ready to file taxes.",
     trackingNumber: "818-926-4286",
   },
   {
@@ -46,9 +46,9 @@ const predefinedMessages = [
     trackingNumber: "818-937-0439",
   },
   {
-    name: "Semi Annual Review",
-    text: "{name}, this is your Tax Attorney's office. In conjunction with the fiscal year, we are reviewing all active clients and updating financials. Business owners be advised that part of this process will also include P and L review and preparing quarterly payments. Please give us a call when you have a moment. ",
-    trackingNumber: "818-937-0439",
+    name: "Prepare Finance",
+    text: "Hey {name}, it’s Cameron from your tax attorney's office. We’re preparing a financial statement for your case and want to make sure all information is current and correct, call me at 818-722-9677 when you have a moment to discuss.",
+    trackingNumber: "818-722-9677",
   },
   {
     name: "Extension Text",

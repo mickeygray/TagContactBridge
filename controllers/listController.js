@@ -538,6 +538,8 @@ async function downloadAndEmailDaily(req, res, next) {
         "manderson@taxadvocategroup.com",
         "jpineda@taxadvocategroup.com",
         "mgray@taxadvocategroup.com",
+        "ballen@taxadvocategroup.com",
+        "abanks@taxadvocategroup.com",
       ],
       from: process.env.ADMIN_EMAIL,
       subject: `Daily Drop - ${new Date()}`,
@@ -565,6 +567,133 @@ async function downloadAndEmailDaily(req, res, next) {
   }
 }
 downloadAndEmailDaily._inFlight = false;
+// controllers/contactAppend.controller.js
+// Assumes you already have: const { fetchBatchCaseContacts } = require("../utils/logicsApi");
+
+// controllers/contactAppend.controller.js
+
+// controllers/contactAppend.controller.js
+
+async function appendContactInfoHandler(req, res) {
+  try {
+    console.log("[appendContactInfo] START");
+
+    const clients = Array.isArray(req.body?.clients) ? req.body.clients : [];
+    console.log("[appendContactInfo] incoming clients count:", clients.length);
+    if (clients.length) {
+      console.log("[appendContactInfo] first client sample:", clients[0]);
+    }
+
+    if (clients.length === 0) {
+      console.warn("[appendContactInfo] no clients provided");
+      return res.status(400).json({
+        success: false,
+        message: "Send { clients: [{ domain, caseNumber }, ...] }",
+      });
+    }
+
+    // Simple normalizers
+    const valid = ["TAG", "WYNN", "AMITY"];
+    const normDomain = (d) => {
+      const v = (d || "").toString().trim().toUpperCase();
+      return valid.includes(v) ? v : "";
+    };
+    const normId = (id) =>
+      id == null ? "" : String(id).replace(/[^\d]/g, "").trim();
+
+    // Group by domain (with naive de-dupe per domain)
+    const buckets = { TAG: [], WYNN: [], AMITY: [] };
+    for (const row of clients) {
+      const d = normDomain(row?.domain);
+      const id = normId(row?.caseNumber);
+      if (!d || !id) continue;
+      if (!buckets[d].includes(id)) buckets[d].push(id);
+    }
+
+    console.log("[appendContactInfo] grouped counts:", {
+      TAG: buckets.TAG.length,
+      WYNN: buckets.WYNN.length,
+      AMITY: buckets.AMITY.length,
+    });
+
+    // If everything was invalid, fail early
+    const totalToQuery =
+      buckets.TAG.length + buckets.WYNN.length + buckets.AMITY.length;
+    if (totalToQuery === 0) {
+      console.warn(
+        "[appendContactInfo] no valid rows after normalization (domain or caseNumber missing/invalid)"
+      );
+      return res.status(400).json({
+        success: false,
+        message:
+          "No valid rows after normalization (domain or caseNumber missing/invalid).",
+      });
+    }
+
+    // Call API per domain and collect results
+    const merged = [];
+    const perDomain = {};
+
+    for (const d of Object.keys(buckets)) {
+      const ids = buckets[d];
+      if (ids.length === 0) continue;
+
+      console.log(`[appendContactInfo] querying ${d} with ${ids.length} ids`);
+      // For debug, show the first few ids only
+      console.log(`[appendContactInfo] ${d} first 5 ids:`, ids.slice(0, 5));
+
+      perDomain[d] = { requested: ids.length, returned: 0 };
+
+      const timerLabel = `[appendContactInfo] ${d} fetch`;
+      console.time(timerLabel);
+      let results = [];
+      try {
+        // Your helper that accepts (domain, caseIdArray)
+        results = await logicsService.fetchCaseAccountContact(d, ids);
+      } catch (e) {
+        console.error(`[appendContactInfo] ${d} fetch error:`, e?.message || e);
+      }
+      console.timeEnd(timerLabel);
+
+      const shaped = (results || []).map((r) => ({
+        Domain: d,
+        CaseID: r.caseId,
+        PhoneNo: r.phone || "",
+        EmailID: r.email || "",
+        Error: r.error || "",
+      }));
+
+      perDomain[d].returned = shaped.length;
+      console.log(
+        `[appendContactInfo] ${d} returned ${shaped.length} rows (requested ${ids.length})`
+      );
+
+      merged.push(...shaped);
+    }
+
+    console.log("[appendContactInfo] TOTAL rows:", merged.length);
+    if (merged.length) {
+      console.log(
+        "[appendContactInfo] first 3 merged rows:",
+        merged.slice(0, 3)
+      );
+    }
+
+    console.log("[appendContactInfo] DONE");
+    return res.json({
+      success: true,
+      count: merged.length,
+      perDomain,
+      data: merged,
+    });
+  } catch (err) {
+    console.error("[appendContactInfo] ERROR:", err?.message || err);
+    const msg = err?.response?.data?.message || err.message || "Server error";
+    return res.status(500).json({ success: false, message: msg });
+  }
+}
+
+module.exports = { appendContactInfoHandler };
 
 async function buildDialerList(req, res, next) {
   try {
@@ -793,7 +922,59 @@ async function filterList(req, res, next) {
   }
 }
 // 7) build final list
+async function appendContactInfoHandler(req, res) {
+  try {
+    const { domain, caseIds } = req.body || {};
 
+    // Validate domain
+    if (!domain || !config[domain]) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or missing 'domain'.",
+      });
+    }
+
+    // Validate caseIds
+    if (!Array.isArray(caseIds) || caseIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Provide an array of 'caseIds'.",
+      });
+    }
+
+    // Sanitize de-dupe
+    const sanitizedIds = [
+      ...new Set(caseIds.map((c) => String(c).trim()).filter(Boolean)),
+    ];
+
+    if (sanitizedIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid CaseIDs after sanitization.",
+      });
+    }
+
+    // Fetch contacts (sequential inside helper for rate-limit safety)
+    const results = await fetchBatchCaseContacts(domain, sanitizedIds);
+
+    // Shape rows for CSV download on the frontend
+    const rows = results.map((r) => ({
+      CaseID: r.caseId,
+      PhoneNo: r.phone || "",
+      EmailID: r.email || "",
+      Error: r.error || "",
+    }));
+
+    return res.json({
+      success: true,
+      count: rows.length,
+      data: rows,
+    });
+  } catch (err) {
+    const msg = err?.response?.data?.message || err.message || "Server error";
+    return res.status(500).json({ success: false, message: msg });
+  }
+}
 module.exports = {
   postNCOA,
   parseZeroInvoices,
@@ -804,4 +985,5 @@ module.exports = {
   buildLienList,
   unifiedClientSearch,
   downloadAndEmailDaily,
+  appendContactInfoHandler,
 };

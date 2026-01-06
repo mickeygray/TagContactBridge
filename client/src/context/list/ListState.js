@@ -15,6 +15,7 @@ const ListState = (props) => {
     prospectDialerList: [],
     lexDataArray: [],
     toReview: [],
+    contactAppendRows: [],
     partial: [],
     periodInfo: null,
     recordCount: null,
@@ -51,6 +52,26 @@ const ListState = (props) => {
       );
     }
   };
+
+  const appendContactInfo = async (clients) => {
+    try {
+      console.log(clients);
+      const res = await api.post("/api/list/appendContactInfo", {
+        clients,
+      });
+      // data.data => [{ CaseID, PhoneNo, EmailID, Error }]
+      dispatch({
+        type: "APPEND_CONTACT_INFO_SUCCESS",
+        payload: res.data,
+      });
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err.message || "Server error";
+      dispatch({ type: "APPEND_CONTACT_INFO_FAILURE", payload: message });
+      throw err;
+    }
+  };
+
   const buildLienList = async (lexDataArray) => {
     try {
       dispatch({ type: "SET_LOADING" });
@@ -268,6 +289,7 @@ const ListState = (props) => {
         prospectDialerList: state.prospectDialerList,
         recordCount: state.recordCount,
         searchedClients: state.searchedClients,
+        contactAppendRows: state.contactAppendRows,
         validatedLienList: state.validatedLienList,
         lexDataArray: state.lexDataArray,
         searchUnifiedClients,
@@ -279,6 +301,7 @@ const ListState = (props) => {
         filterList,
         clearFilterList,
         downloadAndEmailDaily,
+        appendContactInfo,
         searchUnifiedClients,
         buildLienList,
         buildDialerList,

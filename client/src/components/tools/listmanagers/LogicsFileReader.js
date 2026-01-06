@@ -11,6 +11,7 @@ const LogicsFileReader = () => {
   const [domain, setDomain] = useState("TAG");
   const [mode, setMode] = useState("bulkUpload"); // bulkUpload | zeroInvoice | prospectDialer | advanceScrape
   const [liens, setLiens] = useState({ personalLiens: [], businessLiens: [] });
+  const [combinedContactRows, setCombinedContactRows] = useState([]);
   // Context actions
   const {
     addCreateDateClients,
@@ -18,11 +19,13 @@ const LogicsFileReader = () => {
     buildDialerList,
     zeroInvoiceList,
     prospectDialerList,
+    appendContactInfo,
+    contactAppendRows,
+    contactAppendLoading,
   } = useContext(ListContext);
   const { startLoading, stopLoading, showMessage, showError } =
     useContext(MessageContext);
 
-  console.log(prospectDialerList);
   // 1. Bulk Upload CSV Handler
   const handleBulkUploadCsv = (file) => {
     setError("");
@@ -62,6 +65,46 @@ const LogicsFileReader = () => {
           setClients(mapped);
         },
         error: (err) => setError("Failed to parse CSV file"),
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  // put this above the handler
+
+  // put near top if not already there
+  // helper (place above the handler)
+  const normDomain = (d) => {
+    const v = (d || "").toString().trim().toUpperCase();
+    return ["TAG", "WYNN", "AMITY"].includes(v) ? v : null;
+  };
+
+  // Contact Append CSV Handler (same parsing style as handleZeroInvoiceCsv)
+  const handleContactAppendCsv = (file) => {
+    setError("");
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ({ target }) => {
+      const cleaned = target.result
+        .replace(/\u0000/g, "")
+        .replace(/\r/g, "")
+        .replace(/" +/g, '"')
+        .replace(/"/g, "")
+        .trim();
+
+      Papa.parse(cleaned, {
+        header: true,
+        skipEmptyLines: true,
+        complete: ({ data }) => {
+          const mapped = data.map((row) => ({
+            domain: row["Domain"],
+            caseNumber: parseInt(row["CASE #"]),
+          }));
+
+          console.log(mapped);
+          setClients(mapped);
+        },
+        error: () => setError("Failed to parse CSV file"),
       });
     };
     reader.readAsText(file);
@@ -432,20 +475,46 @@ const LogicsFileReader = () => {
   const exportToCSV = () => {
     let sheetData;
     let filename;
+
     if (mode === "zeroInvoice") {
       sheetData = zeroInvoiceList;
       filename = "ZeroInvoices.csv";
     } else if (mode === "prospectDialer") {
       sheetData = prospectDialerList;
       filename = "ProspectDialer.csv";
+    } else if (mode === "contactAppend") {
+      const rows =
+        combinedContactRows && combinedContactRows.length > 0
+          ? combinedContactRows
+          : contactAppendRows; // fallback to reducer if you still rely on it somewhere
+
+      if (!rows || rows.length === 0) {
+        showError(
+          "Export",
+          "No contact info to export. Run Append Contact Info first.",
+          400
+        );
+        return;
+      }
+
+      // Enforce column order and include Domain
+      sheetData = rows.map((r) => ({
+        Domain: r.Domain,
+        CaseID: r.CaseID,
+        PhoneNo: r.PhoneNo,
+        EmailID: r.EmailID,
+        Error: r.Error || "",
+      }));
+      filename = "ContactInfoAppend.csv";
     } else {
       sheetData = clients;
       filename = "Clients.csv";
     }
+
     const ws = XLSX.utils.json_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Data");
-    XLSX.writeFile(wb, `${filename}`, { bookType: "csv" });
+    XLSX.writeFile(wb, filename, { bookType: "csv" });
   };
 
   // Export XLSX (for advanceScrape)
@@ -482,7 +551,17 @@ const LogicsFileReader = () => {
           `Built dialer list with ${prospectDialerList.length} entries.`,
           200
         );
+      } else if (mode === "contactAppend") {
+        const caseIds = clients.map((c) => c.caseNumber).filter(Boolean);
+        if (caseIds.length === 0) {
+          showError("Contact Append", "No CaseIDs found to query.", 400);
+        } else {
+          const res = await appendContactInfo(clients);
+          // reducer stores rows in contactAppendRows; res.count is returned from API
+          showMessage("Contact Append", `Fetched ${res.count} records.`, 200);
+        }
       }
+
       // No action for advanceScrape
     } catch (err) {
       const msg = err.response?.data?.message || err.message;
@@ -512,6 +591,7 @@ const LogicsFileReader = () => {
           <option value="zeroInvoice">Zero Invoice Parse</option>
           <option value="prospectDialer">Prospect Dialer Builder</option>
           <option value="advanceScrape">Advance Scrape Tool</option>
+          <option value="contactAppend">Contact Append</option>
         </select>
       </div>
 
@@ -527,6 +607,8 @@ const LogicsFileReader = () => {
             handleProspectDialerCsv(e.target.files);
           else if (mode === "advanceScrape")
             handleAdvanceScrapeXlsx(e.target.files);
+          else if (mode === "contactAppend")
+            handleContactAppendCsv(e.target.files[0]);
         }}
         className="mb-2"
       />
@@ -565,16 +647,25 @@ const LogicsFileReader = () => {
 
       {/* Action button, not shown for advanceScrape */}
       {mode !== "advanceScrape" && (
-        <button onClick={handleAction} className="btn btn-primary ml-2">
+        <button
+          onClick={handleAction}
+          className="btn btn-primary ml-2"
+          disabled={mode === "contactAppend" && contactAppendLoading}
+        >
           {mode === "bulkUpload"
             ? "Save Client List"
             : mode === "zeroInvoice"
             ? "Scan Zero‐Invoices"
             : mode === "prospectDialer"
             ? "Build Prospect Dialer"
+            : mode === "contactAppend"
+            ? contactAppendLoading
+              ? "Fetching…"
+              : "Add Contact Info"
             : null}
         </button>
       )}
+
       {mode === "prospectDialer" && prospectDialerList.length > 0 && (
         <button onClick={exportToCSV} className="btn btn-primary ml-2">
           Download Prospect List
@@ -591,6 +682,14 @@ const LogicsFileReader = () => {
           Download Prospect List
         </button>
       )}
+
+      {mode === "contactAppend" &&
+        ((combinedContactRows?.length || 0) > 0 ||
+          (contactAppendRows?.length || 0) > 0) && (
+          <button onClick={exportToCSV} className="btn btn-primary ml-2">
+            Download Contact Info CSV
+          </button>
+        )}
       {mode === "bulkUpload" && <NewCreateClientAnalysisList />}
     </div>
   );

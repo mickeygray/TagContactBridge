@@ -141,6 +141,27 @@ export default (state, action) => {
         ...state,
         filteredClients: action.payload,
       };
+    case "APPEND_CONTACT_INFO_REQUEST":
+      return {
+        ...state,
+        contactAppendLoading: true,
+        contactAppendError: null,
+      };
+
+    case "APPEND_CONTACT_INFO_SUCCESS":
+      return {
+        ...state,
+        contactAppendLoading: false,
+        contactAppendRows: action.payload || [],
+        contactAppendError: null,
+      };
+
+    case "APPEND_CONTACT_INFO_FAILURE":
+      return {
+        ...state,
+        contactAppendLoading: false,
+        contactAppendError: action.payload || "Failed to append contact info",
+      };
     default:
       return state;
   }

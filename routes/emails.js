@@ -22,13 +22,13 @@ router.use(authMiddleware, requireAdmin);
  */
 router.post("/send", async (req, res, next) => {
   try {
-    const { list, template, domain, subject, attachment } = req.body;
+    const { list, template, subject } = req.body;
     if (!Array.isArray(list) || !template) {
       return res
         .status(400)
         .json({ message: "Missing required fields: list or template" });
     }
-
+    const domain = template.includes("wynn") ? "WYNN" : "TAG";
     console.log(req.body);
     const domainHostMap = {
       TAG: "taxadvocategroup.com",
@@ -42,6 +42,24 @@ router.post("/send", async (req, res, next) => {
       "../Templates/marketingemails",
       `${template}.hbs`
     );
+
+    const attachmentPath = path.join(
+      __dirname,
+      "..",
+      "Templates",
+      "attachments",
+      template,
+      domain,
+      "document.pdf"
+    );
+
+    const attachments = [
+      {
+        filename: "document.pdf", // what recipient sees
+        path: attachmentPath, // where it is on disk
+        contentType: "application/pdf",
+      },
+    ];
     if (!fs.existsSync(bodyPath)) {
       return res
         .status(404)
@@ -55,14 +73,8 @@ router.post("/send", async (req, res, next) => {
       list.map(async (recip) => {
         const { email, name, senderEmailPrefix, senderName } = recip;
 
-        if (!email) {
-          throw new Error("Invalid recipient (missing email)");
-        }
-        if (!["TAG", "WYNN", "AMITY", "TGC"].includes(domain)) {
-          throw new Error(`Invalid domain "${domain}"`);
-        }
-        const host = domainHostMap[domain];
-        const from = `Cameron Pierce @ Tax Group Consultants  <${senderEmailPrefix}@${host}>`;
+        const domain = template.includes("wynn") ? "WYNN" : "TAG";
+        const from = `Cameron Pierce @ TaxAdvocateGroup <Cameron@TaxAdvocateGroup.com>`;
         // 1) gather per-domain env vars
         const vars = {
           scheduleUrl:
@@ -92,12 +104,11 @@ router.post("/send", async (req, res, next) => {
         let subject;
 
         switch (template) {
-          case "TCG-1":
-            subject =
-              "Tax Law Changes May Impact Your Income or Business Liability";
+          case "wynn-followup":
+            subject = "Thank you for contacting Wynn Tax Solutions";
             break;
-          case "TCG-2":
-            subject = "Every Day You Wait, Your Personal Tax Debt Grows";
+          case "TaxOrganizer2026":
+            subject = "Your 2025 Tax Organizer Is Here";
             break;
           case "TCG-3":
             subject = "Your Tax Situation Requires Immediate Attention";
@@ -118,6 +129,7 @@ router.post("/send", async (req, res, next) => {
           subject,
           html,
           domain,
+          attachments,
         });
 
         return { email, status: "sent" };
