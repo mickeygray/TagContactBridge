@@ -22,111 +22,168 @@ router.use(authMiddleware, requireAdmin);
  */
 router.post("/send", async (req, res, next) => {
   try {
-    const { list, template, subject } = req.body;
-    if (!Array.isArray(list) || !template) {
-      return res
-        .status(400)
-        .json({ message: "Missing required fields: list or template" });
+    const { list, baseEmailName, index, domain, includeAttachment } = req.body;
+
+    if (!Array.isArray(list) || !baseEmailName || !index) {
+      return res.status(400).json({
+        message: "Missing required fields: list, baseEmailName, index",
+      });
     }
-    const domain = template.includes("wynn") ? "WYNN" : "TAG";
-    console.log(req.body);
+
+    const emailIndex = Number(index);
+    if (!Number.isInteger(emailIndex) || emailIndex < 1 || emailIndex > 5) {
+      return res.status(400).json({ message: "index must be an integer 1–5" });
+    }
+
+    // Domain selection (prefer FE passing it; fallback to inference)
+
     const domainHostMap = {
       TAG: "taxadvocategroup.com",
       WYNN: "wynntaxsolutions.com",
       AMITY: "amitytaxgroup.com",
       TGC: "taxgroupconsultants.com",
     };
-    // load & compile the body template from marketingemails/
+
+    if (!domainHostMap[domain]) {
+      return res.status(400).json({ message: `Invalid domain: ${domain}` });
+    }
+    // Derived names
+    const bodyTemplateName = `${baseEmailName}${emailIndex}`; // e.g. TaxOrganizer20261
+    const templatesRoot = path.join(__dirname, "..", "Templates");
+
+    // --- Paths (NEW STRUCTURE) ---
     const bodyPath = path.join(
-      __dirname,
-      "../Templates/marketingemails",
-      `${template}.hbs`
+      templatesRoot,
+      baseEmailName,
+      "handlebars",
+      `${bodyTemplateName}.hbs`
     );
 
     const attachmentPath = path.join(
-      __dirname,
-      "..",
-      "Templates",
+      templatesRoot,
+      baseEmailName,
       "attachments",
-      template,
       domain,
       "document.pdf"
     );
 
-    const attachments = [
-      {
-        filename: "document.pdf", // what recipient sees
-        path: attachmentPath, // where it is on disk
-        contentType: "application/pdf",
-      },
-    ];
+    const headerPath = path.join(
+      templatesRoot,
+      baseEmailName,
+      "images",
+      "header",
+      `${bodyTemplateName}.png`
+    );
+
+    const logoPath = path.join(templatesRoot, "logos", `${domain}.png`);
+
+    // (Future) Body image folder placeholder:
+    // const bodyImagesDir = path.join(templatesRoot, baseEmailName, "images", "body");
+
     if (!fs.existsSync(bodyPath)) {
       return res
         .status(404)
-        .json({ message: `Template not found: ${template}` });
+        .json({ message: `Body template not found: ${bodyPath}` });
     }
-    console.log("🔧 Compiling body template");
+    if (!fs.existsSync(attachmentPath)) {
+      return res
+        .status(404)
+        .json({ message: `Attachment not found: ${attachmentPath}` });
+    }
 
+    // Compile template once
     const bodySource = fs.readFileSync(bodyPath, "utf8");
     const bodyTpl = hbs.compile(bodySource);
+
+    // --- Subject map (baseEmailName + index) ---
+    const subjectMap = {
+      TaxOrganizer2026: {
+        1: "Welcome to Tax Season — Let’s Get Ready to File 2025",
+        2: "Your 2025 Tax Organizer + Quick Document Checklist",
+        3: "Time to File — Schedule Your Tax Organizer Review",
+        4: "Last Call — Act Now to File Your 2025 Return",
+        5: "Action Required — Request an Extension If You’re Not Ready",
+      },
+      TaxOrganizer2026Prospect: {
+        1: "Welcome to Tax Season — Let Us Help You File 2025",
+      },
+      // add other baseEmailName series here later...
+    };
+
+    const defaultSubject = "From Your Tax Attorney's Office";
+    const resolvedSubject =
+      subjectMap?.[baseEmailName]?.[emailIndex] || defaultSubject;
+
+    // Build attachments (header is optional if file exists)
+
+    const attachments = [];
+
+    if (includeAttachment) {
+      if (!fs.existsSync(attachmentPath)) {
+        return res
+          .status(404)
+          .json({ message: `Attachment not found for ${domain}` });
+      }
+      attachments.push({
+        filename: "document.pdf",
+        path: attachmentPath,
+        contentType: "application/pdf",
+      });
+    }
+
+    if (fs.existsSync(headerPath)) {
+      attachments.push({
+        filename: path.basename(headerPath),
+        path: headerPath,
+        cid: "emailHeader",
+      });
+    }
+
+    if (fs.existsSync(logoPath)) {
+      const logoAttachment = {
+        filename: path.basename(logoPath),
+        path: logoPath,
+        cid: "emailLogo",
+      };
+      attachments.push(logoAttachment);
+    }
+
     const results = await Promise.allSettled(
       list.map(async (recip) => {
-        const { email, name, senderEmailPrefix, senderName } = recip;
+        const { email, name } = recip;
 
-        const domain = template.includes("wynn") ? "WYNN" : "TAG";
-        const from = `Cameron Pierce @ TaxAdvocateGroup <Cameron@TaxAdvocateGroup.com>`;
-        // 1) gather per-domain env vars
+        // per-domain env vars
         const vars = {
           scheduleUrl:
             process.env[`${domain}_CALENDAR_SCHEDULE_URL`] ||
             process.env.TAG_CALENDAR_SCHEDULE_URL,
           url: process.env[`${domain}_URL`] || "",
-          phone: process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
+          phone: baseEmailName.includes("Prospect")
+            ? process.env[`${domain}_PROSPECT_CONTACT_PHONE`]
+            : process.env[`${domain}_CLIENT_CONTACT_PHONE`] || "",
           processingEmail: process.env[`${domain}_PROCESSING_EMAIL`] || "",
-          logoSrc: process.env[`${domain}_LOGO_URL`] || "",
           contactName: process.env[`${domain}_CONTACT_NAME`] || "",
+          domainHost: domainHostMap[domain],
         };
-
-        // 2) render signature
 
         const signatureHtml = compileSignatureTpl(vars);
 
-        // 3) render body, injecting {{{signature}}}
         const html = bodyTpl({
           name,
           phone: vars.phone,
+          processingEmail: vars.processingEmail,
           signature: signatureHtml,
+          scheduleUrl: vars.scheduleUrl,
+          url: vars.url,
+          // extensionLink etc can be added when needed
         });
 
-        // 4) collect attachments for this marketing template
+        const from = `Cameron Pierce @ TaxAdvocateGroup <Cameron@TaxAdvocateGroup.com>`;
 
-        // 5) pick subject (fallback to a generic)
-        let subject;
-
-        switch (template) {
-          case "wynn-followup":
-            subject = "Thank you for contacting Wynn Tax Solutions";
-            break;
-          case "TaxOrganizer2026":
-            subject = "Your 2025 Tax Organizer Is Here";
-            break;
-          case "TCG-3":
-            subject = "Your Tax Situation Requires Immediate Attention";
-            break;
-          case "TCG-4":
-            subject =
-              "Hiring a Tax Specialist Could Save Your Business or Save You Thousands";
-            break;
-          default:
-            subject = "Hiring a Tax Specialist Could Save You Thousands";
-            break;
-        }
-
-        // 6) send
         await sendEmail({
           to: email,
           from,
-          subject,
+          subject: resolvedSubject,
           html,
           domain,
           attachments,
@@ -135,7 +192,6 @@ router.post("/send", async (req, res, next) => {
         return { email, status: "sent" };
       })
     );
-    console.log(results);
 
     res.json({ results });
   } catch (err) {

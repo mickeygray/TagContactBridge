@@ -1,124 +1,147 @@
+// client/src/context/ScheduleState/scheduleReducer.js
+// ─────────────────────────────────────────────────────────────
+// Repurposed for CallFire Auto-Dialer
+// ─────────────────────────────────────────────────────────────
+
 const scheduleReducer = (state, action) => {
   switch (action.type) {
-    case "SET_DAILY_REVIEW_LISTS":
+    // ═══════════════════════════════════════════════════════════
+    // DIALER STATE
+    // ═══════════════════════════════════════════════════════════
+
+    case "SET_DIALER_MODE":
       return {
         ...state,
-        toReview: action.payload.toReview || [],
-        emailQueue: action.payload.emailQueue || [],
-        textQueue: action.payload.textQueue || [],
-        pace: action.payload.pace || 15,
-      };
-    case "REFRESH_QUEUES":
-      return {
-        ...state,
-        emailQueue: action.payload.emailQueue || [],
-        textQueue: action.payload.textQueue || [],
-      };
-    case "REFRESH_DAILY_QUEUES":
-      return {
-        ...state,
-        emailQueue: action.payload.emailQueue,
-        textQueue: action.payload.textQueue,
-        loading: false,
-        error: null,
+        mode: action.payload, // "wynn" | "tag"
       };
 
-    case "REMOVE_FROM_REVIEW":
+    case "SET_LEADS":
       return {
         ...state,
-        toReview: state.toReview.filter(
-          (client) =>
-            !(
-              client.caseNumber === action.payload.caseNumber &&
-              client.domain === action.payload.domain
-            )
-        ),
+        leads: action.payload.leads || [],
+        leadsCount: action.payload.leads?.length || 0,
+        loading: false,
       };
+
+    case "START_DIALER":
+      return {
+        ...state,
+        isRunning: true,
+        isPaused: false,
+        stats: {
+          queued: action.payload.queued || 0,
+          processed: 0,
+          failed: action.payload.failed || 0,
+          total: action.payload.total || 0,
+        },
+      };
+
+    case "UPDATE_STATS":
+      return {
+        ...state,
+        stats: {
+          ...state.stats,
+          ...action.payload,
+        },
+      };
+
+    case "PAUSE_DIALER":
+      return {
+        ...state,
+        isPaused: true,
+      };
+
+    case "RESUME_DIALER":
+      return {
+        ...state,
+        isPaused: false,
+      };
+
+    case "STOP_DIALER":
+      return {
+        ...state,
+        isRunning: false,
+        isPaused: false,
+      };
+
+    case "RESET_DIALER":
+      return {
+        ...state,
+        isRunning: false,
+        isPaused: false,
+        leads: [],
+        leadsCount: 0,
+        stats: {
+          queued: 0,
+          processed: 0,
+          failed: 0,
+          total: 0,
+        },
+      };
+
+    // ═══════════════════════════════════════════════════════════
+    // TAG FILTERS
+    // ═══════════════════════════════════════════════════════════
+
+    case "SET_TAG_FILTERS":
+      return {
+        ...state,
+        tagFilters: {
+          ...state.tagFilters,
+          ...action.payload,
+        },
+      };
+
+    // ═══════════════════════════════════════════════════════════
+    // ACTIVITY LOG
+    // ═══════════════════════════════════════════════════════════
+
+    case "ADD_LOG":
+      return {
+        ...state,
+        logs: [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            message: action.payload.message,
+            type: action.payload.type || "info",
+          },
+          ...state.logs.slice(0, 99), // Keep last 100 entries
+        ],
+      };
+
+    case "CLEAR_LOGS":
+      return {
+        ...state,
+        logs: [],
+      };
+
+    // ═══════════════════════════════════════════════════════════
+    // LOADING & ERROR
+    // ═══════════════════════════════════════════════════════════
+
     case "SET_LOADING":
       return {
         ...state,
         loading: true,
       };
-    case "UPDATE_SETTINGS":
-      return {
-        ...state,
-        ...action.payload,
-      };
 
-    case "SKIP_CLIENT": {
-      const client = action.payload;
-      return {
-        ...state,
-        toReview: state.toReview.filter(
-          (item) =>
-            !(
-              item.caseNumber === client.caseNumber &&
-              item.domain === client.domain
-            )
-        ),
-        emailQueue: state.emailQueue.filter(
-          (item) =>
-            !(
-              item.caseNumber === client.caseNumber &&
-              item.domain === client.domain
-            )
-        ),
-        textQueue: state.textQueue.filter(
-          (item) =>
-            !(
-              item.caseNumber === client.caseNumber &&
-              item.domain === client.domain
-            )
-        ),
-      };
-    }
-    case "SKIP_DAILY_CLIENT":
-      // Optimistically remove from current queues
-      return {
-        ...state,
-        emailQueue: state.emailQueue.filter(
-          (client) =>
-            !(
-              client.caseNumber === action.payload.caseNumber &&
-              client.domain === action.payload.domain
-            )
-        ),
-        textQueue: state.textQueue.filter(
-          (client) =>
-            !(
-              client.caseNumber === action.payload.caseNumber &&
-              client.domain === action.payload.domain
-            )
-        ),
-        toReview: state.toReview.filter(
-          (client) =>
-            !(
-              client.caseNumber === action.payload.caseNumber &&
-              client.domain === action.payload.domain
-            )
-        ),
-      };
-    case "REMOVE_FROM_ALL_QUEUES":
-      const { caseNumber, domain } = action.payload;
-      return {
-        ...state,
-        emailQueue: state.emailQueue.filter(
-          (client) =>
-            !(client.caseNumber === caseNumber && client.domain === domain)
-        ),
-        textQueue: state.textQueue.filter(
-          (client) =>
-            !(client.caseNumber === caseNumber && client.domain === domain)
-        ),
-        toReview: state.toReview.filter(
-          (client) =>
-            !(client.caseNumber === caseNumber && client.domain === domain)
-        ),
-      };
     case "CLEAR_LOADING":
       return {
         ...state,
         loading: false,
+      };
+
+    case "SET_ERROR":
+      return {
+        ...state,
+        error: action.payload,
+        loading: false,
+      };
+
+    case "CLEAR_ERROR":
+      return {
+        ...state,
+        error: null,
       };
 
     default:

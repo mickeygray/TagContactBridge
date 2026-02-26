@@ -36,6 +36,7 @@ app.use("/api/list", listRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invite", inviteRoutes);
 app.use("/api/emails", require("./routes/emails"));
+app.use("/api/cleaner", require("./routes/cleaner"));
 app.use("/api/texts", require("./routes/texts"));
 app.use("/api/schedule", require("./routes/schedule"));
 app.use("/api/clients", clientRoutes);

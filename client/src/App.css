@@ -134,7 +134,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .single-client-card:hover {
@@ -246,7 +248,318 @@ a {
   margin: 0 !important;
   gap: 0 !important;
 }
+.callfire-dialer {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
 
+.callfire-dialer h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+/* Mode Tabs */
+.mode-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.mode-tabs .tab {
+  padding: 12px 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+}
+
+.mode-tabs .tab:hover:not(:disabled) {
+  color: #333;
+  background: #f5f5f5;
+}
+
+.mode-tabs .tab.active {
+  color: #ff6b35;
+  border-bottom-color: #ff6b35;
+}
+
+.mode-tabs .tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Error Banner */
+.error-banner {
+  background: #fee;
+  border: 1px solid #fcc;
+  color: #c00;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-banner button {
+  background: none;
+  border: none;
+  color: #c00;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+/* Mode Panel */
+.mode-panel {
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.mode-description {
+  color: #666;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+/* Filter Row */
+.filter-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.filter-group input,
+.filter-group select {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  min-width: 150px;
+}
+
+/* Leads Preview */
+.leads-preview {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Buttons */
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn.primary {
+  background: #4a90d9;
+  color: white;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #3a7bc8;
+}
+
+.btn.success {
+  background: #28a745;
+  color: white;
+}
+
+.btn.success:hover {
+  background: #218838;
+}
+
+.btn.warning {
+  background: #ffc107;
+  color: #333;
+}
+
+.btn.warning:hover {
+  background: #e0a800;
+}
+
+.btn.danger {
+  background: #dc3545;
+  color: white;
+}
+
+.btn.danger:hover {
+  background: #c82333;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Running Panel */
+.running-panel {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 12px;
+  padding: 24px;
+  color: white;
+  margin-bottom: 20px;
+}
+
+.status-badge {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+/* Progress Section */
+.progress-section {
+  margin-bottom: 24px;
+}
+
+.progress-bar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff6b35, #ff9f1c);
+  border-radius: 6px;
+  transition: width 0.5s ease;
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+/* Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat {
+  text-align: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+
+.stat-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.stat-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* Log Section */
+.log-section {
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.log-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #666;
+}
+
+.log-container {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 12px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.log-empty {
+  padding: 20px;
+  text-align: center;
+  color: #999;
+}
+
+.log-entry {
+  padding: 6px 10px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  gap: 10px;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-time {
+  color: #999;
+  flex-shrink: 0;
+}
+
+.log-message {
+  flex: 1;
+}
+
+.log-info .log-message {
+  color: #333;
+}
+
+.log-success .log-message {
+  color: #28a745;
+}
+
+.log-error .log-message {
+  color: #dc3545;
+}
 .checkbox-label {
   display: flex !important;
   align-items: center !important;
@@ -260,7 +573,20 @@ a {
   width: 300px !important;
   box-sizing: border-box !important;
 }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 1rem; /* optional, to match your spacing */
+}
 
+.checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 500;
+}
 .checkbox-label input[type="checkbox"] {
   margin-right: -100px !important;
   margin-left: -80px !important;
@@ -480,7 +806,10 @@ textarea {
   width: 100%;
   margin-bottom: 1rem;
 }
-
+input[type="checkbox"] {
+  width: auto;
+  margin-bottom: 0;
+}
 label {
   display: block;
   margin-bottom: 0.5rem;
@@ -1179,7 +1508,9 @@ body {
   font-size: 1rem;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.2s ease;
+  transition:
+    background 0.3s ease,
+    transform 0.2s ease;
   border: none;
   padding: 12px 0; /* Uniform padding inside buttons */
   text-align: center;

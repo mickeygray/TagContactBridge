@@ -1,15 +1,37 @@
-// Express setup assumed
+// routes/schedule.js
+// ─────────────────────────────────────────────────────────────
+// Repurposed for CallFire Auto-Dialer API endpoints
+// ─────────────────────────────────────────────────────────────
+
 const express = require("express");
 const router = express.Router();
+const {
+  getWynnLeads,
+  getTagLeads,
+  startWynnDialer,
+  startTagDialer,
+  getDialerStatus,
+  stopDialer,
+  pauseDialer,
+  resumeDialer,
+} = require("../controllers/callFireController");
 
-const ctrl = require("../controllers/scheduleController");
-const { authMiddleware } = require("../middleware/authMiddleware");
+// ═══════════════════════════════════════════════════════════════════════════
+// CALLFIRE AUTO-DIALER ROUTES
+// ═══════════════════════════════════════════════════════════════════════════
 
-router.use(authMiddleware);
-// @route   POST /api/scheduledmessages
-// @desc    Add new scheduled client
+// Fetch leads
+router.get("/wynn-leads", getWynnLeads);
+router.get("/tag-leads", getTagLeads);
 
-router.post("/build", ctrl.buildDailySchedule);
-router.get("/refresh", ctrl.refreshDailySchedule);
-router.put("/pace", ctrl.updateDailySchedule);
+// Start dialers
+router.post("/start-wynn", startWynnDialer);
+router.post("/start-tag", startTagDialer);
+
+// Control
+router.get("/status", getDialerStatus);
+router.post("/stop", stopDialer);
+router.post("/pause", pauseDialer);
+router.post("/resume", resumeDialer);
+
 module.exports = router;

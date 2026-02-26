@@ -11,6 +11,8 @@ const { sendDailyText } = require("../controllers/scheduleController");
 router.use(authMiddleware, requireAdmin);
 router.post("/send", async (req, res, next) => {
   const { messagesPayload } = req.body;
+
+  console.log("HERE!");
   if (!Array.isArray(messagesPayload)) {
     return res
       .status(400)

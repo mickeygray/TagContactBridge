@@ -6,14 +6,18 @@ import NCOAUploader from "../tools/listmanagers/NCOAUploader";
 import ScheduleFunnelDashboard from "../tools/schedulemanager/ScheduleFunnelDashboard";
 import PeriodContactsFilter from "../tools/listmanagers/PeriodContactsFilter";
 import UnifiedClientListManager from "../tools/listmanagers/UnifiedClientListManager";
+import ListScrubber from "../tools/cleaner/ListScrubber";
+import CallFireDialer from "../tools/schedulemanager/CallFireDialer";
 
 const AgentDashboard = () => {
-  const [activeTool, setActiveTool] = useState(null);
+  const [activeTool, setActiveTool] = useState("email");
 
   const renderActiveTool = () => {
     switch (activeTool) {
       case "logics":
         return <LogicsFileReader />;
+      case "cleaner":
+        return <ListScrubber />;
       case "period":
         return <PeriodContactsFilter />;
       case "search":
@@ -26,10 +30,26 @@ const AgentDashboard = () => {
         return <NCOAUploader />;
       case "daily":
         return <ScheduleFunnelDashboard />;
+      case "callfire":
+        return <CallFireDialer />;
       default:
-        return <LogicsFileReader />;
+        return <ManualEmailSender />;
     }
   };
+
+  // Active tools configuration
+  const tools = [
+    { id: "email", label: "Email Campaign Sender", icon: "✉️", active: true },
+    { id: "text", label: "SMS Campaign Sender", icon: "💬", active: true },
+    { id: "callfire", label: "CallFire Auto-Dialer", icon: "🔥", active: true },
+    { id: "cleaner", label: "Phone/Email Scrubber", icon: "🧹", active: true },
+    { id: "mail", label: "NCOA Direct Mail Prep", icon: "📬", active: true },
+    // Inactive tools - uncomment when ready
+    // { id: "logics", label: "List Upload Tool", icon: "📁", active: false },
+    // { id: "period", label: "Aged Clients List", icon: "📅", active: false },
+    // { id: "search", label: "Client Search", icon: "🔍", active: false },
+    // { id: "daily", label: "Daily Contacts", icon: "📋", active: false },
+  ];
 
   return (
     <div className="dashboard-container">
@@ -38,68 +58,19 @@ const AgentDashboard = () => {
       <div className="panel-container">
         <div className="card">
           <h3>🛠️ Marketing Tools</h3>
-          <button
-            className={`button primary ${
-              activeTool === "logics" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("logics")}
-          >
-            📁 List Upload Tool
-          </button>
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "text" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("text")}
-          >
-            📞 Text Message Sender
-          </button>
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "email" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("email")}
-          >
-            📋 Marketing Emails
-          </button>{" "}
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "period" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("period")}
-          >
-            📋 Aged Clients Marketing List
-          </button>
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "search" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("search")}
-          >
-            📋 Client Search
-          </button>
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "mail" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("mail")}
-          >
-            📋 Direct Mail List
-          </button>
-          <br />
-          <button
-            className={`button primary ${
-              activeTool === "daily" ? "active" : ""
-            }`}
-            onClick={() => setActiveTool("daily")}
-          >
-            📋 Daily Client Contacts
-          </button>
+
+          {tools
+            .filter((t) => t.active)
+            .map((tool) => (
+              <button
+                key={tool.id}
+                className={`button primary ${activeTool === tool.id ? "active" : ""}`}
+                onClick={() => setActiveTool(tool.id)}
+                style={{ marginBottom: "8px", display: "block", width: "100%" }}
+              >
+                {tool.icon} {tool.label}
+              </button>
+            ))}
         </div>
       </div>
     </div>
