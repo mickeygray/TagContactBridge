@@ -1,4 +1,4 @@
-// FileAppendItem.js
+// UNUSED — Only imported by LexisAppendList which is itself unused.
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import ClientContext from "../../../context/client/clientContext";

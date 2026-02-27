@@ -1,3 +1,6 @@
+// UNUSED — Legacy model, never imported by any backend module.
+// Superseded by LeadCadence model. Kept for reference.
+/*
 const mongoose = require("mongoose");
 
 const prospectSchema = new mongoose.Schema({
@@ -13,3 +16,4 @@ const prospectSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model("Prospect", prospectSchema);
+*/

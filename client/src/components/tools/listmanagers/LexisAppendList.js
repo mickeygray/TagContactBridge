@@ -1,3 +1,4 @@
+// UNUSED — Not imported by any active component. Lexis address match tool (not enabled).
 import React, { useState, useCallback, useContext } from "react";
 import Papa from "papaparse";
 import FileAppendItem from "./FileAppendItem";

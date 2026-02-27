@@ -1,3 +1,6 @@
+// UNUSED — Google Apps Script (SpreadsheetApp), not Node.js compatible.
+// Never imported by the application. Kept for reference.
+/*
 const plaintiffStateMatch = ["Match", "State Match", "Mismatch", "Federal"];
 
 const lienType = ["State", "Federal"];
@@ -395,3 +398,4 @@ function onOpen() {
     .addItem("Generate All Combo Metrics", "generateAllComboMetrics")
     .addToUi();
 }
+*/

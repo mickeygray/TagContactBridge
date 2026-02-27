@@ -1,3 +1,7 @@
+// UNUSED — Route commented out in server.js; no frontend calls /api/calls.
+// Also has a circular self-import bug (requires itself).
+// Kept for reference.
+/*
 const express = require("express");
 const router = express.Router();
 const {
@@ -7,14 +11,12 @@ const {
 } = require("../middleware/authMiddleware");
 const { streamRecording } = require("../controllers/recordingController");
 
-// All users must be authenticated and online
 router.get(
   "/:callId",
   authMiddleware,
   ensureOnline,
-  // optionally restrict to admins:
-  // requireAdmin,
   streamRecording
 );
 
 module.exports = router;
+*/

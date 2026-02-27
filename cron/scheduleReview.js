@@ -1,3 +1,7 @@
+// UNUSED — Never imported or called by any module.
+// References stale Client schema fields (stage, poaDate, finalEmailDate, tokenExpiresAt).
+// Kept for reference; may be adapted for future scheduled review logic.
+/*
 const cron = require("node-cron");
 const Client = require("../models/Client");
 
@@ -27,7 +31,7 @@ const refreshReviewList = async () => {
     });
 
     if (deleteResult.deletedCount > 0) {
-      console.log(`🗑️ Removed ${deleteResult.deletedCount} expired client(s)`);
+      console.log(`Removed ${deleteResult.deletedCount} expired client(s)`);
     }
     const oldClients = allClients.filter((client) => !client.saleDate);
     const newClients = allClients.filter((client) => client.saleDate);
@@ -42,19 +46,17 @@ const refreshReviewList = async () => {
       f433a: newClients.filter(
         (c) => c.stage === "433" && c.finalEmailDate <= finalThreshold
       ),
-      textQueue: oldClients, // 🔁 Full list of old clients
+      textQueue: oldClients,
     };
 
-    console.log("✅ Schedule Review List refreshed at 7:00 AM");
+    console.log("Schedule Review List refreshed at 7:00 AM");
   } catch (err) {
-    console.error("❌ Error refreshing review list:", err);
+    console.error("Error refreshing review list:", err);
   }
 };
 
-// 🕖 Schedule cron job for 7:00 AM daily
 cron.schedule("0 7 * * *", refreshReviewList);
-
-// 🛠 Run once at startup as well
 refreshReviewList();
 
 module.exports = () => reviewList;
+*/

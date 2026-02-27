@@ -1,3 +1,4 @@
+// UNUSED — Only imported by unused components (LexisAppendList, FileAppendItem).
 // Simple Tax Record Parser - Pure Functions Only
 const useLexisData = () => {
   // Main parser function

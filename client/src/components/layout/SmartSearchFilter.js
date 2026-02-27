@@ -1,4 +1,4 @@
-// SmartSearchFilter.jsx
+// UNUSED — Not imported by any active component.
 import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 

@@ -1,3 +1,4 @@
+// UNUSED — Not imported by any active component. Part of callmonitor feature (not enabled).
 import React, { useState } from "react";
 import useCallRail from "../../../hooks/useCallrail"; // Assuming it's in hooks
 

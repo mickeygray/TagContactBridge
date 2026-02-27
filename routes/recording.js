@@ -1,4 +1,6 @@
-// /routes/recording.js
+// UNUSED — Route mount commented out in server.js; no frontend calls /api/calls.
+// Kept for reference; may be useful if call recording playback is added.
+/*
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
@@ -19,7 +21,6 @@ router.get("/:callId", async (req, res) => {
       }
     );
 
-    // Response has a redirect to the actual MP3
     const recordingUrl = response.data.url;
 
     const stream = await axios.get(recordingUrl, { responseType: "stream" });
@@ -29,3 +30,4 @@ router.get("/:callId", async (req, res) => {
   }
 });
 module.exports = router;
+*/

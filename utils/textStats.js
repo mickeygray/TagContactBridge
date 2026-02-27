@@ -1,4 +1,6 @@
-// utils/textStats.js
+// UNUSED — Rate-limiting utility for texts, never imported by any module.
+// Kept for reference; may be useful if SMS rate limiting is added.
+/*
 let sentHour = 0;
 let sentDay = 0;
 let lastHourReset = Date.now();
@@ -43,3 +45,4 @@ function getStats() {
 }
 
 module.exports = { resetLimits, increment, canSend, getStats };
+*/

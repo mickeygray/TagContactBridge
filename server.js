@@ -1,11 +1,11 @@
 const express = require("express");
-const cors = require("cors");
+// const cors = require("cors"); // UNUSED — imported but never called
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const inviteRoutes = require("./routes/invite");
 const listRoutes = require("./routes/list");
-const callRoutes = require("./routes/recording");
+// const callRoutes = require("./routes/recording"); // UNUSED — no frontend calls this route
 const clientRoutes = require("./routes/clients");
 const path = require("path");
 require("dotenv").config({
@@ -31,7 +31,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/api/auth", authRoutes);
-app.use("/api/calls", callRoutes);
+// app.use("/api/calls", callRoutes); // UNUSED — recording route not called by frontend
 app.use("/api/list", listRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invite", inviteRoutes);

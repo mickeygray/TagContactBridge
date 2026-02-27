@@ -10,14 +10,15 @@ const {
 } = require("../middleware/authMiddleware");
 const {
   cleanClients,
-  cleanProspectsPhone,
-  cleanProspectsEmail,
+  // cleanProspectsPhone,  // UNUSED — no frontend calls /cleaner/prospects-phone
+  // cleanProspectsEmail,  // UNUSED — no frontend calls /cleaner/prospects-email
 } = require("../controllers/listCleanerController");
 
 router.use(authMiddleware, requireAdmin);
 
 router.post("/clients", cleanClients);
-router.post("/prospects-phone", cleanProspectsPhone);
-router.post("/prospects-email", cleanProspectsEmail);
+// UNUSED — no frontend calls these endpoints
+// router.post("/prospects-phone", cleanProspectsPhone);
+// router.post("/prospects-email", cleanProspectsEmail);
 
 module.exports = router;

@@ -1,3 +1,4 @@
+// UNUSED — Only imported by LexisAppendList which is itself unused.
 import React, { useState } from "react";
 import CopyableItem from "../../layout/CopyableItem";
 // Utility to copy to clipboard

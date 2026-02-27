@@ -1,3 +1,4 @@
+// UNUSED — Only imported by unused components (FileAppendItem, BusinessAnalysisItem).
 import React, { useState } from "react";
 
 const CopyableItem = ({ value }) => {

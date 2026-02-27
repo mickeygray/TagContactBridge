@@ -1,4 +1,4 @@
-// EnrichedClientCard.jsx
+// UNUSED — Not imported by any active component.
 import React, { useContext } from "react";
 import ClientContext from "../../context/client/clientContext";
 import CollapsibleNote from "../layout/CollapsibleNote";

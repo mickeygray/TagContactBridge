@@ -1,3 +1,4 @@
+// UNUSED — Not imported by any component.
 import { useState } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";

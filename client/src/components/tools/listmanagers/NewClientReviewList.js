@@ -1,3 +1,4 @@
+// UNUSED — Not imported by any active component. Client review feature (not enabled).
 import React, { useContext } from "react";
 import ClientContext from "../../../context/client/clientContext";
 import ListContext from "../../../context/list/listContext";

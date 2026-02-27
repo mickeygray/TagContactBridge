@@ -1,3 +1,4 @@
+// UNUSED — Not imported by any active component. Part of callmonitor feature (not enabled).
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
 

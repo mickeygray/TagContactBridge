@@ -15,8 +15,9 @@ import Navbar from "./components/layout/Navbar";
 import Login from "./components/auth/Login";
 import Register from "./components/auth/Register";
 import PrivateRoute from "./utils/PrivateRoute";
-import AdminPanel from "./components/interface/AdminPanel";
-import ManagementDashboard from "./components/interface/ManagementDashboard";
+// UNUSED — imported but never routed; kept for future use
+// import AdminPanel from "./components/interface/AdminPanel";
+// import ManagementDashboard from "./components/interface/ManagementDashboard";
 import AgentDashboard from "./components/interface/AgentDashboard";
 import Toast from "./components/layout/Toast";
 // AppContent is rendered within all providers so it can use MessageContext
