@@ -39,8 +39,7 @@ function getSmsContent(name, scheduleUrl, textNumber = 1) {
       return (
         `Hi ${greeting}, it's Wynn Tax Solutions. Our team has helped thousands ` +
         `of clients resolve IRS and state tax issues. We'd love to do the same for you.\n\n` +
-        `Schedule a free, no-obligation consultation: ${scheduleUrl}\n\n` +
-        `Or call us: ${TOLL_FREE}`
+        `Call us: ${TOLL_FREE}`
       );
 
     // ── TEXT 3: Urgency / Final ─────────────────────────────
@@ -49,7 +48,6 @@ function getSmsContent(name, scheduleUrl, textNumber = 1) {
         `Hi ${greeting}, just a final check-in from Wynn Tax Solutions. ` +
         `Tax issues can escalate quickly — penalties and interest add up daily. ` +
         `A quick call with our team can help you understand your options.\n\n` +
-        `Book a free consultation: ${scheduleUrl}\n` +
         `Call: ${TOLL_FREE}\n\n` +
         `We're here whenever you're ready.`
       );
