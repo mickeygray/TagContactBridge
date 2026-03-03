@@ -21,6 +21,8 @@ const { runCadenceTick } = require("./services/cadenceEngine");
 const connectDB = require("./config/db");
 connectDB();
 
+const crypto = require("crypto");
+
 /* -------------------------------------------------------------------------- */
 /*                                 CONFIG                                     */
 /* -------------------------------------------------------------------------- */
@@ -557,8 +559,16 @@ function normalizeTikTokFields(fieldData) {
     }
   }
 
+  // Try full_name first, then combine first_name + last_name
+  let name = raw.full_name || raw.name || raw.fullname || "";
+  if (!name) {
+    const firstName = raw.first_name || raw.firstname || "";
+    const lastName = raw.last_name || raw.lastname || "";
+    name = [firstName, lastName].filter(Boolean).join(" ");
+  }
+
   return {
-    name: String(raw.full_name || raw.name || raw.fullname || "").trim(),
+    name: String(name).trim(),
     email: String(raw.email || raw.email_address || "").trim(),
     phone: normalizePhone(
       raw.phone_number || raw.phone || raw.phonenumber || "",
@@ -567,7 +577,6 @@ function normalizeTikTokFields(fieldData) {
     state: String(raw.state || raw.province || "").trim(),
   };
 }
-
 function normalizeLeadContactPayload(body) {
   const b = body || {};
   const name =
@@ -579,6 +588,30 @@ function normalizeLeadContactPayload(body) {
       .join(" ") ||
     "";
 
+  // Find any source-like key in the body
+  let sourceValue = "";
+  for (const key of Object.keys(b)) {
+    if (key.toLowerCase().includes("source")) {
+      sourceValue = b[key];
+      break;
+    }
+  }
+
+  // Determine source
+  let source;
+  if (sourceValue === "GS03RB7W") {
+    source = "LD Posting";
+  } else if (
+    sourceValue === "VF Landing Page" ||
+    String(sourceValue).toLowerCase().includes("landing")
+  ) {
+    source = "VF Landing Page";
+  } else if (sourceValue) {
+    source = sourceValue; // Pass through any other explicit source
+  } else {
+    source = "Digital Lead 2026"; // Default for website leads with no source
+  }
+
   return {
     name: String(name).trim(),
     email: String(b.email || b.email_address || b.emailAddress || "").trim(),
@@ -587,6 +620,7 @@ function normalizeLeadContactPayload(body) {
     ).digits,
     city: String(b.city || "").trim(),
     state: String(b.state || b.region || "").trim(),
+    source,
   };
 }
 
@@ -1113,7 +1147,7 @@ app.post("/lead-contact", async (req, res) => {
   console.log("[LEAD-CONTACT] Received:", fields);
 
   const result = await processLead(fields, {
-    source: "lead-contact",
+    source: req.body.source,
     meta: { received_at: new Date().toISOString() },
     doEmail: true,
     doSms: true,
@@ -1176,7 +1210,552 @@ app.post("/test-lead", async (req, res) => {
     },
   });
 });
+// ─────────────────────────────────────────────────────────────
+// ADD THIS TO webhook.js - Pre-ping route for lead filtering
+// ─────────────────────────────────────────────────────────────
 
+/**
+ * Calculate age from DOB
+ * Handles both string formats and Date objects
+ */
+function calculateAge(dob) {
+  if (!dob) return null;
+
+  let birthDate;
+
+  if (dob instanceof Date) {
+    birthDate = dob;
+  } else if (typeof dob === "string") {
+    // Try parsing various formats
+    // ISO: 2024-01-15, US: 01/15/2024, etc.
+    birthDate = new Date(dob);
+  } else if (typeof dob === "number") {
+    // Unix timestamp
+    birthDate = new Date(dob);
+  }
+
+  if (!birthDate || isNaN(birthDate.getTime())) {
+    console.log("[PRE-PING] Could not parse DOB:", dob);
+    return null;
+  }
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+
+  // Adjust if birthday hasn't occurred this year
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birthDate.getDate())
+  ) {
+    age--;
+  }
+
+  return age;
+}
+
+/**
+ * Normalize state to 2-letter uppercase
+ */
+function normalizeState(state) {
+  if (!state) return null;
+  return String(state).trim().toUpperCase().slice(0, 2);
+}
+
+/**
+ * Decrypt SHA256 hashed email
+ * Note: SHA256 is a one-way hash, so we can't "decrypt" it.
+ * If they're sending a hash, we need to hash our stored emails and compare.
+ *
+ * If they're actually sending encrypted data (AES, etc.), we'd need the key.
+ *
+ * For now, assuming they send the hash and we compare against hashed emails in DB.
+ */
+async function checkEmailHashExists(emailHash) {
+  // Get all emails from LeadCadence and hash them to compare
+  const leads = await LeadCadence.find({}, { email: 1 }).lean();
+
+  for (const lead of leads) {
+    if (!lead.email) continue;
+
+    const hashedEmail = crypto
+      .createHash("sha256")
+      .update(lead.email.toLowerCase().trim())
+      .digest("hex");
+
+    if (hashedEmail === emailHash.toLowerCase()) {
+      return true; // Found a match
+    }
+  }
+
+  return false;
+}
+
+/**
+ * POST /lead-contact/pre-ping
+ *
+ * Validates a lead before full submission:
+ * - State must be in allowed list (Midwest + CA)
+ * - Age must be 45+
+ * - Email hash must not already exist in database
+ *
+ * Request body:
+ * {
+ *   "state": "OH",
+ *   "dob": "1975-05-15" or Date object,
+ *   "email_hash": "sha256_hashed_email"
+ * }
+ *
+ * Response:
+ * - 200: Lead accepted, proceed with full POST to /lead-contact
+ * - 400: Lead rejected with reason
+ */
+// ─────────────────────────────────────────────────────────────
+// ADD THIS TO webhook.js - Pre-ping route for lead filtering
+// ─────────────────────────────────────────────────────────────
+
+const ALLOWED_STATES = [
+  "OH",
+  "IN",
+  "KS",
+  "NE",
+  "MO",
+  "IA",
+  "ND",
+  "SD",
+  "OK",
+  "CA",
+];
+
+// Minimum age requirement
+const MIN_AGE = 45;
+
+/**
+ * Calculate age from DOB
+ * Handles both string formats and Date objects
+ */
+function calculateAge(dob) {
+  console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
+  console.log("[PRE-PING:AGE] Input DOB:", dob);
+  console.log("[PRE-PING:AGE] Type:", typeof dob);
+
+  if (!dob) {
+    console.log("[PRE-PING:AGE] Result: null (no DOB provided)");
+    return null;
+  }
+
+  let birthDate;
+
+  if (dob instanceof Date) {
+    console.log("[PRE-PING:AGE] Parsing as Date object");
+    birthDate = dob;
+  } else if (typeof dob === "string") {
+    console.log("[PRE-PING:AGE] Parsing as string");
+    // Try parsing various formats
+    // ISO: 2024-01-15, US: 01/15/2024, etc.
+    birthDate = new Date(dob);
+  } else if (typeof dob === "number") {
+    console.log("[PRE-PING:AGE] Parsing as number (timestamp)");
+    birthDate = new Date(dob);
+  }
+
+  console.log("[PRE-PING:AGE] Parsed birthDate:", birthDate);
+  console.log("[PRE-PING:AGE] birthDate.getTime():", birthDate?.getTime());
+  console.log("[PRE-PING:AGE] isNaN:", isNaN(birthDate?.getTime()));
+
+  if (!birthDate || isNaN(birthDate.getTime())) {
+    console.log("[PRE-PING:AGE] Result: null (invalid date)");
+    console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
+    return null;
+  }
+
+  const today = new Date();
+  console.log("[PRE-PING:AGE] Today:", today.toISOString());
+  console.log("[PRE-PING:AGE] Birth year:", birthDate.getFullYear());
+  console.log("[PRE-PING:AGE] Current year:", today.getFullYear());
+
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+
+  console.log("[PRE-PING:AGE] Initial age calc:", age);
+  console.log("[PRE-PING:AGE] Month diff:", monthDiff);
+
+  // Adjust if birthday hasn't occurred this year
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birthDate.getDate())
+  ) {
+    age--;
+    console.log("[PRE-PING:AGE] Adjusted (birthday not yet):", age);
+  }
+
+  console.log("[PRE-PING:AGE] Final age:", age);
+  console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
+
+  return age;
+}
+
+/**
+ * Normalize state to 2-letter uppercase
+ */
+function normalizeState(state) {
+  console.log("[PRE-PING:STATE] ────────────────────────────────────────────");
+  console.log("[PRE-PING:STATE] Input state:", state);
+  console.log("[PRE-PING:STATE] Type:", typeof state);
+
+  if (!state) {
+    console.log("[PRE-PING:STATE] Result: null (no state provided)");
+    console.log(
+      "[PRE-PING:STATE] ────────────────────────────────────────────",
+    );
+    return null;
+  }
+
+  const normalized = String(state).trim().toUpperCase().slice(0, 2);
+  console.log("[PRE-PING:STATE] Normalized:", normalized);
+  console.log(
+    "[PRE-PING:STATE] In allowed list:",
+    ALLOWED_STATES.includes(normalized),
+  );
+  console.log("[PRE-PING:STATE] Allowed states:", ALLOWED_STATES.join(", "));
+  console.log("[PRE-PING:STATE] ────────────────────────────────────────────");
+
+  return normalized;
+}
+
+/**
+ * Check if MD5 hashed email exists in database
+ */
+async function checkEmailHashExists(emailHash) {
+  console.log("[PRE-PING:EMAIL] ────────────────────────────────────────────");
+  console.log("[PRE-PING:EMAIL] Input hash:", emailHash);
+  console.log("[PRE-PING:EMAIL] Hash length:", emailHash?.length);
+  console.log("[PRE-PING:EMAIL] Expected MD5 length: 32");
+
+  // Get all emails from LeadCadence and hash them to compare
+  const leads = await LeadCadence.find({}, { email: 1 }).lean();
+  console.log("[PRE-PING:EMAIL] Total leads in DB:", leads.length);
+  console.log(
+    "[PRE-PING:EMAIL] Leads with emails:",
+    leads.filter((l) => l.email).length,
+  );
+
+  let checkedCount = 0;
+  for (const lead of leads) {
+    if (!lead.email) continue;
+
+    checkedCount++;
+    // Use MD5 instead of SHA256
+    const hashedEmail = crypto
+      .createHash("md5")
+      .update(lead.email.toLowerCase().trim())
+      .digest("hex");
+
+    // Log first few comparisons for debugging
+    if (checkedCount <= 3) {
+      console.log(`[PRE-PING:EMAIL] Check #${checkedCount}:`);
+      console.log(
+        `[PRE-PING:EMAIL]   DB email: ${lead.email.substring(0, 5)}***`,
+      );
+      console.log(`[PRE-PING:EMAIL]   DB MD5:   ${hashedEmail}`);
+      console.log(`[PRE-PING:EMAIL]   Input:    ${emailHash}`);
+      console.log(
+        `[PRE-PING:EMAIL]   Match:    ${hashedEmail.toLowerCase() === emailHash.toLowerCase()}`,
+      );
+    }
+
+    if (hashedEmail.toLowerCase() === emailHash.toLowerCase()) {
+      console.log("[PRE-PING:EMAIL] ✗ DUPLICATE FOUND");
+      console.log("[PRE-PING:EMAIL]   Matching email:", lead.email);
+      console.log(
+        "[PRE-PING:EMAIL] ────────────────────────────────────────────",
+      );
+      return true;
+    }
+  }
+
+  console.log(
+    "[PRE-PING:EMAIL] Checked",
+    checkedCount,
+    "emails - no match found",
+  );
+  console.log("[PRE-PING:EMAIL] Result: Email is NEW (not in database)");
+  console.log("[PRE-PING:EMAIL] ────────────────────────────────────────────");
+
+  return false;
+}
+
+/**
+ * POST /lead-contact/pre-ping
+ *
+ * Validates a lead before full submission:
+ * - State must be in allowed list (Midwest + CA)
+ * - Age must be 45+
+ * - Email hash must not already exist in database
+ *
+ * Request body:
+ * {
+ *   "state": "OH",
+ *   "dob": "1975-05-15" or Date object,
+ *   "email_hash": "sha256_hashed_email"
+ * }
+ *
+ * Response:
+ * - 200: Lead accepted, proceed with full POST to /lead-contact
+ * - 400: Lead rejected with reason
+ */
+app.post("/lead-contact/pre-ping", async (req, res) => {
+  console.log("[PRE-PING] ══════════════════════════════════════════════════");
+  console.log("[PRE-PING] REQUEST RECEIVED");
+  console.log("[PRE-PING] ══════════════════════════════════════════════════");
+  console.log("[PRE-PING] Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("[PRE-PING] Raw body:", JSON.stringify(req.body, null, 2));
+  console.log("[PRE-PING] Body keys:", Object.keys(req.body || {}));
+
+  try {
+    // Their fields (single space for now, will adjust based on logs):
+    // First Name, Last Name, Phone, Date Of Birth, Gender, Address, City, State, Zip, Email
+
+    // Log ALL keys first so we can see exactly what they send
+    console.log(
+      "[PRE-PING] ──────────────────────────────────────────────────",
+    );
+    console.log("[PRE-PING] RAW BODY KEYS & VALUES:");
+    Object.keys(req.body || {}).forEach((key) => {
+      const val = req.body[key];
+      const displayVal =
+        typeof val === "string" && val.length > 40
+          ? val.substring(0, 40) + "..."
+          : val;
+      // Show spaces as dots for visibility
+      const keyWithDots = key.replace(/ /g, "·");
+      console.log(`[PRE-PING]   [${keyWithDots}] = "${displayVal}"`);
+    });
+    console.log(
+      "[PRE-PING] ──────────────────────────────────────────────────",
+    );
+
+    // Try multiple field name variations
+    const state =
+      req.body["State"] ||
+      req.body["state"] ||
+      req.body[" State"] ||
+      req.body["State "];
+
+    const dob =
+      req.body["Date Of Birth"] ||
+      req.body["Date  Of  Birth"] ||
+      req.body["DateOfBirth"] ||
+      req.body["date_of_birth"] ||
+      req.body["dob"] ||
+      req.body["DOB"] ||
+      req.body["Dob"];
+
+    // Email comes hashed
+    const hash =
+      req.body["Email"] ||
+      req.body["email"] ||
+      req.body["EMAIL"] ||
+      req.body["email_hash"] ||
+      req.body["Email Hash"] ||
+      req.body["Email_Hash"];
+
+    console.log("[PRE-PING] EXTRACTED (after field matching):");
+    console.log("[PRE-PING]   State →", state || "NOT FOUND");
+    console.log("[PRE-PING]   Date Of Birth →", dob || "NOT FOUND");
+    console.log(
+      "[PRE-PING]   Email (hash) →",
+      hash ? `${String(hash).substring(0, 32)}...` : "NOT FOUND",
+    );
+    console.log(
+      "[PRE-PING] ──────────────────────────────────────────────────",
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION 1: State check
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log("[PRE-PING] STEP 1: STATE VALIDATION");
+    const normalizedState = normalizeState(state);
+
+    if (!normalizedState) {
+      const response = {
+        ok: false,
+        error: "Missing state",
+        code: "MISSING_STATE",
+        received: { state },
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    if (!ALLOWED_STATES.includes(normalizedState)) {
+      const response = {
+        ok: false,
+        error: `State ${normalizedState} not accepted`,
+        code: "STATE_NOT_ALLOWED",
+        received: { state, normalized: normalizedState },
+        allowedStates: ALLOWED_STATES,
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    console.log("[PRE-PING] ✓ State check PASSED:", normalizedState);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION 2: Age check (must be 45+)
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log("[PRE-PING] STEP 2: AGE VALIDATION");
+    const age = calculateAge(dob);
+
+    if (age === null) {
+      const response = {
+        ok: false,
+        error: "Invalid or missing date of birth",
+        code: "INVALID_DOB",
+        received: { dob: dob, type: typeof dob },
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    if (age < MIN_AGE) {
+      const response = {
+        ok: false,
+        error: `Age ${age} does not meet minimum requirement of ${MIN_AGE}`,
+        code: "AGE_TOO_YOUNG",
+        received: { dob: dob, calculatedAge: age },
+        minAge: MIN_AGE,
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    console.log("[PRE-PING] ✓ Age check PASSED:", age, "years old");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION 3: Email hash duplicate check
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log("[PRE-PING] STEP 3: EMAIL DUPLICATE CHECK");
+
+    if (!hash) {
+      const response = {
+        ok: false,
+        error: "Missing email_hash",
+        code: "MISSING_EMAIL_HASH",
+        received: { email_hash, emailHash },
+        hint: "Send SHA256 hash of lowercase email as 'email_hash' field",
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    const emailExists = await checkEmailHashExists(hash);
+
+    if (emailExists) {
+      const response = {
+        ok: false,
+        error: "Duplicate email",
+        code: "DUPLICATE_EMAIL",
+        received: { email_hash: `${hash.substring(0, 20)}...` },
+      };
+      console.log(
+        "[PRE-PING] RESPONSE (400):",
+        JSON.stringify(response, null, 2),
+      );
+      console.log(
+        "[PRE-PING] ══════════════════════════════════════════════════",
+      );
+      return res.status(400).json(response);
+    }
+
+    console.log("[PRE-PING] ✓ Email check PASSED: Not a duplicate");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ALL CHECKS PASSED
+    // ═══════════════════════════════════════════════════════════════════════
+    const response = {
+      ok: true,
+      message: "Lead accepted - proceed with full submission to /lead-contact",
+      checks: {
+        state: normalizedState,
+        stateAllowed: true,
+        age: age,
+        ageValid: true,
+        emailNew: true,
+      },
+    };
+
+    console.log(
+      "[PRE-PING] ══════════════════════════════════════════════════",
+    );
+    console.log("[PRE-PING] ALL CHECKS PASSED ✓");
+    console.log(
+      "[PRE-PING] RESPONSE (200):",
+      JSON.stringify(response, null, 2),
+    );
+    console.log(
+      "[PRE-PING] ══════════════════════════════════════════════════",
+    );
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error(
+      "[PRE-PING] ══════════════════════════════════════════════════",
+    );
+    console.error("[PRE-PING] ERROR:", err.message);
+    console.error("[PRE-PING] Stack:", err.stack);
+    console.error(
+      "[PRE-PING] ══════════════════════════════════════════════════",
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error: "Internal error",
+      code: "INTERNAL_ERROR",
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Don't forget to add this require at the top of webhook.js:
+// const crypto = require("crypto");
+// ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+// Don't forget to add this require at the top of webhook.js:
+// const crypto = require("crypto");
+// ─────────────────────────────────────────────────────────────
 /* -------------------------------------------------------------------------- */
 /*                          START SERVER                                      */
 /* -------------------------------------------------------------------------- */

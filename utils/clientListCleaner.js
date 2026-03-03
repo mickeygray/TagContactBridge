@@ -108,7 +108,7 @@ function extractDatesFromText(text) {
     const [, month, day, year] = match;
     const fullYear = year.length === 2 ? `20${year}` : year;
     const parsed = new Date(
-      `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+      `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
     );
     if (!isNaN(parsed.getTime())) {
       dates.push({ date: parsed, raw: match[0] });
@@ -120,7 +120,7 @@ function extractDatesFromText(text) {
     "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
   const monthPattern = new RegExp(
     `(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s*(\\d{4})`,
-    "gi"
+    "gi",
   );
   while ((match = monthPattern.exec(text)) !== null) {
     const parsed = new Date(match[0]);
@@ -169,7 +169,7 @@ function getNoASContext(comment) {
 
   const dates = extractDatesFromText(comment);
   const noASMatch = comment.match(
-    /no\s*a\/s|no\s*add(itional)?\s*serv|no\s*adserv/i
+    /no\s*a\/s|no\s*add(itional)?\s*serv|no\s*adserv/i,
   );
 
   if (!noASMatch) return { text: comment, date: null };
@@ -318,7 +318,7 @@ async function processClient(client, domain) {
   try {
     billing = await fetchBillingSummary(
       domain,
-      parseInt(client.caseNumber, 10)
+      parseInt(client.caseNumber, 10),
     );
   } catch (e) {
     // Optional
@@ -336,7 +336,7 @@ async function processClient(client, domain) {
       result.reason = `Activity in last 30 days: "${
         act.Subject || "Note"
       }" by ${act.CreatedBy || "Unknown"} (most recent: ${formatDate(
-        mostRecentDate
+        mostRecentDate,
       )})`;
       return result;
     }
@@ -356,7 +356,7 @@ async function processClient(client, domain) {
       }
       result.status = "removed";
       result.reason = `Invoice ($${amount}) in last 90 days on ${formatDate(
-        inv.CreatedDate
+        inv.CreatedDate,
       )}`;
       return result;
     }
@@ -378,13 +378,13 @@ async function processClient(client, domain) {
           otherAmt > 0 &&
           matchesAnyPattern(
             other.Description || other.Subject || "",
-            LOAN_PATTERNS
+            LOAN_PATTERNS,
           ).matched
         );
       });
 
       const loanAmount = loanInvoice
-        ? loanInvoice.UnitPrice ?? loanInvoice.Amount ?? 0
+        ? (loanInvoice.UnitPrice ?? loanInvoice.Amount ?? 0)
         : 0;
       const totalLoanCost = Math.abs(amount) + loanAmount;
 
@@ -404,7 +404,7 @@ async function processClient(client, domain) {
     if (hardMatch.matched) {
       result.status = "removed";
       result.reason = `Bad language: "${hardMatch.text}" on ${formatDate(
-        act.CreatedDate
+        act.CreatedDate,
       )}`;
       return result;
     }
@@ -467,7 +467,7 @@ async function processClient(client, domain) {
         result.status = "removed";
         result.reason = `No A/S with negative clarification: "${context.text.substring(
           0,
-          100
+          100,
         )}"`;
         return result;
       }
@@ -511,7 +511,7 @@ async function cleanClientList(contacts, domain) {
   const removed = [];
 
   console.log(
-    `[ListCleaner] Starting: ${contacts.length} contacts for ${domain}`
+    `[ListCleaner] Starting: ${contacts.length} contacts for ${domain}`,
   );
 
   for (let i = 0; i < contacts.length; i++) {
@@ -538,14 +538,14 @@ async function cleanClientList(contacts, domain) {
       }
     } catch (err) {
       console.error(
-        `[ListCleaner] Error ${contact.caseNumber}: ${err.message}`
+        `[ListCleaner] Error ${contact.caseNumber}: ${err.message}`,
       );
       clean.push(contact);
     }
   }
 
   console.log(
-    `[ListCleaner] Done: ${clean.length} clean, ${flagged.length} flagged, ${removed.length} removed`
+    `[ListCleaner] Done: ${clean.length} clean, ${flagged.length} flagged, ${removed.length} removed`,
   );
 
   return {

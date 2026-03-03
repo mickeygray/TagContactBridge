@@ -22,7 +22,7 @@ export default function ListScrubber() {
     reader.onload = async (ev) => {
       try {
         const rows = await csv().fromString(
-          ev.target.result.replace(/\u0000/g, "")
+          ev.target.result.replace(/\u0000/g, ""),
         );
         const processed = rows
           .map((row) => ({
@@ -73,7 +73,7 @@ export default function ListScrubber() {
       setProgress(
         `Done: ${res.data.stats?.clean || 0} clean, ${
           res.data.stats?.flagged || 0
-        } flagged`
+        } flagged`,
       );
     } catch (err) {
       setProgress(err.response?.data?.error || "Clean failed - check console");
@@ -86,7 +86,7 @@ export default function ListScrubber() {
   // ============ REVIEW ACTIONS ============
   const handleApprove = (client) => {
     setFlaggedList((prev) =>
-      prev.filter((c) => c.caseNumber !== client.caseNumber)
+      prev.filter((c) => c.caseNumber !== client.caseNumber),
     );
     setCleanList((prev) => [
       ...prev,
@@ -96,7 +96,7 @@ export default function ListScrubber() {
 
   const handleReject = (client) => {
     setFlaggedList((prev) =>
-      prev.filter((c) => c.caseNumber !== client.caseNumber)
+      prev.filter((c) => c.caseNumber !== client.caseNumber),
     );
   };
 
@@ -129,15 +129,15 @@ export default function ListScrubber() {
 
       {/* Domain Select */}
       <div className="mb-4">
-        <label className="text-sm mr-2">Domain:</label>
+        <label className="text-sm mr-2">Domain: {domain}</label>
         <select
           value={domain}
           onChange={(e) => setDomain(e.target.value)}
           className="p-2 border rounded"
         >
-          <option>TAG</option>
-          <option>WYNN</option>
-          <option>AMITY</option>
+          <option value="TAG">TAG</option>
+          <option value="WYNN">WYNN</option>
+          <option value="AMITY">AMITY</option>
         </select>
       </div>
 
@@ -288,7 +288,7 @@ function FlagCard({ client, onApprove, onReject }) {
           {expanded && (
             <div className="px-4 pb-4 space-y-3">
               {flags.map((flag, i) =>
-                flag.data ? <FlagDetails key={i} flag={flag} /> : null
+                flag.data ? <FlagDetails key={i} flag={flag} /> : null,
               )}
             </div>
           )}
@@ -324,7 +324,7 @@ function FlagItem({ flag }) {
     <div className="flex items-start gap-2">
       <span
         className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium whitespace-nowrap ${getCategoryStyle(
-          flag.category
+          flag.category,
         )}`}
       >
         <span>{getCategoryIcon(flag.category)}</span>
