@@ -1,5 +1,5 @@
 /**
- * routes/listCleaner.js
+ * routes/cleaner.js
  */
 
 const express = require("express");
@@ -10,6 +10,7 @@ const {
 } = require("../middleware/authMiddleware");
 const {
   cleanClients,
+  cleanStatus,
   cleanProspectsPhone,
   cleanProspectsEmail,
 } = require("../controllers/listCleanerController");
@@ -17,6 +18,7 @@ const {
 router.use(authMiddleware, requireAdmin);
 
 router.post("/clients", cleanClients);
+router.get("/status/:jobId", cleanStatus);
 router.post("/prospects-phone", cleanProspectsPhone);
 router.post("/prospects-email", cleanProspectsEmail);
 

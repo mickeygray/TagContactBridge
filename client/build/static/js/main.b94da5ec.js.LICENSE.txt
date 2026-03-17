@@ -14,8 +14,6 @@ License: MIT
 
 /*! sheetjs (C) 2013-present SheetJS -- http://sheetjs.com */
 
-/*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
-
 /**
  * @license React
  * react-dom-client.production.js

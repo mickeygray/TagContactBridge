@@ -7,6 +7,8 @@
 //   - Sets isAuthenticated = true on success, false on failure
 //   - placeRingOutCall() just checks the flag (no async auth)
 //   - If call fails with 401, flag flips and we retry once
+//   - If call fails with 429, returns rateLimited flag + retryAfter
+//     so the cadence engine can pace itself
 // ─────────────────────────────────────────────────────────────
 
 const RC = require("@ringcentral/sdk").SDK;
@@ -14,7 +16,7 @@ const RC = require("@ringcentral/sdk").SDK;
 // Module-level state
 let rcSdk = null;
 let platform = null;
-let isAuthenticated = false; // Simple flag - no async check needed
+let isAuthenticated = false;
 
 /**
  * Get or create the RingCentral platform instance.
@@ -57,9 +59,36 @@ async function doLogin() {
 }
 
 /**
+ * Extract Retry-After value from a RingCentral error response.
+ * Returns seconds to wait, or a default of 65.
+ */
+function extractRetryAfter(err) {
+  // The RC SDK wraps the response — try multiple paths
+  const headers =
+    err?.response?.headers || err?.apiResponse?.response?.headers || {};
+
+  // headers might be a Headers object or a plain object
+  let retryAfter;
+  if (typeof headers.get === "function") {
+    retryAfter = headers.get("retry-after");
+  } else {
+    retryAfter =
+      headers["retry-after"] ||
+      headers["Retry-After"] ||
+      headers["x-rate-limit-window"];
+  }
+
+  const parsed = parseInt(retryAfter, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 65;
+}
+
+/**
  * Places a RingCentral RingOut call.
- * If isAuthenticated is true, goes straight to call (no async auth).
- * If false, attempts auth first.
+ *
+ * Returns:
+ *   { ok: true,  status, sessionId, raw }           — call placed
+ *   { ok: false, error, rateLimited, retryAfter }   — 429 rate limit
+ *   { ok: false, error }                            — other failure
  */
 async function placeRingOutCall({ toNumber, fromNumber, playPrompt = false }) {
   console.log("[RC] ═══════════════════════════════════════");
@@ -100,13 +129,28 @@ async function placeRingOutCall({ toNumber, fromNumber, playPrompt = false }) {
       ok: true,
       status: json?.status?.callStatus,
       sessionId: json?.id,
+      ringOutId: json?.id,
       raw: json,
     };
   } catch (err) {
-    const status = err?.response?.status;
+    const status = err?.response?.status || err?.statusCode;
     console.error("[RC] ✗ RingOut error:", err.message, "HTTP:", status);
 
-    // Token expired mid-cycle — re-auth and retry once
+    // ── 429 Rate Limited — DO NOT retry, propagate to cadence engine ──
+    if (status === 429) {
+      const retryAfter = extractRetryAfter(err);
+      console.log(`[RC] ⚠ RATE LIMITED (429) — Retry-After: ${retryAfter}s`);
+      console.log("[RC] ═══════════════════════════════════════");
+      return {
+        ok: false,
+        error: `Rate limited (429) — retry after ${retryAfter}s`,
+        rateLimited: true,
+        retryAfter,
+        statusCode: 429,
+      };
+    }
+
+    // ── 401 Token expired — re-auth and retry once ──
     if (status === 401) {
       console.log("[RC] Token expired — re-authenticating...");
       isAuthenticated = false;
@@ -128,9 +172,27 @@ async function placeRingOutCall({ toNumber, fromNumber, playPrompt = false }) {
           ok: true,
           status: json2?.status?.callStatus,
           sessionId: json2?.id,
+          ringOutId: json2?.id,
           raw: json2,
         };
       } catch (err2) {
+        const status2 = err2?.response?.status || err2?.statusCode;
+
+        // Retry itself got rate limited
+        if (status2 === 429) {
+          const retryAfter = extractRetryAfter(err2);
+          console.log(
+            `[RC] ⚠ Retry also rate limited (429) — Retry-After: ${retryAfter}s`,
+          );
+          return {
+            ok: false,
+            error: `Rate limited on retry (429)`,
+            rateLimited: true,
+            retryAfter,
+            statusCode: 429,
+          };
+        }
+
         console.error("[RC] ✗ Retry failed:", err2.message);
         return {
           ok: false,
@@ -179,9 +241,17 @@ function getAuthStatus() {
   return { isAuthenticated, sdkInitialized: !!rcSdk };
 }
 
+/**
+ * Get the platform instance for external use (e.g. connection checker).
+ */
+function getPlatformInstance() {
+  return platform;
+}
+
 module.exports = {
   placeRingOutCall,
   warmup,
   getAuthStatus,
+  getPlatformInstance,
   doLogin,
 };

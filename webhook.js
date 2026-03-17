@@ -3,25 +3,47 @@ require("dotenv").config();
 
 const express = require("express");
 const bodyParser = require("body-parser");
-const nodemailer = require("nodemailer");
-const fs = require("fs");
 const path = require("path");
-const handlebars = require("handlebars");
 const axios = require("axios");
 const cron = require("node-cron");
-const {
-  placeRingOutCall,
-  warmup: warmupRingCentral,
-} = require("./services/ringCentralService");
 const { createLeadAdCase } = require("./services/logicsService");
 const { validateLead } = require("./services/validationService");
 const LeadCadence = require("./models/LeadCadence");
 const { getSmsContent } = require("./services/smsContent");
-const { runCadenceTick } = require("./services/cadenceEngine");
+const {
+  runCadenceTick,
+  daysSinceCreation,
+} = require("./services/cadenceEngine");
+const {
+  dropVoicemail,
+  handleDropWebhook,
+  checkBalance,
+} = require("./services/dropRVMService");
 const connectDB = require("./config/db");
-connectDB();
-
+const { runDbHealthChecks } = require("./config/dbHealth");
+const { runStatusCheck } = require("./services/statusChecker");
+connectDB().then(() => {
+  runDbHealthChecks().catch((err) =>
+    console.error("[STARTUP] Migration error:", err.message),
+  );
+});
+const {
+  getCompanyConfig,
+  resolveCompanyFromFbPageId,
+  getFbPageToken,
+  resolveCompanyFromTtAdvertiserId,
+  resolveCompanyFromPayload,
+} = require("./config/companyConfig");
 const crypto = require("crypto");
+const {
+  sendEmail,
+  sendLeadNotificationEmail,
+} = require("./services/emailService");
+const pbService = require("./services/phoneBurnerService");
+const cookieParser = require("cookie-parser");
+
+const deployService = require("./services/deployService");
+const { mountDeployPanel } = require("./services/deployPanel");
 
 /* -------------------------------------------------------------------------- */
 /*                                 CONFIG                                     */
@@ -36,24 +58,18 @@ const TO_EMAIL = process.env.TO_EMAIL || "inquiry@taxadvocategroup.com";
 // /lead-contact + /test-lead protection
 const LEAD_WEBHOOK_SECRET = process.env.LEAD_WEBHOOK_SECRET || "";
 
-// Dial settings (PT)
-const DIAL_QUEUE_PATH = path.join(__dirname, "dial-queue.json");
+// Business hours (PT)
 const BUSINESS_TZ = process.env.BUSINESS_TZ || "America/Los_Angeles";
-const BUSINESS_START_HOUR = Number(process.env.BUSINESS_START_HOUR || 7);
-const BUSINESS_END_HOUR = Number(process.env.BUSINESS_END_HOUR || 17);
-
-// RingCentral
-const RINGOUT_CALLER = process.env.RING_CENTRAL_RINGOUT_CALLER || "";
+const BUSINESS_START_HOUR = Number(9);
+const BUSINESS_END_HOUR = Number(process.env.BUSINESS_END_HOUR || 18);
 
 // Facebook
 const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "";
-const FB_PAGE_TOKEN =
-  process.env.FB_PAGE_TOKEN || process.env.FB_LEADS_ID || "";
 
 // TikTok
 const TT_VERIFY_TOKEN = process.env.TT_VERIFY_TOKEN || "";
 
-// Feature flags (env-configurable, all default to ENABLED)
+// Feature flags
 const ENABLE_FACEBOOK_OUTREACH =
   process.env.ENABLE_FACEBOOK_OUTREACH !== "false";
 const ENABLE_FACEBOOK_DIAL = process.env.ENABLE_FACEBOOK_DIAL !== "false";
@@ -68,8 +84,10 @@ const ENABLE_TIKTOK_CASE = process.env.ENABLE_TIKTOK_CASE !== "false";
 /* -------------------------------------------------------------------------- */
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
+app.use(bodyParser.json());
+app.use("/audio", express.static(path.join(__dirname, "audio")));
 app.use((req, res, next) => {
   console.log(`→ ${req.method} ${req.url}`);
   if (req.body && Object.keys(req.body).length) {
@@ -77,6 +95,55 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use(cookieParser());
+mountDeployPanel(app, deployService);
+app.get("/pb/auth", (req, res) => {
+  const url = `https://www.phoneburner.com/oauth/authorize?client_id=${process.env.PB_CLIENT_ID}&redirect_uri=https://tag-webhook.ngrok.app/pb/callback&response_type=code`;
+  res.redirect(url);
+});
+
+// ── PB OAuth: catches the redirect, exchanges for token ──
+app.get("/pb/callback", async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send("No code received");
+
+  try {
+    const response = await axios.post(
+      "https://www.phoneburner.com/oauth/accesstoken",
+      new URLSearchParams({
+        client_id: process.env.PB_CLIENT_ID,
+        client_secret: process.env.PB_CLIENT_SECRET,
+        redirect_uri: "https://tag-webhook.ngrok.app/pb/callback",
+        grant_type: "authorization_code",
+        code,
+      }).toString(),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+    );
+
+    const { access_token, refresh_token, expires_in } = response.data;
+    console.log("[PB-AUTH] ═══════════════════════════════════════");
+    console.log("[PB-AUTH] ✓ ACCESS TOKEN:", access_token);
+    console.log("[PB-AUTH] ✓ REFRESH TOKEN:", refresh_token);
+    console.log("[PB-AUTH] ✓ EXPIRES IN:", expires_in, "seconds");
+    console.log("[PB-AUTH] ═══════════════════════════════════════");
+
+    res.send(
+      `<h2>PB Auth Success</h2><pre>Access Token: ${access_token}\nRefresh Token: ${refresh_token}\nExpires In: ${expires_in}s</pre><p>Copy the access token into your .env as PB_HOT_SEAT_TOKEN</p>`,
+    );
+  } catch (err) {
+    console.error(
+      "[PB-AUTH] ✗ Token exchange failed:",
+      err.response?.data || err.message,
+    );
+    res
+      .status(500)
+      .send(
+        `Token exchange failed: ${JSON.stringify(err.response?.data || err.message)}`,
+      );
+  }
+});
+pbService.mountCallDone(app);
+pbService.mountOAuth(app);
 
 /* -------------------------------------------------------------------------- */
 /*                           PHONE NORMALIZATION                              */
@@ -116,160 +183,40 @@ function isWithinBusinessHoursPT(date = new Date()) {
   const hour = Number(get("hour"));
   const weekday = get("weekday");
 
-  // Monday-Friday only
   if (weekday === "Sat" || weekday === "Sun") return false;
-
   return hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
 }
 
 /* -------------------------------------------------------------------------- */
-/*                        SENDGRID EMAIL TRANSPORTER                          */
-/* -------------------------------------------------------------------------- */
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SENDGRID_GATEWAY || "smtp.sendgrid.net",
-  port: process.env.SENDGRID_PORT || 587,
-  secure: false,
-  auth: {
-    user: process.env.SENDGRID_USER || "apikey",
-    pass: process.env.WYNN_API_KEY,
-  },
-});
-
-/* -------------------------------------------------------------------------- */
-/*                     PROSPECT WELCOME TEMPLATE (HBS)                        */
-/* -------------------------------------------------------------------------- */
-
-const PROSPECT_WELCOME_TPL_PATH = path.join(
-  __dirname,
-  "Templates",
-  "ProspectWelcome",
-  "handlebars",
-  "ProspectWelcome1.hbs",
-);
-const PROSPECT_LOGO_PATH = path.join(
-  __dirname,
-  "Templates",
-  "ProspectWelcome",
-  "images",
-  "Wynn_Logo.png",
-);
-const PROSPECT_PDF_PATH = path.join(
-  __dirname,
-  "Templates",
-  "ProspectWelcome",
-  "attachments",
-  "wynn-tax-guide.pdf",
-);
-
-let prospectWelcomeTpl = null;
-try {
-  if (fs.existsSync(PROSPECT_WELCOME_TPL_PATH)) {
-    prospectWelcomeTpl = handlebars.compile(
-      fs.readFileSync(PROSPECT_WELCOME_TPL_PATH, "utf8"),
-    );
-    console.log("[TEMPLATE] ✓ ProspectWelcome loaded");
-  } else {
-    console.warn("[TEMPLATE] ⚠ Not found:", PROSPECT_WELCOME_TPL_PATH);
-  }
-} catch (err) {
-  console.error("[TEMPLATE] Error:", err.message);
-}
-/* -------------------------------------------------------------------------- */
-/*                      CALLFIRE NOON AUTO-DIALER CRON                        */
-/* -------------------------------------------------------------------------- */
-
-const {
-  addContactsToBroadcast,
-  startBroadcast,
-} = require("./services/callFireService");
-const { daysSinceCreation } = require("./services/cadenceEngine");
-
-// Run at noon PT, Mon-Fri — add Day 2+ leads to CallFire broadcast
-cron.schedule(
-  "0 12 * * 1-5",
-  async () => {
-    console.log("[CALLFIRE-CRON] ══ Running noon auto-dialer ══");
-
-    try {
-      const leads = await LeadCadence.find({
-        active: true,
-        phoneConnected: true,
-      }).lean();
-
-      const day2PlusLeads = leads.filter((lead) => {
-        const day = daysSinceCreation(lead.createdAt);
-        return day >= 2;
-      });
-
-      if (day2PlusLeads.length === 0) {
-        console.log("[CALLFIRE-CRON] No Day 2+ leads to dial");
-        return;
-      }
-
-      console.log(`[CALLFIRE-CRON] Found ${day2PlusLeads.length} Day 2+ leads`);
-
-      const contacts = day2PlusLeads.map((lead) => ({
-        phone: lead.phone,
-        name: lead.name,
-        caseId: lead.caseId,
-      }));
-
-      const result = await addContactsToBroadcast(contacts);
-
-      if (result.ok) {
-        console.log(
-          `[CALLFIRE-CRON] ✓ Added ${result.added} contacts to broadcast`,
-        );
-        await startBroadcast();
-      } else {
-        console.error(`[CALLFIRE-CRON] ✗ Failed: ${result.errors.join(", ")}`);
-      }
-    } catch (err) {
-      console.error("[CALLFIRE-CRON] Error:", err.message);
-    }
-  },
-  { timezone: "America/Los_Angeles" },
-);
-/* -------------------------------------------------------------------------- */
 /*                          CALLRAIL SMS HELPER                               */
 /* -------------------------------------------------------------------------- */
 
-const CALLRAIL_BASE = `https://api.callrail.com/v3/a/${process.env.CALL_RAIL_ACCOUNT_ID}`;
-
-/**
- * Send SMS via CallRail with content varying by sequence number.
- *
- * @param {string} phoneNumber - Recipient phone
- * @param {string} name - Lead's first name
- * @param {number} textNum - Sequence number (1, 2, or 3) for varied content
- */
-async function sendWelcomeText(phoneNumber, name, textNum = 1) {
+async function sendWelcomeText(
+  phoneNumber,
+  name,
+  textNum = 1,
+  company = "WYNN",
+) {
   if (!phoneNumber) return { ok: false, error: "No phone" };
 
   try {
     const { digits } = normalizePhone(phoneNumber);
     if (!digits) return { ok: false, error: "Invalid phone" };
 
-    // Get varied content based on sequence number
-    const scheduleUrl =
-      process.env.WYNN_SCHEDULE_URL ||
-      "https://www.wynntaxsolutions.com/schedule";
-    const content = getSmsContent(name, scheduleUrl, textNum);
-
-    console.log(`[SMS] Sending text #${textNum} to:`, digits);
+    const config = getCompanyConfig(company);
+    const content = getSmsContent(name, config.scheduleUrl, textNum);
 
     await axios.post(
-      `${CALLRAIL_BASE}/text-messages.json`,
+      `https://api.callrail.com/v3/a/${config.callrailAccountId}/text-messages.json`,
       {
         customer_phone_number: digits,
-        tracking_number: process.env.CALL_RAIL_TRACKING_NUMBER,
+        tracking_number: config.callrailTrackingNumber,
         content,
-        company_id: process.env.CALL_RAIL_COMPANY_ID,
+        company_id: config.callrailCompanyId,
       },
       {
         headers: {
-          Authorization: `Token token=${process.env.CALL_RAIL_KEY}`,
+          Authorization: `Token token=${config.callrailKey}`,
           "Content-Type": "application/json",
         },
       },
@@ -283,227 +230,6 @@ async function sendWelcomeText(phoneNumber, name, textNum = 1) {
     return { ok: false, error: errMsg };
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*                          WELCOME EMAIL HELPER                              */
-/* -------------------------------------------------------------------------- */
-
-async function sendWelcomeEmail(email, name) {
-  if (!email) return { ok: false, error: "No email" };
-  if (!prospectWelcomeTpl) return { ok: false, error: "Template not loaded" };
-
-  try {
-    const scheduleUrl =
-      process.env.WYNN_CALENDAR_SCHEDULE_URL ||
-      process.env.TAG_CALENDAR_SCHEDULE_URL ||
-      "https://calendly.com/wynntax";
-
-    const html = prospectWelcomeTpl({
-      name: name || "there",
-      scheduleUrl,
-      year: new Date().getFullYear(),
-    });
-
-    const attachments = [];
-    if (fs.existsSync(PROSPECT_LOGO_PATH)) {
-      attachments.push({
-        filename: "Wynn_Logo.png",
-        path: PROSPECT_LOGO_PATH,
-        cid: "emailLogo",
-      });
-    }
-    if (fs.existsSync(PROSPECT_PDF_PATH)) {
-      attachments.push({
-        filename: "Wynn_Tax_Guide.pdf",
-        path: PROSPECT_PDF_PATH,
-      });
-    }
-
-    console.log("[EMAIL] Sending to:", email);
-
-    const info = await transporter.sendMail({
-      from: `Wynn Tax Solutions <${FROM_EMAIL}>`,
-      to: email,
-      subject: `Welcome to Wynn Tax Solutions, ${name || "there"}!`,
-      html,
-      attachments,
-    });
-
-    console.log("[EMAIL] ✓ Sent:", email);
-    return { ok: true, messageId: info?.messageId };
-  } catch (err) {
-    console.error("[EMAIL] ✗ Failed:", err.message);
-    return { ok: false, error: err.message };
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/*                         BUSINESS HOURS DIAL QUEUE                          */
-/* -------------------------------------------------------------------------- */
-
-function loadDialQueue() {
-  try {
-    if (!fs.existsSync(DIAL_QUEUE_PATH)) return [];
-    const raw = fs.readFileSync(DIAL_QUEUE_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    console.error("[DIAL-QUEUE] Load failed:", e.message);
-    return [];
-  }
-}
-
-function saveDialQueue(queue) {
-  try {
-    fs.writeFileSync(DIAL_QUEUE_PATH, JSON.stringify(queue, null, 2));
-  } catch (e) {
-    console.error("[DIAL-QUEUE] Save failed:", e.message);
-  }
-}
-
-let dialQueue = loadDialQueue();
-
-function enqueueDial(fields, source = "unknown") {
-  return enqueueContact(fields, source, "dial");
-}
-
-function enqueueContact(fields, source = "unknown", type = "dial") {
-  const item = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    createdAt: new Date().toISOString(),
-    source,
-    type, // "dial" or "sms"
-    fields,
-    attempts: 0,
-  };
-  dialQueue.push(item);
-  saveDialQueue(dialQueue);
-  console.log(`[QUEUE] Enqueued ${type}:`, item.id, source, fields.phone);
-  return item.id;
-}
-
-function dequeueNext() {
-  const item = dialQueue.shift();
-  saveDialQueue(dialQueue);
-  return item;
-}
-
-async function dialLeadNow(fields) {
-  console.log("[DIAL] ══════════════════════════════════════");
-  console.log("[DIAL] Input fields:", JSON.stringify(fields, null, 2));
-
-  const { raw, digits, e164 } = normalizePhone(fields?.phone);
-  console.log("[DIAL] Phone normalized:", { raw, digits, e164 });
-
-  if (!e164) {
-    console.log("[DIAL] ✗ Invalid phone — aborting");
-    return { ok: false, error: "Invalid phone" };
-  }
-
-  if (!RINGOUT_CALLER) {
-    console.log("[DIAL] ✗ Missing RING_CENTRAL_RINGOUT_CALLER env var");
-    return { ok: false, error: "Missing RING_CENTRAL_RINGOUT_CALLER" };
-  }
-
-  console.log("[DIAL] Placing RingOut call:");
-  console.log("[DIAL]   From:", RINGOUT_CALLER);
-  console.log("[DIAL]   To:", e164);
-  console.log("[DIAL]   PlayPrompt:", false);
-
-  try {
-    const result = await placeRingOutCall({
-      toNumber: e164,
-      fromNumber: RINGOUT_CALLER,
-      playPrompt: false,
-    });
-
-    console.log("[DIAL] ✓ RingOut response:", JSON.stringify(result, null, 2));
-    console.log("[DIAL] ══════════════════════════════════════");
-    return result;
-  } catch (err) {
-    console.error("[DIAL] ✗ RingOut error:", err.message);
-    if (err.response) {
-      console.error("[DIAL] Status:", err.response.status);
-      console.error("[DIAL] Data:", JSON.stringify(err.response.data, null, 2));
-    }
-    console.log("[DIAL] ══════════════════════════════════════");
-    return { ok: false, error: err.message };
-  }
-}
-
-async function dialNowOrQueue(fields, source = "unknown") {
-  if (!fields?.phone) return { ok: false, error: "No phone" };
-
-  if (!isWithinBusinessHoursPT()) {
-    const queuedId = enqueueDial(fields, source);
-    return { ok: true, queued: true, queuedId };
-  }
-
-  const result = await dialLeadNow(fields);
-  return { ok: result?.ok, immediate: true, ...result };
-}
-
-async function smsNowOrQueue(fields, source = "unknown") {
-  if (!fields?.phone) return { ok: false, error: "No phone" };
-
-  if (!isWithinBusinessHoursPT()) {
-    const queuedId = enqueueContact(fields, source, "sms");
-    return { ok: true, queued: true, queuedId };
-  }
-
-  return sendWelcomeText(fields.phone, fields.name);
-}
-
-let isDraining = false;
-
-async function drainDialQueue() {
-  if (isDraining || !isWithinBusinessHoursPT() || !dialQueue.length) return;
-
-  isDraining = true;
-  console.log(`[QUEUE] Draining ${dialQueue.length} queued item(s)...`);
-
-  try {
-    while (isWithinBusinessHoursPT() && dialQueue.length) {
-      const item = dequeueNext();
-      item.attempts = (item.attempts || 0) + 1;
-      const type = item.type || "dial"; // backwards compat for old queued items
-
-      console.log(
-        `[QUEUE] Processing ${type}:`,
-        item.id,
-        item.source,
-        item.fields?.phone,
-      );
-
-      let result;
-      if (type === "sms") {
-        result = await sendWelcomeText(item.fields?.phone, item.fields?.name);
-      } else {
-        result = await dialLeadNow(item.fields);
-      }
-
-      if (!result?.ok) {
-        console.warn(`[QUEUE] ${type} failed:`, item.id, result?.error);
-        if (item.attempts < 3) {
-          dialQueue.push(item);
-          saveDialQueue(dialQueue);
-          console.log("[QUEUE] Re-enqueued:", item.id);
-        } else {
-          console.log("[QUEUE] Dropped after 3 attempts:", item.id);
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      } else {
-        console.log(`[QUEUE] ✓ ${type} completed:`, item.id);
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-    }
-  } finally {
-    isDraining = false;
-  }
-}
-
-setInterval(() => drainDialQueue().catch(() => {}), 30 * 1000);
-drainDialQueue().catch(() => {});
 
 /* -------------------------------------------------------------------------- */
 /*                          FIELD NORMALIZERS                                 */
@@ -521,7 +247,6 @@ function normalizeFacebookFields(fieldData) {
     [raw.first_name, raw.last_name].filter(Boolean).join(" ") ||
     "";
 
-  // Detect Facebook test leads (contain "<test lead:" in values)
   const isTestLead = Object.values(raw).some((v) =>
     String(v).includes("<test lead:"),
   );
@@ -530,8 +255,8 @@ function normalizeFacebookFields(fieldData) {
     console.log("[FB] ⚠ Test lead detected — using hardcoded test data");
     return {
       name: "Test Lead",
-      email: "your@email.com", // TODO: Replace with your email
-      phone: "3106665997", // TODO: Replace with your phone
+      email: "your@email.com",
+      phone: "3106665997",
       city: "Los Angeles",
       state: "CA",
     };
@@ -559,7 +284,6 @@ function normalizeTikTokFields(fieldData) {
     }
   }
 
-  // Try full_name first, then combine first_name + last_name
   let name = raw.full_name || raw.name || raw.fullname || "";
   if (!name) {
     const firstName = raw.first_name || raw.firstname || "";
@@ -577,6 +301,7 @@ function normalizeTikTokFields(fieldData) {
     state: String(raw.state || raw.province || "").trim(),
   };
 }
+
 function normalizeLeadContactPayload(body) {
   const b = body || {};
   const name =
@@ -588,7 +313,6 @@ function normalizeLeadContactPayload(body) {
       .join(" ") ||
     "";
 
-  // Find any source-like key in the body
   let sourceValue = "";
   for (const key of Object.keys(b)) {
     if (key.toLowerCase().includes("source")) {
@@ -597,7 +321,6 @@ function normalizeLeadContactPayload(body) {
     }
   }
 
-  // Determine source
   let source;
   if (sourceValue === "GS03RB7W") {
     source = "LD Posting";
@@ -607,9 +330,9 @@ function normalizeLeadContactPayload(body) {
   ) {
     source = "VF Landing Page";
   } else if (sourceValue) {
-    source = sourceValue; // Pass through any other explicit source
+    source = sourceValue;
   } else {
-    source = "Digital Lead 2026"; // Default for website leads with no source
+    source = "Digital Lead 2026";
   }
 
   return {
@@ -628,24 +351,11 @@ function normalizeLeadContactPayload(body) {
 /*                     UNIFIED LEAD PIPELINE                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Process a lead through the full pipeline.
- * All steps are opt-in via flags.
- *
- * @param {object} fields - { name, email, phone, city, state }
- * @param {object} opts
- * @param {string} opts.source - "facebook" | "tiktok" | "lead-contact" | "test"
- * @param {object} opts.meta - Platform-specific metadata (form_id, adgroup_id, etc.)
- * @param {boolean} opts.doEmail - Send welcome email (default: true)
- * @param {boolean} opts.doSms - Send welcome SMS (default: true)
- * @param {boolean} opts.doDial - Place outbound call (default: true)
- * @param {boolean} opts.doCase - Create Logics case (default: true)
- * @param {boolean} opts.doNotify - Send internal notification (default: true)
- */
 async function processLead(fields, opts = {}) {
   const {
     source = "unknown",
     meta = {},
+    company = "WYNN",
     doEmail = true,
     doSms = true,
     doDial = true,
@@ -654,7 +364,10 @@ async function processLead(fields, opts = {}) {
   } = opts;
 
   console.log(
-    `[PIPELINE] ${source}: ${fields.name || fields.email || fields.phone}`,
+    `[PIPELINE] ══════════════════════════════════════════════════════════`,
+  );
+  console.log(
+    `[PIPELINE] Processing ${source} lead: ${fields.name || fields.email || fields.phone}`,
   );
 
   const results = {
@@ -666,10 +379,41 @@ async function processLead(fields, opts = {}) {
     mongoId: null,
   };
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 1: VALIDATE PHONE & EMAIL FIRST
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`[PIPELINE] Validating phone/email...`);
+  // SPAM CHECK: reject gibberish names before anything
+  function isGibberishName(name) {
+    if (!name || name.trim().length < 2) return true;
+    const clean = name
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, "")
+      .trim();
+    if (clean.length < 2) return false;
+
+    const parts = clean.split(/\s+/).filter((p) => p.length > 0);
+
+    for (const part of parts) {
+      if (part.length < 2) continue;
+      if (/[^aeiou\s]{4,}/.test(part)) return true;
+      if (part.length >= 3 && !/[aeiou]/.test(part)) return true;
+      if (/(.)\1{2,}/.test(part)) return true;
+    }
+
+    const letters = clean.replace(/\s/g, "");
+    const vowels = (letters.match(/[aeiou]/g) || []).length;
+    if (letters.length >= 6 && vowels / letters.length < 0.15) return true;
+
+    return false;
+  }
+  if (isGibberishName(fields.name)) {
+    console.log(`[PIPELINE] ✗ Rejected — gibberish name: "${fields.name}"`);
+    return {
+      ...results,
+      rejected: true,
+      reason: "gibberish-name",
+    };
+  }
+
+  // STEP 1: VALIDATE
+  console.log(`[PIPELINE] Step 1: Validating phone/email...`);
   const validation = await validateLead({
     phone: fields.phone,
     email: fields.email,
@@ -678,25 +422,23 @@ async function processLead(fields, opts = {}) {
 
   console.log(`[PIPELINE] Validation results:`);
   console.log(
-    `[PIPELINE]   Phone: connected=${validation.phoneValid}, isCell=${validation.phoneIsCell}, canCall=${validation.phoneCanCall}, canText=${validation.phoneCanText}`,
+    `[PIPELINE]   Phone: valid=${validation.phoneValid} canCall=${validation.phoneCanCall} canText=${validation.phoneCanText} isCell=${validation.phoneIsCell}`,
   );
   console.log(
-    `[PIPELINE]   Email: result=${validation.emailResult}, canSend=${validation.emailCanSend}`,
+    `[PIPELINE]   Email: canSend=${validation.emailCanSend} result=${validation.emailResult}`,
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 2: CREATE LOGICS CASE (always, even if validation fails)
-  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 2: CREATE LOGICS CASE
   if (doCase) {
-    const logicsResult = await createLeadAdCase("WYNN", fields, source, meta);
+    console.log(`[PIPELINE] Step 2: Creating Logics case...`);
+    const logicsResult = await createLeadAdCase(company, fields, source, meta);
     results.caseId = logicsResult.caseId;
     console.log(`[PIPELINE] Logics CaseID: ${results.caseId || "FAILED"}`);
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 3: SAVE TO MONGODB WITH ACTUAL VALIDATION RESULTS
-  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 3: SAVE TO MONGODB
   if (results.caseId) {
+    console.log(`[PIPELINE] Step 3: Saving to MongoDB...`);
     try {
       const existingLead = await LeadCadence.findOne({
         caseId: results.caseId,
@@ -710,6 +452,7 @@ async function processLead(fields, opts = {}) {
       } else {
         const leadDoc = await LeadCadence.create({
           caseId: results.caseId,
+          company: company,
           name: fields.name || "",
           email: fields.email || "",
           phone: fields.phone || "",
@@ -720,12 +463,9 @@ async function processLead(fields, opts = {}) {
           )
             ? source
             : "unknown",
-
-          // Store ACTUAL validation results
           emailValid: validation.emailCanSend,
           phoneConnected: validation.phoneValid,
           phoneIsCell: validation.phoneIsCell,
-
           validationDetails: {
             phoneStatus: validation.phone?.status || "unknown",
             phoneCanCall: validation.phoneCanCall,
@@ -735,17 +475,44 @@ async function processLead(fields, opts = {}) {
             emailResult: validation.emailResult || "unknown",
             emailFlags: validation.email?.flags || [],
           },
-
+          day0CallsMade: 0,
+          day0Connected: false,
           welcomeEmailSent: false,
           active: true,
         });
         results.mongoId = leadDoc._id;
         console.log(`[PIPELINE] MongoDB: ✓ Saved — ID: ${leadDoc._id}`);
+
+        // Set per-channel DNC at intake based on validation
+        const dncUpdates = {};
+        if (!validation.phoneCanText || !validation.phoneIsCell) {
+          dncUpdates.smsDnc = true;
+          dncUpdates.smsDncReason = !validation.phoneIsCell
+            ? "landline"
+            : "invalid-phone";
+        }
+        if (validation.phone?.onNationalDNC) {
+          dncUpdates.rvmDnc = true;
+          dncUpdates.rvmDncReason = "national-dnc";
+        }
+        if (Object.keys(dncUpdates).length) {
+          dncUpdates.dncUpdatedAt = new Date();
+          await LeadCadence.updateOne(
+            { _id: leadDoc._id },
+            { $set: dncUpdates },
+          ).catch(() => {});
+          console.log(
+            `[PIPELINE] DNC flags set at intake:`,
+            Object.keys(dncUpdates)
+              .filter((k) => k !== "dncUpdatedAt")
+              .join(", "),
+          );
+        }
       }
     } catch (err) {
       if (err.code === 11000) {
         console.log(
-          `[PIPELINE] MongoDB: Duplicate caseId ${results.caseId} — already tracked`,
+          `[PIPELINE] MongoDB: Duplicate caseId ${results.caseId} — already exists`,
         );
       } else {
         console.error(`[PIPELINE] MongoDB error: ${err.message}`);
@@ -753,92 +520,111 @@ async function processLead(fields, opts = {}) {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 4: OUTREACH (only if validation passes)
-  // ═══════════════════════════════════════════════════════════════════════════
-  const canEmail = doEmail && fields.email && validation.emailCanSend;
-  const canSms = doSms && fields.phone && validation.phoneCanText;
-  const canDial = doDial && fields.phone && validation.phoneCanCall;
-
-  console.log(
-    `[PIPELINE] Outreach gates: email=${canEmail}, sms=${canSms}, dial=${canDial}`,
-  );
-
-  const [emailResult, smsResult, dialResult] = await Promise.allSettled([
-    canEmail
-      ? sendWelcomeEmail(fields.email, fields.name)
-      : Promise.resolve({
-          ok: false,
-          error: !doEmail
-            ? "Disabled"
-            : !fields.email
-              ? "No email"
-              : `Blocked: ${validation.emailResult}`,
-        }),
-    canSms
-      ? smsNowOrQueue(fields, source)
-      : Promise.resolve({
-          ok: false,
-          error: !doSms
-            ? "Disabled"
-            : !fields.phone
-              ? "No phone"
-              : "Blocked: not cell or disconnected",
-        }),
-    canDial
-      ? dialNowOrQueue(fields, source)
-      : Promise.resolve({
-          ok: false,
-          error: !doDial
-            ? "Disabled"
-            : !fields.phone
-              ? "No phone"
-              : "Blocked: DNC/litigator/disconnected",
-        }),
-  ]);
-
-  const unwrap = (p) =>
-    p.status === "fulfilled"
-      ? p.value
-      : { ok: false, error: p.reason?.message };
-
-  results.outreach.emailResult = unwrap(emailResult);
-  results.outreach.smsResult = unwrap(smsResult);
-  results.outreach.dialResult = unwrap(dialResult);
-
-  // Update MongoDB with welcome email status
-  if (results.mongoId && results.outreach.emailResult?.ok) {
-    await LeadCadence.updateOne(
-      { _id: results.mongoId },
-      { $set: { welcomeEmailSent: true } },
-    ).catch(() => {});
-  }
-
-  // Update MongoDB with SMS tracking (prevents duplicate from cadence engine)
-  if (results.mongoId && results.outreach.smsResult?.ok) {
-    await LeadCadence.updateOne(
-      { _id: results.mongoId },
-      { $set: { lastTextedAt: new Date(), textsSent: 1 } },
-    ).catch(() => {});
-  }
-
-  // Update MongoDB with call tracking
-  if (
-    results.mongoId &&
-    results.outreach.dialResult?.ok &&
-    results.outreach.dialResult?.immediate
-  ) {
-    await LeadCadence.updateOne(
-      { _id: results.mongoId },
-      {
-        $set: {
-          lastCalledAt: new Date(),
-          callsToday: 1,
-          callsTodayDate: new Date().toISOString().split("T")[0],
+  // STEP 4: PUSH TO PHONEBURNER
+  if (results.caseId && results.mongoId && fields.phone) {
+    try {
+      const pbResult = await pbService.pushContact(
+        {
+          name: fields.name,
+          phone: fields.phone,
+          email: fields.email,
+          caseId: results.caseId,
+          company,
+          source,
+          mongoId: results.mongoId.toString(),
+          city: fields.city || "",
+          state: fields.state || "",
         },
-      },
-    ).catch(() => {});
+        "HOT",
+      );
+      // Track PB contact ID in Mongo for folder moves / removal
+      if (pbResult.success && pbResult.contactId) {
+        await LeadCadence.updateOne(
+          { _id: results.mongoId },
+          {
+            $set: {
+              pbPushed: true,
+              pbPushedAt: new Date(),
+              pbContactId: pbResult.contactId,
+              pbCurrentFolder: "HOT",
+            },
+          },
+        ).catch(() => {});
+      }
+    } catch (pbErr) {
+      console.error("[PIPELINE] PB push failed (non-fatal):", pbErr.message);
+    }
   }
+
+  // STEP 5: IMMEDIATE OUTREACH (welcome email and first text)
+  console.log(`[PIPELINE] Step 5: Immediate outreach...`);
+
+  const canEmail = doEmail && fields.email && validation.emailCanSend;
+  const canText = doSms && fields.phone && validation.phoneCanText;
+
+  if (canEmail) {
+    console.log(`[PIPELINE]   Sending welcome email...`);
+    results.outreach.emailResult = await sendEmail({
+      email: fields.email,
+      name: fields.name,
+      emailIndex: 1,
+      company,
+    });
+    if (results.mongoId && results.outreach.emailResult?.ok) {
+      await LeadCadence.updateOne(
+        { _id: results.mongoId },
+        { $set: { welcomeEmailSent: true } },
+      ).catch(() => {});
+    }
+  } else {
+    results.outreach.emailResult = {
+      ok: false,
+      error: !doEmail
+        ? "Disabled"
+        : !fields.email
+          ? "No email"
+          : `Blocked: ${validation.emailResult}`,
+    };
+    console.log(
+      `[PIPELINE]   Email skipped: ${results.outreach.emailResult.error}`,
+    );
+  }
+
+  if (canText && isWithinBusinessHoursPT()) {
+    console.log(`[PIPELINE]   Sending first text...`);
+    results.outreach.smsResult = await sendWelcomeText(
+      fields.phone,
+      fields.name,
+      1,
+      company,
+    );
+    if (results.mongoId && results.outreach.smsResult?.ok) {
+      await LeadCadence.updateOne(
+        { _id: results.mongoId },
+        { $set: { textsSent: 1, lastTextedAt: new Date() } },
+      ).catch(() => {});
+    }
+  } else {
+    results.outreach.smsResult = {
+      ok: false,
+      error: !doSms
+        ? "Disabled"
+        : !fields.phone
+          ? "No phone"
+          : !isWithinBusinessHoursPT()
+            ? "Outside hours"
+            : `Blocked: not cell`,
+    };
+    console.log(
+      `[PIPELINE]   Text skipped: ${results.outreach.smsResult.error}`,
+    );
+  }
+
+  // Dialing handled by PhoneBurner
+  results.outreach.dialResult = {
+    ok: true,
+    note: "Handled by PhoneBurner",
+  };
 
   // Internal notification
   if (doNotify) {
@@ -846,116 +632,18 @@ async function processLead(fields, opts = {}) {
       source,
       fields,
       results.caseId,
-      meta,
-      results.outreach,
       validation,
+      company,
     );
   }
 
   console.log(
-    `[PIPELINE] ✓ Done — CaseID: ${results.caseId || "N/A"}, MongoID: ${results.mongoId || "N/A"}`,
+    `[PIPELINE] ✓ Complete — CaseID: ${results.caseId || "N/A"}, MongoID: ${results.mongoId || "N/A"}`,
+  );
+  console.log(
+    `[PIPELINE] ══════════════════════════════════════════════════════════`,
   );
   return results;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                  INTERNAL NOTIFICATION EMAIL                               */
-/* -------------------------------------------------------------------------- */
-
-async function sendLeadNotificationEmail(
-  source,
-  fields,
-  caseId,
-  meta,
-  outreach,
-  validation,
-) {
-  try {
-    const emoji =
-      { facebook: "🔵", tiktok: "🎵", "lead-contact": "📞", test: "🧪" }[
-        source
-      ] || "📋";
-    const platformName =
-      {
-        facebook: "Facebook",
-        tiktok: "TikTok",
-        "lead-contact": "Lead Contact",
-        test: "Test",
-      }[source] || "Lead";
-    const sourceName =
-      { facebook: "VF Face/Insta", tiktok: "VF TikTok" }[source] ||
-      "VF Digital";
-
-    const subject = `${emoji} New ${platformName} Lead — ${fields.name || "Unknown"}${caseId ? ` [Case #${caseId}]` : ""}`;
-
-    let text = `
-NEW ${platformName.toUpperCase()} LEAD
-${"─".repeat(50)}
-
-Name:       ${fields.name || "N/A"}
-Email:      ${fields.email || "N/A"}
-Phone:      ${fields.phone || "N/A"}
-City:       ${fields.city || "N/A"}
-State:      ${fields.state || "N/A"}
-
-${"─".repeat(50)}
-Source:         ${sourceName}
-Form ID:        ${meta.form_id || meta.formId || "N/A"}
-Ad Group:       ${meta.adgroup_id || meta.adgroupId || "N/A"}
-Campaign:       ${meta.campaign_id || meta.campaignId || "N/A"}
-Lead ID:        ${meta.lead_id || meta.leadgen_id || "N/A"}
-Logics CaseID:  ${caseId || "Not created"}`;
-
-    // Add validation results
-    if (validation) {
-      const phoneStatus = validation.phone?.status || "N/A";
-      const phoneFlags = [];
-      if (validation.phoneIsCell) phoneFlags.push("Cell");
-      if (validation.phone?.onNationalDNC) phoneFlags.push("⚠️ DNC");
-      if (validation.phone?.isLitigator) phoneFlags.push("🚨 LITIGATOR");
-
-      text += `
-
-${"─".repeat(50)}
-VALIDATION
-${"─".repeat(50)}
-Phone:  ${phoneStatus}${phoneFlags.length ? ` (${phoneFlags.join(", ")})` : ""}
-        canCall=${validation.phoneCanCall ? "✓" : "✗"} canText=${validation.phoneCanText ? "✓" : "✗"}
-Email:  ${validation.emailResult || "N/A"}
-        canSend=${validation.emailCanSend ? "✓" : "✗"}`;
-    }
-
-    if (outreach) {
-      const { emailResult, smsResult, dialResult } = outreach;
-
-      let dialStatus = "N/A";
-      if (dialResult?.ok && dialResult?.immediate)
-        dialStatus = "✓ Called immediately";
-      else if (dialResult?.ok && dialResult?.queued)
-        dialStatus = `⏳ Queued (${dialResult.queuedId})`;
-      else if (!dialResult?.ok)
-        dialStatus = `✗ ${dialResult?.error || "Failed"}`;
-
-      text += `
-
-${"─".repeat(50)}
-OUTREACH
-${"─".repeat(50)}
-Email:  ${emailResult?.ok ? "✓ Sent" : `✗ ${emailResult?.error}`}
-SMS:    ${smsResult?.ok ? "✓ Sent" : `✗ ${smsResult?.error}`}
-Call:   ${dialStatus}`;
-    }
-
-    await transporter.sendMail({
-      from: FROM_EMAIL,
-      to: TO_EMAIL,
-      subject,
-      text: text.trim(),
-    });
-    console.log(`[NOTIFY] ✓ Sent (${source})`);
-  } catch (err) {
-    console.error(`[NOTIFY] ✗ Failed:`, err.message);
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -968,13 +656,10 @@ app.get("/fb/webhook", (req, res) => {
     "hub.verify_token": token,
     "hub.challenge": challenge,
   } = req.query;
-  console.log("[FB] Verify:", { mode, token, challenge });
-
   if (mode === "subscribe" && token === FB_VERIFY_TOKEN) {
     console.log("[FB] ✓ Verified");
     return res.status(200).send(challenge);
   }
-  console.error("[FB] ✗ Verification failed");
   return res.sendStatus(403);
 });
 
@@ -991,14 +676,15 @@ app.post("/fb/webhook", async (req, res) => {
 
         const { leadgen_id, form_id, adgroup_id, created_time } = change.value;
         console.log("[FB] Lead:", { leadgen_id, form_id, adgroup_id });
-
-        const leadData = await fetchFacebookLeadData(leadgen_id);
+        const company = resolveCompanyFromFbPageId(entry.id);
+        const leadData = await fetchFacebookLeadData(leadgen_id, company);
         if (!leadData) continue;
 
         const fields = normalizeFacebookFields(leadData.field_data || []);
 
         await processLead(fields, {
           source: "facebook",
+          company,
           meta: { leadgen_id, form_id, adgroup_id, created_time },
           doEmail: ENABLE_FACEBOOK_OUTREACH,
           doSms: ENABLE_FACEBOOK_OUTREACH,
@@ -1013,22 +699,21 @@ app.post("/fb/webhook", async (req, res) => {
   }
 });
 
-async function fetchFacebookLeadData(leadgenId) {
+async function fetchFacebookLeadData(leadgenId, company = "WYNN") {
   try {
-    if (!FB_PAGE_TOKEN) {
-      console.error("[FB] Missing FB_PAGE_TOKEN");
+    const token = getFbPageToken(company);
+    if (!token) {
+      console.warn(
+        `[FB] No page token for company ${company} — skipping fetch`,
+      );
       return null;
     }
-
-    const url = `https://graph.facebook.com/v21.0/${leadgenId}`;
-    const response = await axios.get(url, {
-      params: { access_token: FB_PAGE_TOKEN },
-    });
-
-    if (response.data?.error) {
-      console.error("[FB] Graph API error:", response.data.error.message);
-      return null;
-    }
+    const response = await axios.get(
+      `https://graph.facebook.com/v21.0/${leadgenId}`,
+      {
+        params: { access_token: token },
+      },
+    );
     return response.data;
   } catch (err) {
     console.error(
@@ -1045,44 +730,26 @@ async function fetchFacebookLeadData(leadgenId) {
 
 app.get("/tt/webhook", (req, res) => {
   const { verify_token: token, challenge } = req.query;
-  console.log("[TT] Verify:", { token, challenge });
-
   if (token === TT_VERIFY_TOKEN) {
     console.log("[TT] ✓ Verified");
     return res.status(200).send(challenge);
   }
-  console.error("[TT] ✗ Verification failed");
   return res.sendStatus(403);
+});
+
+app.post("/sms/inbound", (req, res) => {
+  res.sendStatus(200);
+  axios.post("http://localhost:5000/sms/inbound", req.body).catch(() => {});
 });
 
 app.post("/tt/webhook", async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const body = req.body;
+    for (const entry of req.body.entry || []) {
+      const { id: lead_id, page_id: form_id, adgroup_id, changes } = entry;
+      console.log("[TT] Lead:", { lead_id, form_id, adgroup_id });
 
-    // TikTok sends data in entry[].changes[] format
-    // Each entry is a lead with changes containing the form fields
-    for (const entry of body.entry || []) {
-      const {
-        id: lead_id,
-        page_id: form_id,
-        page_name,
-        campaign_id,
-        campaign_name,
-        adgroup_id,
-        adgroup_name,
-        ad_id,
-        ad_name,
-        advertiser_id,
-        create_time,
-        changes,
-      } = entry;
-
-      console.log("[TT] Lead:", { lead_id, form_id, adgroup_id, page_name });
-
-      // Convert changes array to field object
-      // changes format: [{field: "email", value: "test@example.com"}, ...]
       const fieldData = {};
       for (const change of changes || []) {
         const fieldName = (change.field || "")
@@ -1092,29 +759,18 @@ app.post("/tt/webhook", async (req, res) => {
         fieldData[fieldName] = change.value || "";
       }
 
-      console.log("[TT] Parsed fields:", JSON.stringify(fieldData, null, 2));
-
       const normalizedFields = normalizeTikTokFields(fieldData);
       console.log(
         "[TT] Normalized:",
         JSON.stringify(normalizedFields, null, 2),
       );
-
+      const company = resolveCompanyFromTtAdvertiserId(
+        entry.page_id || entry.id,
+      );
       await processLead(normalizedFields, {
         source: "tiktok",
-        meta: {
-          lead_id,
-          form_id,
-          page_name,
-          adgroup_id,
-          adgroup_name,
-          campaign_id,
-          campaign_name,
-          ad_id,
-          ad_name,
-          advertiser_id,
-          create_time,
-        },
+        company,
+        meta: { lead_id, form_id, adgroup_id, ...entry },
         doEmail: ENABLE_TIKTOK_OUTREACH,
         doSms: ENABLE_TIKTOK_OUTREACH,
         doDial: ENABLE_TIKTOK_DIAL,
@@ -1145,39 +801,25 @@ app.post("/lead-contact", async (req, res) => {
   }
 
   console.log("[LEAD-CONTACT] Received:", fields);
-
+  const company = resolveCompanyFromPayload(req.body, req.headers);
   const result = await processLead(fields, {
-    source: req.body.source,
+    source: fields.source || "lead-contact",
+    company,
     meta: { received_at: new Date().toISOString() },
     doEmail: true,
     doSms: true,
-    doDial: true, // Auto-dial (queued if outside business hours)
-    doCase: true, // Always create Logics case
+    doDial: true,
+    doCase: true,
     doNotify: true,
   });
 
-  return res.json({
-    ok: true,
-    ...result,
-    businessHours: {
-      tz: BUSINESS_TZ,
-      startHour: BUSINESS_START_HOUR,
-      endHour: BUSINESS_END_HOUR,
-      inWindowNow: isWithinBusinessHoursPT(),
-      queuedCount: dialQueue.length,
-    },
-  });
+  return res.json({ ok: true, ...result });
 });
 
 /* -------------------------------------------------------------------------- */
 /*                          TEST ENDPOINT                                     */
 /* -------------------------------------------------------------------------- */
 
-/**
- * POST /test-lead
- * Manual testing with query param overrides:
- *   ?source=test&doEmail=false&doSms=false&doDial=false&doCase=false&doNotify=false
- */
 app.post("/test-lead", async (req, res) => {
   if (req.headers["x-webhook-key"] !== LEAD_WEBHOOK_SECRET) {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -1185,12 +827,11 @@ app.post("/test-lead", async (req, res) => {
 
   const fields = normalizeLeadContactPayload(req.body);
   const q = req.query;
-
-  console.log("[TEST] Received:", fields, "Query:", q);
-
+  const company = resolveCompanyFromPayload(req.body, req.headers);
   const result = await processLead(fields, {
     source: q.source || "test",
-    meta: { test: true, received_at: new Date().toISOString() },
+    company,
+    meta: { test: true },
     doEmail: q.doEmail !== "false",
     doSms: q.doSms !== "false",
     doDial: q.doDial !== "false",
@@ -1198,707 +839,341 @@ app.post("/test-lead", async (req, res) => {
     doNotify: q.doNotify !== "false",
   });
 
-  return res.json({
+  return res.json({ ok: true, ...result });
+});
+
+/* -------------------------------------------------------------------------- */
+/*                          STATUS ENDPOINT                                   */
+/* -------------------------------------------------------------------------- */
+
+app.get("/status", async (req, res) => {
+  const activeLeads = await LeadCadence.countDocuments({ active: true });
+  const day0Leads = await LeadCadence.countDocuments({
+    active: true,
+    day0Connected: { $ne: true },
+    rvmsSent: { $lt: 2 },
+  });
+
+  let dropBalance = null;
+  try {
+    const bal = await checkBalance();
+    if (bal.ok) dropBalance = { balance: bal.balance, pending: bal.pending };
+  } catch {}
+
+  res.json({
     ok: true,
-    ...result,
-    businessHours: {
-      tz: BUSINESS_TZ,
-      startHour: BUSINESS_START_HOUR,
-      endHour: BUSINESS_END_HOUR,
-      inWindowNow: isWithinBusinessHoursPT(),
-      queuedCount: dialQueue.length,
+    time: new Date().toISOString(),
+    businessHours: isWithinBusinessHoursPT(),
+    activeLeads,
+    day0Leads,
+    dropBalance,
+    tickInterval: "5 minutes",
+    strategy: {
+      day0: "5min: Email+Text+RVM → 15min: RVM → 30min: Text",
+      "day2-9": "Noon RVM drop daily",
+      "day10+": "Cadence exhaustion check",
+      dialing:
+        "PhoneBurner age cascade: HOT → DAY1 → DAY2 → DAY3_10 → DAY10_PLUS (7am CT)",
+      cleanup: "Bad/inactive → deactivate Mongo + remove from PB",
     },
   });
 });
-// ─────────────────────────────────────────────────────────────
-// ADD THIS TO webhook.js - Pre-ping route for lead filtering
-// ─────────────────────────────────────────────────────────────
 
-/**
- * Calculate age from DOB
- * Handles both string formats and Date objects
- */
+/* -------------------------------------------------------------------------- */
+/*                          PRE-PING ENDPOINT                                 */
+/* -------------------------------------------------------------------------- */
+
 function calculateAge(dob) {
   if (!dob) return null;
-
-  let birthDate;
-
-  if (dob instanceof Date) {
-    birthDate = dob;
-  } else if (typeof dob === "string") {
-    // Try parsing various formats
-    // ISO: 2024-01-15, US: 01/15/2024, etc.
-    birthDate = new Date(dob);
-  } else if (typeof dob === "number") {
-    // Unix timestamp
-    birthDate = new Date(dob);
-  }
-
-  if (!birthDate || isNaN(birthDate.getTime())) {
-    console.log("[PRE-PING] Could not parse DOB:", dob);
-    return null;
-  }
+  const birthDate = new Date(dob);
+  if (isNaN(birthDate.getTime())) return null;
 
   const today = new Date();
   let age = today.getFullYear() - birthDate.getFullYear();
   const monthDiff = today.getMonth() - birthDate.getMonth();
-
-  // Adjust if birthday hasn't occurred this year
   if (
     monthDiff < 0 ||
     (monthDiff === 0 && today.getDate() < birthDate.getDate())
   ) {
     age--;
   }
-
   return age;
 }
 
-/**
- * Normalize state to 2-letter uppercase
- */
 function normalizeState(state) {
   if (!state) return null;
   return String(state).trim().toUpperCase().slice(0, 2);
 }
 
-/**
- * Decrypt SHA256 hashed email
- * Note: SHA256 is a one-way hash, so we can't "decrypt" it.
- * If they're sending a hash, we need to hash our stored emails and compare.
- *
- * If they're actually sending encrypted data (AES, etc.), we'd need the key.
- *
- * For now, assuming they send the hash and we compare against hashed emails in DB.
- */
 async function checkEmailHashExists(emailHash) {
-  // Get all emails from LeadCadence and hash them to compare
   const leads = await LeadCadence.find({}, { email: 1 }).lean();
-
   for (const lead of leads) {
     if (!lead.email) continue;
-
-    const hashedEmail = crypto
-      .createHash("sha256")
-      .update(lead.email.toLowerCase().trim())
-      .digest("hex");
-
-    if (hashedEmail === emailHash.toLowerCase()) {
-      return true; // Found a match
-    }
-  }
-
-  return false;
-}
-
-/**
- * POST /lead-contact/pre-ping
- *
- * Validates a lead before full submission:
- * - State must be in allowed list (Midwest + CA)
- * - Age must be 45+
- * - Email hash must not already exist in database
- *
- * Request body:
- * {
- *   "state": "OH",
- *   "dob": "1975-05-15" or Date object,
- *   "email_hash": "sha256_hashed_email"
- * }
- *
- * Response:
- * - 200: Lead accepted, proceed with full POST to /lead-contact
- * - 400: Lead rejected with reason
- */
-// ─────────────────────────────────────────────────────────────
-// ADD THIS TO webhook.js - Pre-ping route for lead filtering
-// ─────────────────────────────────────────────────────────────
-
-const ALLOWED_STATES = [
-  "OH",
-  "IN",
-  "KS",
-  "NE",
-  "MO",
-  "IA",
-  "ND",
-  "SD",
-  "OK",
-  "CA",
-];
-
-// Minimum age requirement
-const MIN_AGE = 45;
-
-/**
- * Calculate age from DOB
- * Handles both string formats and Date objects
- */
-function calculateAge(dob) {
-  console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
-  console.log("[PRE-PING:AGE] Input DOB:", dob);
-  console.log("[PRE-PING:AGE] Type:", typeof dob);
-
-  if (!dob) {
-    console.log("[PRE-PING:AGE] Result: null (no DOB provided)");
-    return null;
-  }
-
-  let birthDate;
-
-  if (dob instanceof Date) {
-    console.log("[PRE-PING:AGE] Parsing as Date object");
-    birthDate = dob;
-  } else if (typeof dob === "string") {
-    console.log("[PRE-PING:AGE] Parsing as string");
-    // Try parsing various formats
-    // ISO: 2024-01-15, US: 01/15/2024, etc.
-    birthDate = new Date(dob);
-  } else if (typeof dob === "number") {
-    console.log("[PRE-PING:AGE] Parsing as number (timestamp)");
-    birthDate = new Date(dob);
-  }
-
-  console.log("[PRE-PING:AGE] Parsed birthDate:", birthDate);
-  console.log("[PRE-PING:AGE] birthDate.getTime():", birthDate?.getTime());
-  console.log("[PRE-PING:AGE] isNaN:", isNaN(birthDate?.getTime()));
-
-  if (!birthDate || isNaN(birthDate.getTime())) {
-    console.log("[PRE-PING:AGE] Result: null (invalid date)");
-    console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
-    return null;
-  }
-
-  const today = new Date();
-  console.log("[PRE-PING:AGE] Today:", today.toISOString());
-  console.log("[PRE-PING:AGE] Birth year:", birthDate.getFullYear());
-  console.log("[PRE-PING:AGE] Current year:", today.getFullYear());
-
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const monthDiff = today.getMonth() - birthDate.getMonth();
-
-  console.log("[PRE-PING:AGE] Initial age calc:", age);
-  console.log("[PRE-PING:AGE] Month diff:", monthDiff);
-
-  // Adjust if birthday hasn't occurred this year
-  if (
-    monthDiff < 0 ||
-    (monthDiff === 0 && today.getDate() < birthDate.getDate())
-  ) {
-    age--;
-    console.log("[PRE-PING:AGE] Adjusted (birthday not yet):", age);
-  }
-
-  console.log("[PRE-PING:AGE] Final age:", age);
-  console.log("[PRE-PING:AGE] ────────────────────────────────────────────");
-
-  return age;
-}
-
-/**
- * Normalize state to 2-letter uppercase
- */
-function normalizeState(state) {
-  console.log("[PRE-PING:STATE] ────────────────────────────────────────────");
-  console.log("[PRE-PING:STATE] Input state:", state);
-  console.log("[PRE-PING:STATE] Type:", typeof state);
-
-  if (!state) {
-    console.log("[PRE-PING:STATE] Result: null (no state provided)");
-    console.log(
-      "[PRE-PING:STATE] ────────────────────────────────────────────",
-    );
-    return null;
-  }
-
-  const normalized = String(state).trim().toUpperCase().slice(0, 2);
-  console.log("[PRE-PING:STATE] Normalized:", normalized);
-  console.log(
-    "[PRE-PING:STATE] In allowed list:",
-    ALLOWED_STATES.includes(normalized),
-  );
-  console.log("[PRE-PING:STATE] Allowed states:", ALLOWED_STATES.join(", "));
-  console.log("[PRE-PING:STATE] ────────────────────────────────────────────");
-
-  return normalized;
-}
-
-/**
- * Check if MD5 hashed email exists in database
- */
-async function checkEmailHashExists(emailHash) {
-  console.log("[PRE-PING:EMAIL] ────────────────────────────────────────────");
-  console.log("[PRE-PING:EMAIL] Input hash:", emailHash);
-  console.log("[PRE-PING:EMAIL] Hash length:", emailHash?.length);
-  console.log("[PRE-PING:EMAIL] Expected MD5 length: 32");
-
-  // Get all emails from LeadCadence and hash them to compare
-  const leads = await LeadCadence.find({}, { email: 1 }).lean();
-  console.log("[PRE-PING:EMAIL] Total leads in DB:", leads.length);
-  console.log(
-    "[PRE-PING:EMAIL] Leads with emails:",
-    leads.filter((l) => l.email).length,
-  );
-
-  let checkedCount = 0;
-  for (const lead of leads) {
-    if (!lead.email) continue;
-
-    checkedCount++;
-    // Use MD5 instead of SHA256
     const hashedEmail = crypto
       .createHash("md5")
       .update(lead.email.toLowerCase().trim())
       .digest("hex");
-
-    // Log first few comparisons for debugging
-    if (checkedCount <= 3) {
-      console.log(`[PRE-PING:EMAIL] Check #${checkedCount}:`);
-      console.log(
-        `[PRE-PING:EMAIL]   DB email: ${lead.email.substring(0, 5)}***`,
-      );
-      console.log(`[PRE-PING:EMAIL]   DB MD5:   ${hashedEmail}`);
-      console.log(`[PRE-PING:EMAIL]   Input:    ${emailHash}`);
-      console.log(
-        `[PRE-PING:EMAIL]   Match:    ${hashedEmail.toLowerCase() === emailHash.toLowerCase()}`,
-      );
-    }
-
     if (hashedEmail.toLowerCase() === emailHash.toLowerCase()) {
-      console.log("[PRE-PING:EMAIL] ✗ DUPLICATE FOUND");
-      console.log("[PRE-PING:EMAIL]   Matching email:", lead.email);
-      console.log(
-        "[PRE-PING:EMAIL] ────────────────────────────────────────────",
-      );
       return true;
     }
   }
-
-  console.log(
-    "[PRE-PING:EMAIL] Checked",
-    checkedCount,
-    "emails - no match found",
-  );
-  console.log("[PRE-PING:EMAIL] Result: Email is NEW (not in database)");
-  console.log("[PRE-PING:EMAIL] ────────────────────────────────────────────");
-
   return false;
 }
 
-/**
- * POST /lead-contact/pre-ping
- *
- * Validates a lead before full submission:
- * - State must be in allowed list (Midwest + CA)
- * - Age must be 45+
- * - Email hash must not already exist in database
- *
- * Request body:
- * {
- *   "state": "OH",
- *   "dob": "1975-05-15" or Date object,
- *   "email_hash": "sha256_hashed_email"
- * }
- *
- * Response:
- * - 200: Lead accepted, proceed with full POST to /lead-contact
- * - 400: Lead rejected with reason
- */
 app.post("/lead-contact/pre-ping", async (req, res) => {
-  console.log("[PRE-PING] ══════════════════════════════════════════════════");
-  console.log("[PRE-PING] REQUEST RECEIVED");
-  console.log("[PRE-PING] ══════════════════════════════════════════════════");
-  console.log("[PRE-PING] Headers:", JSON.stringify(req.headers, null, 2));
-  console.log("[PRE-PING] Raw body:", JSON.stringify(req.body, null, 2));
-  console.log("[PRE-PING] Body keys:", Object.keys(req.body || {}));
-
   try {
-    // Their fields (single space for now, will adjust based on logs):
-    // First Name, Last Name, Phone, Date Of Birth, Gender, Address, City, State, Zip, Email
-
-    // Log ALL keys first so we can see exactly what they send
-    console.log(
-      "[PRE-PING] ──────────────────────────────────────────────────",
-    );
-    console.log("[PRE-PING] RAW BODY KEYS & VALUES:");
-    Object.keys(req.body || {}).forEach((key) => {
-      const val = req.body[key];
-      const displayVal =
-        typeof val === "string" && val.length > 40
-          ? val.substring(0, 40) + "..."
-          : val;
-      // Show spaces as dots for visibility
-      const keyWithDots = key.replace(/ /g, "·");
-      console.log(`[PRE-PING]   [${keyWithDots}] = "${displayVal}"`);
-    });
-    console.log(
-      "[PRE-PING] ──────────────────────────────────────────────────",
-    );
-
-    // Try multiple field name variations
-    const state =
-      req.body["State"] ||
-      req.body["state"] ||
-      req.body[" State"] ||
-      req.body["State "];
-
+    const company = resolveCompanyFromPayload(req.body, req.headers);
+    const config = getCompanyConfig(company);
+    const state = req.body["State"] || req.body["state"];
     const dob =
       req.body["Date Of Birth"] ||
       req.body["Date  Of  Birth"] ||
-      req.body["DateOfBirth"] ||
-      req.body["date_of_birth"] ||
       req.body["dob"] ||
-      req.body["DOB"] ||
-      req.body["Dob"];
-
-    // Email comes hashed
+      req.body["DOB"];
     const hash =
-      req.body["Email"] ||
-      req.body["email"] ||
-      req.body["EMAIL"] ||
-      req.body["email_hash"] ||
-      req.body["Email Hash"] ||
-      req.body["Email_Hash"];
+      req.body["Email"] || req.body["email"] || req.body["email_hash"];
 
-    console.log("[PRE-PING] EXTRACTED (after field matching):");
-    console.log("[PRE-PING]   State →", state || "NOT FOUND");
-    console.log("[PRE-PING]   Date Of Birth →", dob || "NOT FOUND");
-    console.log(
-      "[PRE-PING]   Email (hash) →",
-      hash ? `${String(hash).substring(0, 32)}...` : "NOT FOUND",
-    );
-    console.log(
-      "[PRE-PING] ──────────────────────────────────────────────────",
-    );
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // VALIDATION 1: State check
-    // ═══════════════════════════════════════════════════════════════════════
-    console.log("[PRE-PING] STEP 1: STATE VALIDATION");
     const normalizedState = normalizeState(state);
-
     if (!normalizedState) {
-      const response = {
-        ok: false,
-        error: "Missing state",
-        code: "MISSING_STATE",
-        received: { state },
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing state", code: "MISSING_STATE" });
     }
-
-    if (!ALLOWED_STATES.includes(normalizedState)) {
-      const response = {
+    if (
+      config.allowedStates.length &&
+      !config.allowedStates.includes(normalizedState)
+    ) {
+      return res.status(400).json({
         ok: false,
         error: `State ${normalizedState} not accepted`,
         code: "STATE_NOT_ALLOWED",
-        received: { state, normalized: normalizedState },
-        allowedStates: ALLOWED_STATES,
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
+        allowedStates: config.allowedStates,
+      });
     }
 
-    console.log("[PRE-PING] ✓ State check PASSED:", normalizedState);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // VALIDATION 2: Age check (must be 45+)
-    // ═══════════════════════════════════════════════════════════════════════
-    console.log("[PRE-PING] STEP 2: AGE VALIDATION");
     const age = calculateAge(dob);
-
     if (age === null) {
-      const response = {
+      return res.status(400).json({
         ok: false,
         error: "Invalid or missing date of birth",
         code: "INVALID_DOB",
-        received: { dob: dob, type: typeof dob },
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
+      });
     }
-
-    if (age < MIN_AGE) {
-      const response = {
+    if (config.minAge > 0 && age < config.minAge) {
+      return res.status(400).json({
         ok: false,
-        error: `Age ${age} does not meet minimum requirement of ${MIN_AGE}`,
+        error: `Age ${age} below minimum ${config.minAge}`,
         code: "AGE_TOO_YOUNG",
-        received: { dob: dob, calculatedAge: age },
-        minAge: MIN_AGE,
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
+        minAge: config.minAge,
+      });
     }
-
-    console.log("[PRE-PING] ✓ Age check PASSED:", age, "years old");
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // VALIDATION 3: Email hash duplicate check
-    // ═══════════════════════════════════════════════════════════════════════
-    console.log("[PRE-PING] STEP 3: EMAIL DUPLICATE CHECK");
 
     if (!hash) {
-      const response = {
+      return res.status(400).json({
         ok: false,
-        error: "Missing email_hash",
+        error: "Missing email hash",
         code: "MISSING_EMAIL_HASH",
-        received: { email_hash, emailHash },
-        hint: "Send SHA256 hash of lowercase email as 'email_hash' field",
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
+      });
+    }
+    if (await checkEmailHashExists(hash)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Duplicate email", code: "DUPLICATE_EMAIL" });
     }
 
-    const emailExists = await checkEmailHashExists(hash);
-
-    if (emailExists) {
-      const response = {
-        ok: false,
-        error: "Duplicate email",
-        code: "DUPLICATE_EMAIL",
-        received: { email_hash: `${hash.substring(0, 20)}...` },
-      };
-      console.log(
-        "[PRE-PING] RESPONSE (400):",
-        JSON.stringify(response, null, 2),
-      );
-      console.log(
-        "[PRE-PING] ══════════════════════════════════════════════════",
-      );
-      return res.status(400).json(response);
-    }
-
-    console.log("[PRE-PING] ✓ Email check PASSED: Not a duplicate");
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ALL CHECKS PASSED
-    // ═══════════════════════════════════════════════════════════════════════
-    const response = {
+    return res.status(200).json({
       ok: true,
       message: "Lead accepted - proceed with full submission to /lead-contact",
-      checks: {
-        state: normalizedState,
-        stateAllowed: true,
-        age: age,
-        ageValid: true,
-        emailNew: true,
-      },
-    };
-
-    console.log(
-      "[PRE-PING] ══════════════════════════════════════════════════",
-    );
-    console.log("[PRE-PING] ALL CHECKS PASSED ✓");
-    console.log(
-      "[PRE-PING] RESPONSE (200):",
-      JSON.stringify(response, null, 2),
-    );
-    console.log(
-      "[PRE-PING] ══════════════════════════════════════════════════",
-    );
-
-    return res.status(200).json(response);
-  } catch (err) {
-    console.error(
-      "[PRE-PING] ══════════════════════════════════════════════════",
-    );
-    console.error("[PRE-PING] ERROR:", err.message);
-    console.error("[PRE-PING] Stack:", err.stack);
-    console.error(
-      "[PRE-PING] ══════════════════════════════════════════════════",
-    );
-
-    return res.status(500).json({
-      ok: false,
-      error: "Internal error",
-      code: "INTERNAL_ERROR",
+      checks: { state: normalizedState, age, emailNew: true },
     });
+  } catch (err) {
+    console.error("[PRE-PING] Error:", err.message);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Internal error", code: "INTERNAL_ERROR" });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// Don't forget to add this require at the top of webhook.js:
-// const crypto = require("crypto");
-// ─────────────────────────────────────────────────────────────
+app.post("/drop-webhook", handleDropWebhook);
 
-// ─────────────────────────────────────────────────────────────
-// Don't forget to add this require at the top of webhook.js:
-// const crypto = require("crypto");
-// ─────────────────────────────────────────────────────────────
+app.get("/drop-balance", async (req, res) => {
+  const result = await checkBalance();
+  res.json(result);
+});
+
+/* -------------------------------------------------------------------------- */
+/*                          CRON JOBS                                         */
+/* -------------------------------------------------------------------------- */
+
+// PB morning rotation — age cascade (7am CT)
+cron.schedule(
+  "0 7 * * 1-5",
+  async () => {
+    console.log("[PB] ── 7am Morning Rotation ──");
+    try {
+      const result = await pbService.morningRotation(LeadCadence, "WYNN");
+      console.log(
+        `[PB] Rotation complete: ` +
+          `TRANSFER=${result.transfer.bounced}back/${result.transfer.removed}removed, ` +
+          `DAY3_10→DAY10+=${result.day3_10_to_day10_plus.moved}, ` +
+          `DAY2→DAY3_10=${result.day2_to_day3_10.moved}, ` +
+          `DAY1→DAY2=${result.day1_to_day2.moved}, ` +
+          `HOT→DAY1=${result.hot_to_day1.moved}, ` +
+          `Unpushed→HOT=${result.unpushed_to_hot.pushed}`,
+      );
+    } catch (err) {
+      console.error("[PB] Morning rotation error:", err);
+    }
+  },
+  { timezone: "America/Chicago" },
+);
+
+// Logics status check every 15 min
+cron.schedule(
+  "0,15,30,45 * * * 1-5",
+  async () => {
+    console.log("[STATUS-CRON] ══ Running Logics status check ══");
+    try {
+      const result = await runStatusCheck();
+      if (!result.skipped) {
+        console.log(
+          `[STATUS-CRON] ✓ ${result.checked} checked, ` +
+            `${result.deactivated} deactivated, ${result.failed} failed`,
+        );
+      }
+    } catch (err) {
+      console.error("[STATUS-CRON] ✗ Error:", err.message);
+    }
+  },
+  { timezone: "America/Los_Angeles" },
+);
+
 /* -------------------------------------------------------------------------- */
 /*                          START SERVER                                      */
 /* -------------------------------------------------------------------------- */
 
 app.listen(PORT, async () => {
   console.log(`
-═══════════════════════════════════════════════════════════
-  WEBHOOK SERVER
-═══════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════
+  TAGCONTACTBRIDGE — WEBHOOK SERVER
+═══════════════════════════════════════════════════════════════════════════════
   Port:             ${PORT}
-  Email:            ${FROM_EMAIL} → ${TO_EMAIL}
-  Template:         ${prospectWelcomeTpl ? "✓ Loaded" : "⚠ Missing"}
-  Dial Queue:       ${dialQueue.length} pending
+  Notifications:    ${FROM_EMAIL} → ${TO_EMAIL}
   Business Hours:   Mon-Fri ${BUSINESS_START_HOUR}:00-${BUSINESS_END_HOUR}:00 ${BUSINESS_TZ}
+
+  Brands:           WYNN (Wynn Tax Solutions) | TAG (Tax Advocate Group)
 
   Feature Flags:
     Facebook:       outreach=${ENABLE_FACEBOOK_OUTREACH} dial=${ENABLE_FACEBOOK_DIAL} case=${ENABLE_FACEBOOK_CASE}
     TikTok:         outreach=${ENABLE_TIKTOK_OUTREACH} dial=${ENABLE_TIKTOK_DIAL} case=${ENABLE_TIKTOK_CASE}
-    Lead Contact:   case=always dial=queued
+
+  Dialing:          PhoneBurner (age-based folders)
+  PB Folders:       HOT (Day 0) → DAY1 → DAY2 → DAY3_10 → DAY10_PLUS
+  PB Rotation:      7am CT Mon-Fri cascade
+  Cadence:          RVM + SMS + Email (5-min tick)
 
   Routes:
-    /fb/webhook       Facebook Lead Ads
-    /tt/webhook       TikTok Lead Ads
-    /lead-contact     External Lead API (website forms)
-    /test-lead        Manual Testing (query params override)
-═══════════════════════════════════════════════════════════
-  `);
+    POST /fb/webhook              Facebook Lead Ads
+    POST /tt/webhook              TikTok Lead Ads
+    POST /lead-contact            External Lead API
+    POST /lead-contact/pre-ping   Pre-validation
+    POST /test-lead               Manual Testing
+    GET  /status                  System Status
+    GET  /drop-balance            Drop.co Balance
+═══════════════════════════════════════════════════════════════════════════════
+`);
 
-  // Warm up RingCentral auth at startup (refresh every 45 min to stay ahead of 1hr token expiry)
-  warmupRingCentral(45 * 60 * 1000).catch((err) => {
-    console.error("[STARTUP] RingCentral warmup failed:", err.message);
-  });
+  pbService.initTokenRefresh();
 
-  // ── Cadence Engine ─────────────────────────────────────────────────────────
-  // Runs at specific times during business hours: 7am, 8:40am, then hourly
-
+  // Cadence Engine — RVM, SMS, and Email only (dialing via PhoneBurner)
   const cadenceActions = {
-    sendText: async (phone, name, textNum) => {
-      console.log(`[CADENCE-ACTION] sendText #${textNum} to ${phone}`);
-      return sendWelcomeText(phone, name, textNum);
-    },
-    placeCall: async (fields) => {
-      console.log(`[CADENCE-ACTION] placeCall to ${fields.phone}`);
-      return dialLeadNow(fields);
-    },
-    sendFollowUpEmail: async (email, name, emailIndex) => {
-      console.log(
-        `[CADENCE-ACTION] sendFollowUpEmail #${emailIndex} to ${email}`,
-      );
-      // TODO: Implement follow-up email templates (for now, use welcome email)
-      return sendWelcomeEmail(email, name);
-    },
+    sendText: async (phone, name, textNum, company) =>
+      sendWelcomeText(phone, name, textNum, company),
+    sendFollowUpEmail: async (email, name, emailIndex, company) =>
+      sendEmail({ email, name, emailIndex, company }),
+    dropRvm: async ({ phone, caseId, name, source, rvmNum, company }) =>
+      dropVoicemail({ phone, caseId, name, source, rvmNum, company }),
+    rcPlatform: null,
   };
 
-  async function runCadenceWithLogging() {
-    console.log("[CADENCE] ══════════════════════════════════════════════════");
-    console.log("[CADENCE] Starting scheduled cadence tick...");
-    console.log(
-      "[CADENCE] Time:",
-      new Date().toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
-    );
+  console.log("[STARTUP] cadenceActions configured:");
+  console.log(
+    "[STARTUP]   dropRvm: company passthrough =",
+    cadenceActions.dropRvm.toString().includes("company") ? "✓" : "✗ MISSING",
+  );
+  console.log(
+    "[STARTUP]   RVM audio base:",
+    process.env.RVM_AUDIO_BASE_URL ||
+      "https://tag-webhook.ngrok.app/audio (default)",
+  );
+  console.log(
+    "[STARTUP]   DROP_CAMPAIGN_TOKEN:",
+    process.env.DROP_CAMPAIGN_TOKEN ? "✓ set" : "✗ MISSING",
+  );
+  console.log(
+    "[STARTUP]   DROP_API_KEY:",
+    process.env.DROP_API_KEY ? "✓ set" : "✗ MISSING",
+  );
 
-    try {
-      const result = await runCadenceTick(cadenceActions);
-
-      if (result.skipped) {
-        console.log(`[CADENCE] Skipped: ${result.reason}`);
-      } else {
-        console.log(`[CADENCE] Processed: ${result.processed} leads`);
-        console.log(`[CADENCE] Calls queued: ${result.callsQueued}`);
-        console.log(`[CADENCE] Total queue: ${result.totalQueueSize}`);
-
-        // Log individual actions
-        for (const r of result.results || []) {
-          if (r.actions?.length > 0) {
-            console.log(
-              `[CADENCE]   CaseID ${r.caseId} (${r.name}): ${r.actions.map((a) => a.type).join(", ")}`,
-            );
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[CADENCE] Error:", err.message);
-    }
-
-    console.log("[CADENCE] ══════════════════════════════════════════════════");
-  }
-
-  // Schedule cadence at specific times (PT) - every 30 minutes during business hours
-  // Run times: 7:00, 7:30, 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00, 11:30, 12:00, 12:30, 13:00, 13:30, 14:00, 14:30, 15:00, 15:30, 16:00, 16:30
   function scheduleCadence() {
-    const now = new Date(
-      new Date().toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
-    );
-    const hour = now.getHours();
-    const minute = now.getMinutes();
+    const TICK_INTERVAL_MS = 5 * 60 * 1000;
 
-    // Define run times as [hour, minute] - every 30 min from 7am to 5pm
-    const runTimes = [];
-    for (let h = 7; h <= 16; h++) {
-      runTimes.push([h, 0]);
-      runTimes.push([h, 30]);
-    }
-
-    // Find next run time
-    let nextRun = null;
-    for (const [h, m] of runTimes) {
-      if (hour < h || (hour === h && minute < m)) {
-        nextRun = { hour: h, minute: m };
-        break;
+    async function tick() {
+      console.log(
+        "[CADENCE] ══════════════════════════════════════════════════════════",
+      );
+      try {
+        const result = await runCadenceTick(cadenceActions);
+        if (result.skipped) {
+          console.log(`[CADENCE] Skipped: ${result.reason}`);
+        } else {
+          console.log(
+            `[CADENCE] Processed: ${result.processed} leads | ` +
+              `${result.rvmsDropped || 0} RVMs | ` +
+              `${result.textsSent} texts | ${result.emailsSent} emails | ` +
+              `${result.deactivated} deactivated`,
+          );
+        }
+      } catch (err) {
+        console.error("[CADENCE] Error:", err.message);
       }
+      console.log(
+        "[CADENCE] ══════════════════════════════════════════════════════════",
+      );
     }
 
-    // If no more runs today, schedule for 7am tomorrow
-    if (!nextRun) {
-      nextRun = { hour: 7, minute: 0, tomorrow: true };
-    }
-
-    // Calculate ms until next run
-    const target = new Date(now);
-    target.setHours(nextRun.hour, nextRun.minute, 0, 0);
-    if (nextRun.tomorrow) {
-      target.setDate(target.getDate() + 1);
-    }
-
-    const msUntilNext = target.getTime() - now.getTime();
+    const now = getNowForScheduler();
+    const currentMin = now.getMinutes();
+    const nextTickMin = Math.ceil((currentMin + 1) / 5) * 5;
+    const msToFirstTick =
+      ((nextTickMin - currentMin) * 60 - now.getSeconds()) * 1000;
 
     console.log(
-      `[CADENCE] Next run: ${nextRun.hour}:${String(nextRun.minute).padStart(2, "0")} PT (in ${Math.round(msUntilNext / 60000)} min)`,
+      `[CADENCE] First tick in ${Math.round(msToFirstTick / 1000)}s, then every 5 min`,
     );
 
     setTimeout(() => {
-      runCadenceWithLogging();
-      scheduleCadence(); // Schedule the next one
-    }, msUntilNext);
+      tick();
+      setInterval(tick, TICK_INTERVAL_MS);
+    }, msToFirstTick);
   }
 
-  // Run immediately on startup if within business hours, then schedule
-  console.log("[STARTUP] Starting initial cadence tick...");
+  function getNowForScheduler() {
+    return new Date(
+      new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }),
+    );
+  }
 
   scheduleCadence();
-
+  console.log("[STARTUP] ✓ Cadence engine scheduled — every 5 min");
   console.log(
-    "[STARTUP] Cadence engine scheduled: every 30 min from 7:00-16:30 PT",
+    "[STARTUP] ✓ RVM audio: WYNN →",
+    (process.env.RVM_AUDIO_BASE_URL || "https://tag-webhook.ngrok.app/audio") +
+      "/WYNN",
+  );
+  console.log(
+    "[STARTUP] ✓ RVM audio: TAG  →",
+    (process.env.RVM_AUDIO_BASE_URL || "https://tag-webhook.ngrok.app/audio") +
+      "/TAG",
   );
 });

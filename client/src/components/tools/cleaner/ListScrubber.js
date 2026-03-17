@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { csv } from "csvtojson";
 import { useApi } from "../../../utils/api";
 
@@ -12,6 +12,8 @@ export default function ListScrubber() {
   const [flaggedList, setFlaggedList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
+  const [jobProgress, setJobProgress] = useState(null);
+  const pollRef = useRef(null);
 
   // ============ UPLOAD ============
   const handleUpload = async (e) => {
@@ -48,6 +50,7 @@ export default function ListScrubber() {
         setRawList(processed);
         setCleanList([]);
         setFlaggedList([]);
+        setJobProgress(null);
         setProgress(`Loaded ${processed.length} contacts`);
       } catch {
         setProgress("Error parsing CSV");
@@ -56,30 +59,90 @@ export default function ListScrubber() {
     reader.readAsText(file);
   };
 
+  // ============ POLL FOR STATUS ============
+  const pollStatus = (jobId) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get(`/api/cleaner/status/${jobId}`);
+        console.log(
+          "[SCRUB] Poll:",
+          res.data.status,
+          res.data.percent || 0,
+          "%",
+        );
+        const data = res.data;
+
+        if (data.status === "running") {
+          setJobProgress(data);
+          setProgress(
+            `Processing: ${data.processed}/${data.total} (${data.percent}%) — ${data.clean} clean, ${data.flagged} flagged, ${data.removed} removed`,
+          );
+        } else if (data.status === "done") {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setJobProgress(null);
+          setCleanList(data.clean || []);
+          setFlaggedList(data.flagged || []);
+          setLoading(false);
+          setProgress(
+            `Done: ${data.stats?.clean || 0} clean, ${data.stats?.flagged || 0} flagged in ${data.durationSeconds || 0}s`,
+          );
+        } else if (data.status === "error") {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setJobProgress(null);
+          setLoading(false);
+          setProgress(`Error: ${data.error}`);
+        }
+      } catch (err) {
+        // Don't kill the poll on transient errors
+        console.error("Poll error:", err.message);
+      }
+    }, 3000);
+  };
+
   // ============ CLEAN ============
   const handleClean = async () => {
     if (!rawList.length) return;
     setLoading(true);
-    setProgress("Cleaning... this may take a few minutes for large lists");
+    setProgress("Starting...");
+    setJobProgress(null);
+    setCleanList([]);
+    setFlaggedList([]);
 
     try {
+      console.log("[SCRUB] POST /api/cleaner/clients starting...");
       const res = await api.post("/api/cleaner/clients", {
         contacts: rawList,
         domain,
       });
+      console.log("[SCRUB] POST response:", res.status, res.data);
 
-      setCleanList(res.data.clean || []);
-      setFlaggedList(res.data.flagged || []);
-      setProgress(
-        `Done: ${res.data.stats?.clean || 0} clean, ${
-          res.data.stats?.flagged || 0
-        } flagged`,
-      );
+      if (res.data.jobId) {
+        console.log("[SCRUB] Got jobId:", res.data.jobId, "— starting poll");
+        setProgress(`Job started — polling for progress...`);
+        pollStatus(res.data.jobId);
+      } else {
+        console.log(
+          "[SCRUB] No jobId — got synchronous response (old controller?)",
+        );
+        setCleanList(res.data.clean || []);
+        setFlaggedList(res.data.flagged || []);
+        setLoading(false);
+        setProgress(
+          `Done: ${res.data.stats?.clean || 0} clean, ${res.data.stats?.flagged || 0} flagged`,
+        );
+      }
     } catch (err) {
-      setProgress(err.response?.data?.error || "Clean failed - check console");
-      console.error(err);
-    } finally {
+      console.error(
+        "[SCRUB] POST failed:",
+        err.response?.status,
+        err.response?.data?.substring?.(0, 200) || err.message,
+      );
       setLoading(false);
+      setProgress(err.response?.data?.error || "Clean failed - check console");
     }
   };
 
@@ -167,8 +230,64 @@ export default function ListScrubber() {
         <div className="mb-4 p-2 bg-gray-100 rounded text-sm">{progress}</div>
       )}
 
+      {/* Progress Bar */}
+      {jobProgress && (
+        <div className="mb-4">
+          <div
+            style={{
+              background: "#e5e7eb",
+              borderRadius: 6,
+              height: 24,
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                background: "#3b82f6",
+                height: "100%",
+                width: `${jobProgress.percent || 0}%`,
+                transition: "width 0.5s ease",
+                borderRadius: 6,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 12,
+                fontWeight: 600,
+                color: jobProgress.percent > 50 ? "#fff" : "#374151",
+              }}
+            >
+              {jobProgress.processed}/{jobProgress.total} ({jobProgress.percent}
+              %)
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 11,
+              color: "#666",
+              marginTop: 4,
+            }}
+          >
+            <span>✅ {jobProgress.clean} clean</span>
+            <span>⚠️ {jobProgress.flagged} flagged</span>
+            <span>🗑 {jobProgress.removed} removed</span>
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
-      {(cleanList.length > 0 || flaggedList.length > 0) && (
+      {!loading && (cleanList.length > 0 || flaggedList.length > 0) && (
         <div className="mb-6 p-4 bg-gray-50 rounded flex items-center justify-between">
           <div className="flex gap-4">
             <span className="text-green-600 font-semibold">
@@ -222,7 +341,6 @@ function FlagCard({ client, onApprove, onReject }) {
   const [expanded, setExpanded] = useState(false);
   const flags = client.reviewMessages || [];
 
-  // Categorize flags by severity
   const hasDNC = flags.some((f) => f.category?.includes("DNC"));
   const borderColor = hasDNC ? "border-red-300" : "border-yellow-300";
   const headerBg = hasDNC ? "bg-red-50" : "bg-yellow-50";
@@ -231,7 +349,6 @@ function FlagCard({ client, onApprove, onReject }) {
     <div
       className={`border-2 ${borderColor} rounded-lg overflow-hidden bg-white shadow-sm`}
     >
-      {/* Header */}
       <div
         className={`${headerBg} px-4 py-3 flex items-center justify-between`}
       >
@@ -268,14 +385,12 @@ function FlagCard({ client, onApprove, onReject }) {
         </div>
       </div>
 
-      {/* Flags List */}
       <div className="px-4 py-3 space-y-2">
         {flags.map((flag, i) => (
           <FlagItem key={i} flag={flag} />
         ))}
       </div>
 
-      {/* Expandable Details */}
       {flags.some((f) => f.data) && (
         <div className="border-t">
           <button
@@ -298,7 +413,6 @@ function FlagCard({ client, onApprove, onReject }) {
   );
 }
 
-// ============ FLAG ITEM (single line summary) ============
 function FlagItem({ flag }) {
   const getCategoryStyle = (category) => {
     if (category?.includes("DNC"))
@@ -337,7 +451,6 @@ function FlagItem({ flag }) {
   );
 }
 
-// ============ FLAG DETAILS (expanded view) ============
 function FlagDetails({ flag }) {
   const { data, category } = flag;
   if (!data) return null;
@@ -398,7 +511,6 @@ function FlagDetails({ flag }) {
   );
 }
 
-// ============ DETAIL ROW HELPER ============
 function DetailRow({ label, value, highlight = false, fullWidth = false }) {
   return (
     <div className={fullWidth ? "col-span-2" : ""}>

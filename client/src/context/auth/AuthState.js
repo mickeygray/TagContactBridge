@@ -1,3 +1,15 @@
+// client/src/context/auth/AuthState.js
+// ─────────────────────────────────────────────────────────────
+// Simplified auth context.
+//
+// On mount: calls /api/auth/me
+//   - If nginx SMS gate is active → backend returns admin user → authenticated
+//   - If JWT cookie exists → backend validates → authenticated
+//   - If neither → not authenticated → redirect to /login (or nginx redirects to /panel)
+//
+// Login/logout kept for future agent support.
+// ─────────────────────────────────────────────────────────────
+
 import React, { useReducer, useEffect } from "react";
 import AuthContext from "./authContext";
 import AuthReducer from "./authReducer";
@@ -14,7 +26,7 @@ const AuthState = ({ children }) => {
   const api = useApi();
   api.defaults.withCredentials = true;
 
-  // Load current user
+  // Load current user — works for both nginx gate and JWT
   const loadUser = async () => {
     try {
       const res = await api.get("/api/auth/me");
@@ -24,21 +36,15 @@ const AuthState = ({ children }) => {
     }
   };
 
-  // On mount and every 5 minutes, refresh user session
+  // On mount, check session
   useEffect(() => {
     loadUser();
+    // Refresh every 5 minutes to keep session alive
     const interval = setInterval(loadUser, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-logout if server marks user offline
-  useEffect(() => {
-    if (state.user?.isOnline === false) {
-      logout();
-    }
-  }, [state.user]);
-
-  // Login action
+  // Login action (for future agents using JWT)
   const login = async (email, password) => {
     try {
       await api.post("/api/auth/login", { email, password });
@@ -58,16 +64,6 @@ const AuthState = ({ children }) => {
     dispatch({ type: "LOGOUT" });
   };
 
-  // Invite validation and completion
-  const validateInvite = async (token) => {
-    const res = await api.get(`/api/invite/${token}`);
-    return res.data;
-  };
-
-  const completeInvite = async (token, password) => {
-    await api.post(`/api/invite/${token}`, { password });
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -75,8 +71,6 @@ const AuthState = ({ children }) => {
         isAuthenticated: state.isAuthenticated,
         loading: state.loading,
         login,
-        validateInvite,
-        completeInvite,
         logout,
       }}
     >

@@ -8,12 +8,15 @@ import PeriodContactsFilter from "../tools/listmanagers/PeriodContactsFilter";
 import UnifiedClientListManager from "../tools/listmanagers/UnifiedClientListManager";
 import ListScrubber from "../tools/cleaner/ListScrubber";
 import CallFireDialer from "../tools/schedulemanager/CallFireDialer";
+import SmsInbox from "../tools/smsinbox/SmsInbox";
 
 const AgentDashboard = () => {
-  const [activeTool, setActiveTool] = useState("email");
+  const [activeTool, setActiveTool] = useState("sms");
 
   const renderActiveTool = () => {
     switch (activeTool) {
+      case "sms":
+        return <SmsInbox />;
       case "logics":
         return <LogicsFileReader />;
       case "cleaner":
@@ -33,12 +36,13 @@ const AgentDashboard = () => {
       case "callfire":
         return <CallFireDialer />;
       default:
-        return <ManualEmailSender />;
+        return <SmsInbox />;
     }
   };
 
   // Active tools configuration
   const tools = [
+    { id: "sms", label: "SMS Intelligence", icon: "🤖", active: true },
     { id: "email", label: "Email Campaign Sender", icon: "✉️", active: true },
     { id: "text", label: "SMS Campaign Sender", icon: "💬", active: true },
     { id: "callfire", label: "CallFire Auto-Dialer", icon: "🔥", active: true },

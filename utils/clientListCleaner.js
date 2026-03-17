@@ -505,7 +505,7 @@ async function processClient(client, domain) {
 
 // ============ MAIN FUNCTION ============
 
-async function cleanClientList(contacts, domain) {
+async function cleanClientList(contacts, domain, onProgress) {
   const flagged = [];
   const clean = [];
   const removed = [];
@@ -519,8 +519,15 @@ async function cleanClientList(contacts, domain) {
 
     if ((i + 1) % 100 === 0) {
       console.log(`[ListCleaner] Progress: ${i + 1}/${contacts.length}`);
+      if (onProgress) {
+        onProgress({
+          processed: i + 1,
+          clean: clean.length,
+          flagged: flagged.length,
+          removed: removed.length,
+        });
+      }
     }
-
     if (!contact.caseNumber) {
       removed.push({ ...contact, _removeReason: "Missing case number" });
       continue;

@@ -1,5 +1,19 @@
+// client/src/App.js
+// ─────────────────────────────────────────────────────────────
+// Simplified routing:
+//   /dashboard  → main app (auth-gated)
+//   /deploy     → deploy tracker (auth-gated)
+//   /login      → fallback for JWT agents (nginx gate handles primary auth)
+//   /           → redirects to /dashboard
+// ─────────────────────────────────────────────────────────────
+
 import React, { useContext } from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 
 import MessageState from "./context/message/MessageState";
 import MessageContext from "./context/message/messageContext";
@@ -10,16 +24,15 @@ import ClientState from "./context/client/ClientState";
 import ScheduleState from "./context/schedule/ScheduleState";
 import TextState from "./context/text/TextState";
 import EmailState from "./context/email/EmailState";
+import SmsState from "./context/sms/SmsState";
 
 import Navbar from "./components/layout/Navbar";
 import Login from "./components/auth/Login";
-import Register from "./components/auth/Register";
 import PrivateRoute from "./utils/PrivateRoute";
-import AdminPanel from "./components/interface/AdminPanel";
-import ManagementDashboard from "./components/interface/ManagementDashboard";
 import AgentDashboard from "./components/interface/AgentDashboard";
 import Toast from "./components/layout/Toast";
-// AppContent is rendered within all providers so it can use MessageContext
+import DeployTracker from "./components/tools/deploymentguide/DeploymentGuide";
+
 function AppContent() {
   const { loading, message, error, clearMessage } = useContext(MessageContext);
 
@@ -43,20 +56,21 @@ function AppContent() {
       )}
 
       <Routes>
+        {/* Login — fallback for JWT agents, nginx gate handles primary auth */}
         <Route path="/login" element={<Login />} />
-        <Route path="/invite/:token" element={<Register />} />
+
+        {/* Main dashboard */}
         <Route
-          path="/unauthorized"
-          element={<div>You are not authorized to view this page.</div>}
-        />
-        <Route
-          path="/"
+          path="/dashboard"
           element={
             <PrivateRoute>
               <AgentDashboard />
             </PrivateRoute>
           }
         />
+
+        {/* Catch-all → dashboard */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Router>
   );
@@ -72,7 +86,9 @@ export default function App() {
               <ScheduleState>
                 <TextState>
                   <EmailState>
-                    <AppContent />
+                    <SmsState>
+                      <AppContent />
+                    </SmsState>
                   </EmailState>
                 </TextState>
               </ScheduleState>

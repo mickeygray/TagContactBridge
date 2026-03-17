@@ -1,69 +1,89 @@
 // services/smsContent.js
 // ─────────────────────────────────────────────────────────────
 // All prospect SMS content lives here.
-// The webhook and cadence engine both call getSmsContent()
-// to get the right message for the sequence number.
+// Company-aware: pass company key to get branded messages.
 //
-// Chain: 3 texts over 3 days
-//   Text 1 (Day 0): Welcome — brochure link
-//   Text 2 (Day 1): Value prop — consultation nudge
-//   Text 3 (Day 2): Urgency — final push
+// Chain: 5 texts over ~7 days
+//   Text 1 (Day 0, immediate):   Acknowledge request, establish credibility
+//   Text 2 (Day 0, 30-60 min):   IRS consequences, urgency
+//   Text 3 (Day 1):              Time-sensitive, penalties growing
+//   Text 4 (Day 3):              Specific relief options, direct CTA
+//   Text 5 (Day 7):              Final — window closing
+//
+// NOTE: CallRail automatically appends "Reply STOP to opt out"
+//       so we do NOT include it in the message body.
 // ─────────────────────────────────────────────────────────────
 
-const LOCAL_PHONE = "310-561-1009";
-const TOLL_FREE = "866-770-3749";
-const BROCHURE_URL = "https://www.wynntaxsolutions.com/services-brochure";
+const { getCompanyConfig } = require("../config/companyConfig");
+
+/**
+ * Normalize a first name: "JOHN DOE" → "John", "jane" → "Jane"
+ */
+function formatFirstName(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  const first = raw.trim().split(/\s+/)[0];
+  if (!first) return "";
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
 
 /**
  * Get SMS content for a given sequence number.
  *
- * @param {string} name - Prospect's first name
+ * @param {string} name - Prospect's full name (will extract first name)
  * @param {string} scheduleUrl - Calendly or scheduling link
- * @param {number} textNumber - 1, 2, or 3
+ * @param {number} textNumber - 1 through 5
+ * @param {string} [company="wynn"] - Company key
  * @returns {string} SMS body text
  */
-function getSmsContent(name, scheduleUrl, textNumber = 1) {
-  const greeting = name || "there";
+function getSmsContent(name, scheduleUrl, textNumber = 1, company = "wynn") {
+  const firstName = formatFirstName(name) || "there";
+  const config = getCompanyConfig(company);
+  const co = config.name;
+  const phone = config.localPhone || config.tollFreePhone || "";
 
   switch (textNumber) {
-    // ── TEXT 1: Welcome ─────────────────────────────────────
     case 1:
       return (
-        `Hi ${greeting}! Thanks for your interest in Wynn Tax Solutions. ` +
-        `Learn how we can help resolve your tax situation: ${BROCHURE_URL}\n\n` +
-        `Questions? Call us: ${LOCAL_PHONE}`
+        `${firstName}, this is ${co}. We received your request for tax relief assistance. ` +
+        `The IRS adds penalties and interest daily — the sooner we review your case, the more options you have.\n\n` +
+        `Call us now: ${phone}`
       );
-
-    // ── TEXT 2: Value / Consultation ────────────────────────
     case 2:
       return (
-        `Hi ${greeting}, it's Wynn Tax Solutions. Our team has helped thousands ` +
-        `of clients resolve IRS and state tax issues. We'd love to do the same for you.\n\n` +
-        `Call us: ${TOLL_FREE}`
+        `${firstName}, following up from ${co}. ` +
+        `If you owe the IRS, they can garnish wages, levy bank accounts, and file liens without warning. ` +
+        `We may be able to reduce what you owe or stop collections.\n\n` +
+        `Speak with our team today: ${phone}`
       );
-
-    // ── TEXT 3: Urgency / Final ─────────────────────────────
     case 3:
       return (
-        `Hi ${greeting}, just a final check-in from Wynn Tax Solutions. ` +
-        `Tax issues can escalate quickly — penalties and interest add up daily. ` +
-        `A quick call with our team can help you understand your options.\n\n` +
-        `Call: ${TOLL_FREE}\n\n` +
-        `We're here whenever you're ready.`
+        `${firstName}, ${co} here. Penalties on your tax debt are compounding daily. ` +
+        `Our clients have saved thousands by acting quickly — some qualify to settle for a fraction of what they owe.\n\n` +
+        `Don't wait. Call us: ${phone}`
       );
-
-    // Fallback (shouldn't happen, but safe)
+    case 4:
+      return (
+        `${firstName}, this is ${co}. You may qualify for an Offer in Compromise, installment agreement, or penalty abatement — ` +
+        `but these programs have deadlines and eligibility requirements.\n\n` +
+        `Let us review your case before your options narrow: ${phone}`
+      );
+    case 5:
+      return (
+        `${firstName}, this is our final follow-up from ${co}. ` +
+        `Every day without a resolution plan is another day the IRS has the upper hand. ` +
+        `If you want to take control of your tax situation, we're ready to help.\n\n` +
+        `${phone}`
+      );
     default:
       return (
-        `Hi ${greeting}, Wynn Tax Solutions is here to help with your tax situation. ` +
-        `Call us anytime: ${TOLL_FREE}`
+        `${firstName}, ${co} is ready to help resolve your tax situation. ` +
+        `The IRS won't wait — neither should you.\n\n` +
+        `Call us: ${phone}`
       );
   }
 }
 
 module.exports = {
   getSmsContent,
-  LOCAL_PHONE,
-  TOLL_FREE,
-  BROCHURE_URL,
+  formatFirstName,
 };

@@ -1,42 +1,122 @@
 // services/cadenceEngine.js
 // ─────────────────────────────────────────────────────────────
-// Cron-driven cadence engine.
-// Processes all active LeadCadence records during business hours.
+// Unified cadence engine — runs every 5 minutes during
+// business hours and handles outreach:
 //
-// Cadence rules:
-//   TEXTS:  1/day for first 3 days (3 total)
-//   CALLS:  Day 0-1 handled by RingOut (cadence engine).
-//           Day 2+ handled by noon CallFire auto-dialer.
-//           BUFFERED: 10 calls every 5 minutes to avoid morning blast.
-//   EMAILS: Welcome on signup. Then every-other-day chain of 5.
-//           Then 1/week until status changes.
+//   DAY 0 TIMELINE:
+//     ~5 min:   Email + Text 1 + RVM 1 (text & RVM offset 60s)
+//     ~15 min:  RVM 2
+//     ~30 min:  Text 2
 //
-// Logics status gating:
-//   Status 1 or 2 → active, continue cadence
-//   Anything else  → deactivate (delete from active set)
+//   TEXTS (5 total):
+//     Text 1: Day 0 ~5min    (with RVM 1)
+//     Text 2: Day 0 ~30min
+//     Text 3: Day 1
+//     Text 4: Day 3
+//     Text 5: Day 7
+//
+//   EMAILS:
+//     Welcome: Day 0 ~5min (with Text 1 + RVM 1)
+//     Follow-up chain: 5 emails every-other-business-day
+//     Then 1/week until status changes
+//
+//   DAY 2-9: NOON RVM
+//     One RVM drop per day at noon PT, Mon-Fri
+//
+//   DAY 10+:
+//     Cadence exhaustion check only — dialing handled by PhoneBurner
+//
+//   DNC FLAGS:
+//     smsDnc / rvmDnc — set at intake or on first failure
+//     Checked before every SMS/RVM attempt, skip with one-line log
+//
+//   SAFETY:
+//     - Never RVM same lead within MIN_GAP_MINUTES
+//     - day0Connected = true → stop all outreach
+//     - All actions tracked in MongoDB with timestamps
+//     - Dialing handled entirely by PhoneBurner (not this engine)
 // ─────────────────────────────────────────────────────────────
 
 const LeadCadence = require("../models/LeadCadence");
-const { fetchCaseInfo } = require("./logicsService");
+const { updateCaseStatus } = require("./logicsService");
+const { checkForConnections } = require("./connectionChecker");
+const {
+  isStatusFresh,
+  getActivePhonesOnCall,
+  to10: phoneTo10,
+} = require("./statusChecker");
 
 const BUSINESS_TZ = process.env.BUSINESS_TZ || "America/Los_Angeles";
-const BUSINESS_START = Number(process.env.BUSINESS_START_HOUR || 7);
-const BUSINESS_END = Number(process.env.BUSINESS_END_HOUR || 17); // 5pm
+const BUSINESS_START = Number(process.env.BUSINESS_START_HOUR || 8);
+const BUSINESS_END = Number(process.env.BUSINESS_END_HOUR || 18);
 
-// Active Logics statuses
 const ACTIVE_STATUSES = [1, 2];
 
-// Call buffering config
-const CALL_BATCH_SIZE = 10;
-const CALL_BATCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+/* ══════════════════════════════════════════════════════════════
+   STRATEGY CONSTANTS
+   ══════════════════════════════════════════════════════════════ */
 
-// In-memory call queue (persists across ticks within same process)
-let callQueue = [];
-let isProcessingQueue = false;
+// Day 0 scheduled actions (minutes after creation)
+const DAY0_ACTIONS = [
+  { minute: 5, actions: ["email", "text", "rvm"] },
+  { minute: 15, actions: ["rvm"] },
+  { minute: 30, actions: ["text"] },
+];
 
-/* -------------------------------------------------------------------------- */
-/*                          TIME HELPERS                                      */
-/* -------------------------------------------------------------------------- */
+// Day 2-9: RVM drop once per day at noon (handled by cadence tick)
+const DAY2_9_RVM_HOUR = 12; // noon PT
+const DAY2_9_MAX_DAY = 9;
+
+// Text schedule (texts 3-5 handled by time since creation)
+const TEXT_SCHEDULE = [
+  { textNum: 3, minMinutesSinceCreation: 24 * 60, minMinutesSinceLastText: 60 },
+  {
+    textNum: 4,
+    minMinutesSinceCreation: 3 * 24 * 60,
+    minMinutesSinceLastText: 60,
+  },
+  {
+    textNum: 5,
+    minMinutesSinceCreation: 7 * 24 * 60,
+    minMinutesSinceLastText: 60,
+  },
+];
+const MAX_TEXTS = 5;
+
+// Global safety
+const MIN_RVM_GAP_MINUTES = 10;
+const MAX_RVMS_LIFETIME = 15;
+
+// Cadence exhaustion — when ALL of these caps are hit,
+// update Logics status to 223 (Automatic Contact Ended)
+// and deactivate the lead.
+const CADENCE_EXHAUSTED_STATUS = 223;
+const MAX_EMAILS_LIFETIME = 10; // 5 chain + some weekly
+
+// Check function: has this lead exhausted all contact channels?
+function isCadenceExhausted(lead) {
+  const texts = lead.textsSent || 0;
+  const rvms = lead.rvmsSent || 0;
+  const emails = lead.emailsSent || 0;
+
+  // With dialing moved to PB, exhaustion is texts + rvms + emails
+  return (
+    texts >= MAX_TEXTS &&
+    rvms >= MAX_RVMS_LIFETIME &&
+    emails >= MAX_EMAILS_LIFETIME
+  );
+}
+
+// RVM pacing (Drop.co)
+const RVM_MIN_DELAY_MS = 2000; // 2s between RVM drops
+let rvmLastDropTime = 0;
+
+// Tick overlap protection
+let tickRunning = false;
+
+/* ══════════════════════════════════════════════════════════════
+   TIME HELPERS
+   ══════════════════════════════════════════════════════════════ */
 
 function getNowPT() {
   return new Date(
@@ -46,352 +126,215 @@ function getNowPT() {
 
 function getTodayDateStr() {
   const now = getNowPT();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 function getHourPT() {
   return getNowPT().getHours();
 }
+function getMinutePT() {
+  return getNowPT().getMinutes();
+}
 
 function isBusinessHours() {
   const now = getNowPT();
-  const day = now.getDay(); // 0=Sun, 6=Sat
+  const day = now.getDay();
   if (day === 0 || day === 6) return false;
-  const hour = now.getHours();
-  return hour >= BUSINESS_START && hour < BUSINESS_END;
+  return now.getHours() >= BUSINESS_START && now.getHours() < BUSINESS_END;
 }
 
-/**
- * Count business days (Mon-Fri) since lead creation.
- * Day 1 = creation day (or next business day if created on weekend)
- * Day 2 = next business day after Day 1
- * etc.
- */
+function minutesSince(date) {
+  if (!date) return Infinity;
+  return (Date.now() - new Date(date).getTime()) / (1000 * 60);
+}
+
+function isSameCalendarDayPT(dateA, dateB) {
+  if (!dateA || !dateB) return false;
+  const a = new Date(
+    new Date(dateA).toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
+  );
+  const b = new Date(
+    new Date(dateB).toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
+  );
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 function businessDaysSinceCreation(createdAt) {
   const created = new Date(
     new Date(createdAt).toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
   );
   const now = getNowPT();
-
-  // Strip time for date comparison
   let current = new Date(
     created.getFullYear(),
     created.getMonth(),
     created.getDate(),
   );
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  // If created on weekend, move to next Monday
   const createdDay = current.getDay();
-  if (createdDay === 0) current.setDate(current.getDate() + 1); // Sun -> Mon
-  if (createdDay === 6) current.setDate(current.getDate() + 2); // Sat -> Mon
-
-  // Count business days
-  let businessDays = 1; // Day 1 = creation day (or first business day)
-
+  if (createdDay === 0) current.setDate(current.getDate() + 1);
+  if (createdDay === 6) current.setDate(current.getDate() + 2);
+  let businessDays = 1;
   while (current < today) {
     current.setDate(current.getDate() + 1);
-    const dayOfWeek = current.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      businessDays++;
-    }
+    if (current.getDay() !== 0 && current.getDay() !== 6) businessDays++;
   }
-
   return businessDays;
 }
 
-/**
- * Legacy function - kept for backwards compatibility but use businessDaysSinceCreation instead
- */
 function daysSinceCreation(createdAt) {
   return businessDaysSinceCreation(createdAt);
 }
 
+/* ══════════════════════════════════════════════════════════════
+   DNC REASON HELPERS
+   ══════════════════════════════════════════════════════════════ */
+
+function classifyRvmDncReason(errorStr) {
+  const lower = (errorStr || "").toLowerCase();
+  if (lower.includes("dnc")) return "national-dnc";
+  if (lower.includes("area code")) return "invalid-area-code";
+  return "permanent-fail";
+}
+
+function classifySmsDncReason(errorStr) {
+  const lower = (errorStr || "").toLowerCase();
+  if (lower.includes("opted out")) return "opted-out";
+  return "invalid-phone";
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DAY 0 ACTION SCHEDULER
+   ══════════════════════════════════════════════════════════════ */
+
 /**
- * What hour (PT) was the lead created?
+ * Determine which Day 0 actions should fire for this lead right now.
+ * Returns an array of action strings that haven't been done yet.
  */
-function creationHourPT(createdAt) {
-  const created = new Date(
-    new Date(createdAt).toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
+function getDay0Actions(lead) {
+  if (lead.day0Connected) return [];
+
+  const minSinceCreation = minutesSince(lead.createdAt);
+  const pendingActions = [];
+
+  const textsSent = lead.textsSent || 0;
+  const rvmsSent = lead.rvmsSent || 0;
+
+  let expectedTexts = 0;
+  let expectedRvms = 0;
+
+  for (const milestone of DAY0_ACTIONS) {
+    if (minSinceCreation < milestone.minute) break;
+
+    for (const action of milestone.actions) {
+      if (action === "text") expectedTexts++;
+      if (action === "rvm") expectedRvms++;
+    }
+  }
+
+  if (rvmsSent < expectedRvms) {
+    pendingActions.push("rvm");
+  }
+
+  if (textsSent < expectedTexts) {
+    pendingActions.push("text");
+  }
+
+  return pendingActions;
+}
+
+/**
+ * Check if lead is still in Day 0 window.
+ */
+function isDay0(lead) {
+  const minSinceCreation = minutesSince(lead.createdAt);
+  const maxDay0Minute = DAY0_ACTIONS[DAY0_ACTIONS.length - 1].minute + 30; // 60min
+  const day0Complete = (lead.rvmsSent || 0) >= 2;
+
+  return minSinceCreation <= maxDay0Minute && !day0Complete;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TEXT DECISION (Texts 3-5, post Day 0)
+   ══════════════════════════════════════════════════════════════ */
+
+function shouldSendText35(lead) {
+  if (lead.smsDnc) return false;
+  const sent = lead.textsSent || 0;
+  if (sent < 2) return false; // Texts 1-2 are Day 0
+  if (sent >= MAX_TEXTS) return false;
+
+  const minSinceCreation = minutesSince(lead.createdAt);
+  const minSinceLastText = minutesSince(lead.lastTextedAt);
+
+  const scheduleIndex = sent - 2; // sent=2 → index 0 (Text 3)
+  if (scheduleIndex >= TEXT_SCHEDULE.length) return false;
+
+  const nextText = TEXT_SCHEDULE[scheduleIndex];
+  return (
+    minSinceCreation >= nextText.minMinutesSinceCreation &&
+    minSinceLastText >= nextText.minMinutesSinceLastText
   );
-  return created.getHours();
 }
 
-/* -------------------------------------------------------------------------- */
-/*                      CADENCE RULE CALCULATIONS                             */
-/* -------------------------------------------------------------------------- */
+/* ══════════════════════════════════════════════════════════════
+   EMAIL DECISION
+   ══════════════════════════════════════════════════════════════ */
 
-/**
- * Determine if we should text this lead right now.
- * Rule: 1 text/day for first 3 business days.
- */
-function shouldText(lead) {
-  if (!lead.phoneIsCell) return false;
-  if (lead.textsSent >= 3) return false;
-
-  const bizDay = businessDaysSinceCreation(lead.createdAt);
-  if (bizDay > 3) return false; // only business days 1, 2, 3
-
-  // Have we already texted today?
-  if (lead.lastTextedAt) {
-    const lastTextDate = new Date(
-      new Date(lead.lastTextedAt).toLocaleString("en-US", {
-        timeZone: BUSINESS_TZ,
-      }),
-    );
-    const todayDate = getNowPT();
-    if (
-      lastTextDate.getFullYear() === todayDate.getFullYear() &&
-      lastTextDate.getMonth() === todayDate.getMonth() &&
-      lastTextDate.getDate() === todayDate.getDate()
-    ) {
-      return false; // already texted today
-    }
-  }
-
-  return true;
-}
-
-/**
- * Determine if we should call this lead right now.
- *
- * Rules (business days, weekends don't count):
- *   Day 1 (creation day): 3 calls
- *   Day 2: 2 calls
- *   Day 3+: 1 call per day
- *
- * Spacing: at least 2 hours between calls
- */
-function shouldCall(lead, debug = false) {
-  const reasons = [];
-
-  if (!lead.phoneConnected) {
-    reasons.push("phoneConnected=false");
-    if (debug)
-      console.log(
-        `[CADENCE-DEBUG] ${lead.caseId} skip call: ${reasons.join(", ")}`,
-      );
-    return false;
-  }
-
-  const today = getTodayDateStr();
-  const bizDay = businessDaysSinceCreation(lead.createdAt);
-
-  // Reset callsToday if it's a new day
-  let callsToday = lead.callsToday || 0;
-  if (lead.callsTodayDate !== today) {
-    callsToday = 0;
-  }
-
-  // Determine max calls allowed today based on business day
-  let maxCallsToday;
-  if (bizDay === 1) {
-    maxCallsToday = 3; // Day 1: 3 calls
-  } else if (bizDay === 2) {
-    maxCallsToday = 2; // Day 2: 2 calls
-  } else {
-    maxCallsToday = 1; // Day 3+: 1 call per day
-  }
-
-  if (callsToday >= maxCallsToday) {
-    reasons.push(
-      `bizDay=${bizDay}, callsToday=${callsToday} >= max=${maxCallsToday}`,
-    );
-    if (debug)
-      console.log(
-        `[CADENCE-DEBUG] ${lead.caseId} skip call: ${reasons.join(", ")}`,
-      );
-    return false;
-  }
-
-  // Enforce 2-hour spacing between calls
-  if (lead.lastCalledAt) {
-    const msSinceLast = Date.now() - new Date(lead.lastCalledAt).getTime();
-    const hoursSinceLast = msSinceLast / (1000 * 60 * 60);
-    if (hoursSinceLast < 2) {
-      reasons.push(`lastCalledAt ${hoursSinceLast.toFixed(1)}h ago (<2h)`);
-      if (debug)
-        console.log(
-          `[CADENCE-DEBUG] ${lead.caseId} skip call: ${reasons.join(", ")}`,
-        );
-      return false;
-    }
-  }
-
-  if (debug)
-    console.log(
-      `[CADENCE-DEBUG] ${lead.caseId} WILL call: bizDay=${bizDay}, callsToday=${callsToday}, max=${maxCallsToday}`,
-    );
-  return true;
-}
-
-/**
- * Determine if we should send a follow-up email right now.
- *
- * Chain: 5 emails, every other business day (days 2, 4, 6, 8, 10)
- * After chain: 1 email per week
- */
 function shouldEmail(lead) {
-  if (!lead.emailValid) return false;
-
+  if (!lead.email) return false;
+  if (lead.emailValid === false) return false; // only block if explicitly invalidated
   const bizDay = businessDaysSinceCreation(lead.createdAt);
   const sent = lead.emailsSent || 0;
-
-  // Don't email on day 1 (welcome email covers that)
   if (bizDay < 2) return false;
-
-  // Have we already emailed today?
-  if (lead.lastEmailedAt) {
-    const lastDate = new Date(
-      new Date(lead.lastEmailedAt).toLocaleString("en-US", {
-        timeZone: BUSINESS_TZ,
-      }),
-    );
-    const todayDate = getNowPT();
-    if (
-      lastDate.getFullYear() === todayDate.getFullYear() &&
-      lastDate.getMonth() === todayDate.getMonth() &&
-      lastDate.getDate() === todayDate.getDate()
-    ) {
-      return false;
-    }
-  }
+  if (lead.lastEmailedAt && isSameCalendarDayPT(lead.lastEmailedAt, new Date()))
+    return false;
 
   if (sent < 5) {
-    // Chain phase: every other business day starting day 2
     const expectedDay = 2 + sent * 2;
     return bizDay >= expectedDay;
   }
 
-  // Weekly phase: 1 email per week after chain completes
   if (lead.lastEmailedAt) {
-    const msSinceLast = Date.now() - new Date(lead.lastEmailedAt).getTime();
-    const daysSinceLast = msSinceLast / (1000 * 60 * 60 * 24);
-    return daysSinceLast >= 7;
+    return minutesSince(lead.lastEmailedAt) / (60 * 24) >= 7;
   }
-
   return true;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                       CALL QUEUE PROCESSOR                                 */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Process the call queue in batches.
- * Called after runCadenceTick queues up all eligible calls.
- */
-async function processCallQueue(placeCall) {
-  if (isProcessingQueue) {
-    console.log("[CALL-QUEUE] Already processing — skipping");
-    return;
-  }
-
-  if (callQueue.length === 0) {
-    console.log("[CALL-QUEUE] Queue empty — nothing to process");
-    return;
-  }
-
-  isProcessingQueue = true;
-  console.log(
-    `[CALL-QUEUE] ═══ Starting queue processor: ${callQueue.length} calls queued ═══`,
-  );
-
-  const today = getTodayDateStr();
-  let batchNum = 0;
-
-  while (callQueue.length > 0 && isBusinessHours()) {
-    batchNum++;
-    const batch = callQueue.splice(0, CALL_BATCH_SIZE);
-
-    console.log(`[CALL-QUEUE] ── Batch ${batchNum}: ${batch.length} calls ──`);
-
-    for (const item of batch) {
-      try {
-        console.log(
-          `[CALL-QUEUE] Calling CaseID ${item.caseId} (${item.phone})...`,
-        );
-
-        const callResult = await placeCall({
-          phone: item.phone,
-          name: item.name,
-        });
-
-        // Update MongoDB
-        await LeadCadence.updateOne(
-          { _id: item._id },
-          {
-            $inc: { callsMade: 1, callsToday: 1 },
-            $set: { lastCalledAt: new Date(), callsTodayDate: today },
-          },
-        );
-
-        console.log(
-          `[CALL-QUEUE] CaseID ${item.caseId}: ${callResult.ok ? "✓" : "✗ " + callResult.error}`,
-        );
-
-        // Small delay between individual calls in batch
-        await new Promise((r) => setTimeout(r, 2000));
-      } catch (err) {
-        console.error(`[CALL-QUEUE] CaseID ${item.caseId} error:`, err.message);
-      }
-    }
-
-    // If more calls remain, wait 5 minutes before next batch
-    if (callQueue.length > 0) {
-      console.log(
-        `[CALL-QUEUE] ${callQueue.length} calls remaining — waiting 5 minutes...`,
-      );
-      await new Promise((r) => setTimeout(r, CALL_BATCH_INTERVAL_MS));
-
-      // Re-check business hours after wait
-      if (!isBusinessHours()) {
-        console.log(
-          `[CALL-QUEUE] Business hours ended — ${callQueue.length} calls deferred to tomorrow`,
-        );
-        break;
-      }
-    }
-  }
-
-  isProcessingQueue = false;
-  console.log(`[CALL-QUEUE] ═══ Queue processor complete ═══`);
+function isDay2Plus(lead) {
+  return businessDaysSinceCreation(lead.createdAt) >= 2;
 }
 
-/**
- * Get current queue status
- */
-function getQueueStatus() {
-  return {
-    queueLength: callQueue.length,
-    isProcessing: isProcessingQueue,
-  };
+/* ══════════════════════════════════════════════════════════════
+   RVM PACING
+   ══════════════════════════════════════════════════════════════ */
+
+async function pacedRvmDrop(rvmFn, args) {
+  const now = Date.now();
+  const timeSinceLast = now - rvmLastDropTime;
+  if (timeSinceLast < RVM_MIN_DELAY_MS) {
+    await new Promise((r) => setTimeout(r, RVM_MIN_DELAY_MS - timeSinceLast));
+  }
+  rvmLastDropTime = Date.now();
+  return rvmFn(args);
 }
 
-/**
- * Clear the call queue (for testing/admin)
- */
-function clearCallQueue() {
-  const count = callQueue.length;
-  callQueue = [];
-  return count;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                         MAIN CADENCE TICK                                  */
-/* -------------------------------------------------------------------------- */
+/* ══════════════════════════════════════════════════════════════
+   MAIN CADENCE TICK
+   ══════════════════════════════════════════════════════════════ */
 
 /**
- * Run one cadence cycle. Called by setInterval or cron.
+ * Run one cadence cycle. Called every 5 minutes.
  *
- * @param {object} actions - Injected action functions from webhook.js:
+ * @param {object} actions:
  *   {
- *     sendText(phone, name, textNum) → {ok, error?},
- *     placeCall(fields) → {ok, error?},
- *     sendFollowUpEmail(email, name, emailIndex) → {ok, error?}
+ *     sendText(phone, name, textNum, company) → {ok},
+ *     sendFollowUpEmail(email, name, emailIndex, company) → {ok},
+ *     dropRvm({ phone, caseId, name, source, rvmNum, company }) → {ok, activityToken},
+ *     rcPlatform — RingCentral SDK platform instance (for connection checking)
  *   }
  */
 async function runCadenceTick(actions) {
@@ -399,189 +342,875 @@ async function runCadenceTick(actions) {
     return { skipped: true, reason: "Outside business hours" };
   }
 
-  const today = getTodayDateStr();
-  const leads = await LeadCadence.find({ active: true }).lean();
-
-  console.log(
-    `[CADENCE] ══ Tick ══ ${leads.length} active lead(s) at ${today} ${getHourPT()}:00 PT`,
-  );
-
-  // ── Diagnostic summary ─────────────────────────────────────
-  const dayCounts = { bizDay1: 0, bizDay2: 0, bizDay3plus: 0 };
-  for (const lead of leads) {
-    const bizDay = businessDaysSinceCreation(lead.createdAt);
-    if (bizDay === 1) dayCounts.bizDay1++;
-    else if (bizDay === 2) dayCounts.bizDay2++;
-    else dayCounts.bizDay3plus++;
+  if (tickRunning) {
+    console.log(
+      "[CADENCE] ⚠ Previous tick still running — skipping this cycle",
+    );
+    return { skipped: true, reason: "Previous tick still running" };
   }
-  console.log(
-    `[CADENCE] Lead age (business days): Day1=${dayCounts.bizDay1} (3 calls), Day2=${dayCounts.bizDay2} (2 calls), Day3+=${dayCounts.bizDay3plus} (1 call)`,
-  );
 
-  const results = [];
-  const callsToQueue = [];
+  tickRunning = true;
 
-  for (const lead of leads) {
-    const result = {
-      caseId: lead.caseId,
-      name: lead.name,
-      actions: [],
-    };
-
-    try {
-      // ── Check Logics status (silent unless error/deactivation) ──
-      const caseInfo = await fetchCaseInfo("WYNN", lead.caseId);
-
-      if (!caseInfo.ok) {
-        // Only log failures
-        console.warn(
-          `[CADENCE] CaseID ${lead.caseId} — Logics fetch failed: ${caseInfo.error}`,
-        );
-        result.actions.push({
-          type: "logics-check",
-          ok: false,
-          error: caseInfo.error,
-        });
-        results.push(result);
-        continue;
+  try {
+    // ── Check for connections BEFORE processing leads ──────────
+    let connectionResults = null;
+    if (actions.rcPlatform) {
+      try {
+        connectionResults = await checkForConnections(actions.rcPlatform);
+      } catch (err) {
+        console.error("[CADENCE] Connection check error:", err.message);
       }
-
-      const status = caseInfo.status;
-
-      // Update last check (silent)
-      await LeadCadence.updateOne(
-        { _id: lead._id },
-        { $set: { lastLogicsStatus: status, lastLogicsCheckAt: new Date() } },
-      );
-
-      if (!ACTIVE_STATUSES.includes(status)) {
-        // Only log deactivations
-        console.log(
-          `[CADENCE] CaseID ${lead.caseId} — Status ${status} → deactivating`,
-        );
-        await LeadCadence.deleteOne({ _id: lead._id });
-        result.actions.push({ type: "deactivated", status });
-        results.push(result);
-        continue;
-      }
-
-      // ── Reset callsToday if new day ────────────────────────
-      if (lead.callsTodayDate !== today) {
-        await LeadCadence.updateOne(
-          { _id: lead._id },
-          { $set: { callsToday: 0, callsTodayDate: today } },
-        );
-        lead.callsToday = 0;
-        lead.callsTodayDate = today;
-      }
-
-      // ── TEXT ────────────────────────────────────────────────
-      if (shouldText(lead)) {
-        console.log(
-          `[CADENCE] CaseID ${lead.caseId} — Sending text #${lead.textsSent + 1}`,
-        );
-        const textResult = await actions.sendText(
-          lead.phone,
-          lead.name,
-          lead.textsSent + 1,
-        );
-        await LeadCadence.updateOne(
-          { _id: lead._id },
-          { $inc: { textsSent: 1 }, $set: { lastTextedAt: new Date() } },
-        );
-        result.actions.push({
-          type: "text",
-          num: lead.textsSent + 1,
-          ...textResult,
-        });
-      }
-
-      // ── CALL (queue instead of immediate) ──────────────────
-      const willCall = shouldCall(lead, true); // Enable debug logging
-      if (willCall) {
-        console.log(
-          `[CADENCE] CaseID ${lead.caseId} — Queuing call (today: ${(lead.callsToday || 0) + 1})`,
-        );
-        callsToQueue.push({
-          _id: lead._id,
-          caseId: lead.caseId,
-          phone: lead.phone,
-          name: lead.name,
-          callsToday: (lead.callsToday || 0) + 1,
-        });
-        result.actions.push({
-          type: "call-queued",
-          position: callQueue.length + callsToQueue.length,
-        });
-      }
-
-      // ── FOLLOW-UP EMAIL ────────────────────────────────────
-      if (shouldEmail(lead)) {
-        const emailIndex = lead.emailsSent + 1;
-        console.log(
-          `[CADENCE] CaseID ${lead.caseId} — Sending email #${emailIndex}`,
-        );
-        const emailResult = await actions.sendFollowUpEmail(
-          lead.email,
-          lead.name,
-          emailIndex,
-        );
-        await LeadCadence.updateOne(
-          { _id: lead._id },
-          { $inc: { emailsSent: 1 }, $set: { lastEmailedAt: new Date() } },
-        );
-        result.actions.push({ type: "email", num: emailIndex, ...emailResult });
-      }
-    } catch (err) {
-      console.error(`[CADENCE] CaseID ${lead.caseId} — Error:`, err.message);
-      result.actions.push({ type: "error", error: err.message });
     }
 
-    results.push(result);
+    // ── Get currently active calls ─────────────────────────────
+    const phonesOnCall = await getActivePhonesOnCall(actions.rcPlatform);
 
-    // Small delay between leads to avoid hammering APIs
-    await new Promise((r) => setTimeout(r, 300));
-  }
+    const leads = await LeadCadence.find({ active: true }).lean();
+    const hour = getHourPT();
+    const minute = getMinutePT();
 
-  // ── Add calls to queue and start processor ─────────────────
-  if (callsToQueue.length > 0) {
-    // Avoid duplicates: don't re-queue leads already in queue
-    const existingIds = new Set(callQueue.map((c) => c._id.toString()));
-    const newCalls = callsToQueue.filter(
-      (c) => !existingIds.has(c._id.toString()),
-    );
-
-    callQueue.push(...newCalls);
     console.log(
-      `[CADENCE] Queued ${newCalls.length} calls (${callsToQueue.length - newCalls.length} duplicates skipped). Total queue: ${callQueue.length}`,
+      `[CADENCE] ══ Tick ══ ${leads.length} active lead(s) at ${getTodayDateStr()} ${hour}:${String(minute).padStart(2, "0")} PT`,
     );
 
-    // Start processing in background (don't await)
-    processCallQueue(actions.placeCall).catch((err) =>
-      console.error("[CALL-QUEUE] Processor error:", err.message),
+    // Diagnostic
+    let d0 = 0,
+      d0catch = 0,
+      d1 = 0,
+      d2plus = 0,
+      fresh = 0,
+      stale = 0;
+    for (const lead of leads) {
+      if (isStatusFresh(lead)) fresh++;
+      else stale++;
+      if (isDay0(lead)) d0++;
+      else if (
+        businessDaysSinceCreation(lead.createdAt) === 1 &&
+        (lead.rvmsSent || 0) < 2
+      )
+        d0catch++;
+      else if (businessDaysSinceCreation(lead.createdAt) <= 1) d1++;
+      else d2plus++;
+    }
+    console.log(
+      `[CADENCE] Breakdown: Day0=${d0} Day0-catch=${d0catch} Day1=${d1} Day2+=${d2plus} | Fresh=${fresh} Stale=${stale}`,
     );
+
+    const results = [];
+    let rvmsDropped = 0,
+      textsSent = 0,
+      emailsSent = 0,
+      deactivated = 0;
+
+    for (const lead of leads) {
+      const result = { caseId: lead.caseId, name: lead.name, actions: [] };
+
+      try {
+        // ── Freshness gate ─────────────────────────────────────
+        if (!isStatusFresh(lead)) {
+          const lastCheck = lead.lastLogicsCheckAt
+            ? `${Math.round((Date.now() - new Date(lead.lastLogicsCheckAt).getTime()) / 60000)}min ago`
+            : "never";
+          console.log(
+            `[CADENCE] CaseID ${lead.caseId} — STALE (last checked: ${lastCheck}), skipping`,
+          );
+          result.actions.push({
+            type: "status-stale",
+            lastCheck: lead.lastLogicsCheckAt || "never",
+          });
+          results.push(result);
+          continue;
+        }
+
+        // ── Active call check ──────────────────────────────────
+        const leadPhone10 = phoneTo10(lead.phone);
+        if (leadPhone10 && phonesOnCall.has(leadPhone10)) {
+          result.actions.push({ type: "on-active-call", phone: leadPhone10 });
+          results.push(result);
+          continue;
+        }
+
+        // Skip all outreach if already connected
+        if (lead.day0Connected) {
+          results.push(result);
+          continue;
+        }
+
+        // Skip if lead was "worked" (5+ min call) — paused until tomorrow
+        if (
+          lead.pauseOutreachUntil &&
+          new Date(lead.pauseOutreachUntil) > new Date()
+        ) {
+          result.actions.push({
+            type: "paused-worked",
+            until: lead.pauseOutreachUntil,
+          });
+          results.push(result);
+          continue;
+        }
+
+        // ════════════════════════════════════════════════════════
+        // DAY 0 SCHEDULED ACTIONS
+        // ════════════════════════════════════════════════════════
+        if (
+          isDay0(lead) ||
+          (businessDaysSinceCreation(lead.createdAt) === 1 &&
+            (lead.rvmsSent || 0) < 2)
+        ) {
+          const pending = getDay0Actions(lead);
+
+          // ── Day 0 RVM ──────────────────────────────────────
+          if (pending.includes("rvm") && actions.dropRvm) {
+            if (lead.rvmDnc) {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — RVM skipped (DNC: ${lead.rvmDncReason})`,
+              );
+              await LeadCadence.updateOne(
+                { _id: lead._id },
+                { $inc: { rvmsSent: 1 }, $set: { lastRvmAt: new Date() } },
+              );
+              result.actions.push({
+                type: "rvm-dnc",
+                reason: lead.rvmDncReason,
+              });
+            } else {
+              const rvmNum = (lead.rvmsSent || 0) + 1;
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Day 0 RVM #${rvmNum}`,
+              );
+              const rvmResult = await pacedRvmDrop(actions.dropRvm, {
+                phone: lead.phone,
+                caseId: lead.caseId,
+                name: lead.name,
+                source: "day0",
+                rvmNum,
+                company: lead.company,
+              });
+
+              if (rvmResult.ok) {
+                const rvmUpdate = {
+                  $inc: { rvmsSent: 1 },
+                  $set: { lastRvmAt: new Date() },
+                };
+                if (rvmResult.activityToken) {
+                  rvmUpdate.$set.lastRvmActivityToken = rvmResult.activityToken;
+                }
+                await LeadCadence.updateOne({ _id: lead._id }, rvmUpdate);
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day0",
+                  ok: true,
+                  num: rvmNum,
+                });
+                rvmsDropped++;
+              } else if (rvmResult.permanent) {
+                const rvmDncReason = classifyRvmDncReason(rvmResult.error);
+                console.warn(
+                  `[CADENCE] CaseID ${lead.caseId} — RVM #${rvmNum} PERMANENT FAIL: ${rvmResult.error}`,
+                );
+                await LeadCadence.updateOne(
+                  { _id: lead._id },
+                  {
+                    $inc: { rvmsSent: 1 },
+                    $set: {
+                      lastRvmAt: new Date(),
+                      lastRvmStatus: rvmResult.error,
+                      rvmDnc: true,
+                      rvmDncReason,
+                      dncUpdatedAt: new Date(),
+                    },
+                  },
+                );
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day0",
+                  ok: false,
+                  permanent: true,
+                  num: rvmNum,
+                  error: rvmResult.error,
+                });
+              } else {
+                console.warn(
+                  `[CADENCE] CaseID ${lead.caseId} — RVM #${rvmNum} failed: ${rvmResult.error}`,
+                );
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day0",
+                  ok: false,
+                  num: rvmNum,
+                  error: rvmResult.error,
+                });
+              }
+            }
+          }
+
+          // ── Day 0 Text (offset ~60s after RVM) ─────────────
+          if (pending.includes("text")) {
+            if (lead.smsDnc) {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Text skipped (DNC: ${lead.smsDncReason})`,
+              );
+              await LeadCadence.updateOne(
+                { _id: lead._id },
+                { $inc: { textsSent: 1 }, $set: { lastTextedAt: new Date() } },
+              );
+              result.actions.push({
+                type: "text-dnc",
+                reason: lead.smsDncReason,
+              });
+            } else {
+              if (pending.includes("rvm")) {
+                await new Promise((r) => setTimeout(r, 60000));
+              }
+
+              const freshLead = await LeadCadence.findById(lead._id, {
+                textsSent: 1,
+              }).lean();
+              const freshTextsSent = freshLead?.textsSent || 0;
+              const textNum = freshTextsSent + 1;
+
+              if (freshTextsSent === (lead.textsSent || 0)) {
+                console.log(
+                  `[CADENCE] CaseID ${lead.caseId} — Day 0 Text #${textNum}`,
+                );
+                const textResult = await actions.sendText(
+                  lead.phone,
+                  lead.name,
+                  textNum,
+                  lead.company,
+                );
+
+                if (textResult.ok) {
+                  await LeadCadence.updateOne(
+                    { _id: lead._id },
+                    {
+                      $inc: { textsSent: 1 },
+                      $set: { lastTextedAt: new Date() },
+                    },
+                  );
+                  result.actions.push({
+                    type: "text",
+                    strategy: "day0",
+                    num: textNum,
+                    ok: true,
+                  });
+                  textsSent++;
+                } else {
+                  console.warn(
+                    `[CADENCE] CaseID ${lead.caseId} — Text #${textNum} failed: ${textResult.error}`,
+                  );
+                  const errLower = (textResult.error || "").toLowerCase();
+                  if (
+                    errLower.includes("opted out") ||
+                    errLower.includes("phone number is invalid")
+                  ) {
+                    const smsDncReason = classifySmsDncReason(textResult.error);
+                    await LeadCadence.updateOne(
+                      { _id: lead._id },
+                      {
+                        $set: {
+                          phoneIsCell: false,
+                          phoneCanText: false,
+                          smsDnc: true,
+                          smsDncReason,
+                          dncUpdatedAt: new Date(),
+                        },
+                      },
+                    );
+                    console.log(
+                      `[CADENCE] CaseID ${lead.caseId} — SMS DNC set: ${smsDncReason}`,
+                    );
+                  }
+                  result.actions.push({
+                    type: "text",
+                    strategy: "day0",
+                    num: textNum,
+                    ok: false,
+                    error: textResult.error,
+                  });
+                }
+              } else {
+                console.log(
+                  `[CADENCE] CaseID ${lead.caseId} — Text skipped: textsSent changed (was ${lead.textsSent || 0}, now ${freshTextsSent})`,
+                );
+              }
+            }
+          }
+        }
+
+        // ════════════════════════════════════════════════════════
+        // DAY 1: Each channel gates on its own count
+        // ════════════════════════════════════════════════════════
+        else if (
+          businessDaysSinceCreation(lead.createdAt) === 1 &&
+          (lead.rvmsSent || 0) >= 2
+        ) {
+          const leadRvmsSent = lead.rvmsSent || 0;
+          const leadTextsSent = lead.textsSent || 0;
+          const leadEmailsSent = lead.emailsSent || 0;
+          const hoursSinceLastRvm = lead.lastRvmAt
+            ? (Date.now() - new Date(lead.lastRvmAt).getTime()) /
+              (1000 * 60 * 60)
+            : 999;
+
+          // ── RVM: send up to 4 total by end of Day 1 ─────────
+          if (leadRvmsSent < 4 && actions.dropRvm && hoursSinceLastRvm >= 2) {
+            const rvmNum = leadRvmsSent + 1;
+            if (lead.rvmDnc) {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Day 1 RVM #${rvmNum} skipped (DNC: ${lead.rvmDncReason})`,
+              );
+              await LeadCadence.updateOne(
+                { _id: lead._id },
+                { $inc: { rvmsSent: 1 }, $set: { lastRvmAt: new Date() } },
+              );
+              result.actions.push({
+                type: "rvm-dnc",
+                reason: lead.rvmDncReason,
+              });
+            } else {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Day 1 RVM #${rvmNum}`,
+              );
+              const rvmResult = await pacedRvmDrop(actions.dropRvm, {
+                phone: lead.phone,
+                caseId: lead.caseId,
+                name: lead.name,
+                source: "day1",
+                rvmNum: Math.min(rvmNum, 4),
+                company: lead.company,
+              });
+              if (rvmResult.ok) {
+                const rvmUpdate = {
+                  $inc: { rvmsSent: 1 },
+                  $set: { lastRvmAt: new Date() },
+                };
+                if (rvmResult.activityToken)
+                  rvmUpdate.$set.lastRvmActivityToken = rvmResult.activityToken;
+                await LeadCadence.updateOne({ _id: lead._id }, rvmUpdate);
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day1",
+                  ok: true,
+                  num: rvmNum,
+                });
+                rvmsDropped++;
+              } else if (rvmResult.permanent) {
+                const rvmDncReason = classifyRvmDncReason(rvmResult.error);
+                await LeadCadence.updateOne(
+                  { _id: lead._id },
+                  {
+                    $inc: { rvmsSent: 1 },
+                    $set: {
+                      lastRvmAt: new Date(),
+                      rvmDnc: true,
+                      rvmDncReason,
+                      dncUpdatedAt: new Date(),
+                    },
+                  },
+                );
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day1",
+                  ok: false,
+                  permanent: true,
+                  num: rvmNum,
+                  error: rvmResult.error,
+                });
+              } else {
+                result.actions.push({
+                  type: "rvm",
+                  strategy: "day1",
+                  ok: false,
+                  num: rvmNum,
+                  error: rvmResult.error,
+                });
+              }
+            }
+          }
+
+          // ── Text 3: send if textsSent < 3 ───────────────────
+          if (leadTextsSent < 3) {
+            if (lead.smsDnc) {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Day 1 Text #3 skipped (DNC: ${lead.smsDncReason})`,
+              );
+              await LeadCadence.updateOne(
+                { _id: lead._id },
+                { $inc: { textsSent: 1 }, $set: { lastTextedAt: new Date() } },
+              );
+              result.actions.push({
+                type: "text-dnc",
+                reason: lead.smsDncReason,
+              });
+            } else {
+              const freshLead = await LeadCadence.findById(lead._id, {
+                textsSent: 1,
+              }).lean();
+              const freshTextsSent = freshLead?.textsSent || 0;
+              if (freshTextsSent === leadTextsSent) {
+                const textNum = freshTextsSent + 1;
+                console.log(
+                  `[CADENCE] CaseID ${lead.caseId} — Day 1 Text #${textNum}`,
+                );
+                const textResult = await actions.sendText(
+                  lead.phone,
+                  lead.name,
+                  textNum,
+                  lead.company,
+                );
+                if (textResult.ok) {
+                  await LeadCadence.updateOne(
+                    { _id: lead._id },
+                    {
+                      $inc: { textsSent: 1 },
+                      $set: { lastTextedAt: new Date() },
+                    },
+                  );
+                  result.actions.push({
+                    type: "text",
+                    strategy: "day1",
+                    num: textNum,
+                    ok: true,
+                  });
+                  textsSent++;
+                } else {
+                  console.warn(
+                    `[CADENCE] CaseID ${lead.caseId} — Text #${textNum} failed: ${textResult.error}`,
+                  );
+                  const errLower = (textResult.error || "").toLowerCase();
+                  if (
+                    errLower.includes("opted out") ||
+                    errLower.includes("phone number is invalid")
+                  ) {
+                    await LeadCadence.updateOne(
+                      { _id: lead._id },
+                      {
+                        $set: {
+                          smsDnc: true,
+                          smsDncReason: classifySmsDncReason(textResult.error),
+                          dncUpdatedAt: new Date(),
+                        },
+                      },
+                    );
+                  }
+                  result.actions.push({
+                    type: "text",
+                    strategy: "day1",
+                    num: textNum,
+                    ok: false,
+                    error: textResult.error,
+                  });
+                }
+              }
+            }
+          }
+
+          // ── Email 2: send if emailsSent < 2 ─────────────────
+          if (leadEmailsSent < 2 && lead.email && actions.sendFollowUpEmail) {
+            const emailNum = leadEmailsSent + 1;
+            console.log(
+              `[CADENCE] CaseID ${lead.caseId} — Day 1 Email #${emailNum}`,
+            );
+            try {
+              const emailResult = await actions.sendFollowUpEmail(
+                lead.email,
+                lead.name,
+                emailNum,
+                lead.company,
+              );
+              if (emailResult.ok) {
+                await LeadCadence.updateOne(
+                  { _id: lead._id },
+                  {
+                    $inc: { emailsSent: 1 },
+                    $set: { lastEmailedAt: new Date() },
+                  },
+                );
+                result.actions.push({
+                  type: "email",
+                  strategy: "day1",
+                  num: emailNum,
+                  ok: true,
+                });
+                emailsSent++;
+              } else {
+                console.warn(
+                  `[CADENCE] CaseID ${lead.caseId} — Email #${emailNum} failed: ${emailResult.error}`,
+                );
+                result.actions.push({
+                  type: "email",
+                  strategy: "day1",
+                  num: emailNum,
+                  ok: false,
+                  error: emailResult.error,
+                });
+              }
+            } catch (emailErr) {
+              console.warn(
+                `[CADENCE] CaseID ${lead.caseId} — Email #${emailNum} failed: ${emailErr.message}`,
+              );
+              result.actions.push({
+                type: "email",
+                strategy: "day1",
+                num: emailNum,
+                ok: false,
+                error: emailErr.message,
+              });
+            }
+          }
+        }
+
+        // ════════════════════════════════════════════════════════
+        // DAY 2-9: NOON RVM DROP
+        // ════════════════════════════════════════════════════════
+        else if (
+          businessDaysSinceCreation(lead.createdAt) >= 2 &&
+          businessDaysSinceCreation(lead.createdAt) <= DAY2_9_MAX_DAY
+        ) {
+          const hourPT = getHourPT();
+
+          // Only fire at the noon tick (12:00-12:04 PT window)
+          if (hourPT === DAY2_9_RVM_HOUR) {
+            const alreadyRvmToday =
+              lead.lastRvmAt && isSameCalendarDayPT(lead.lastRvmAt, new Date());
+
+            if (!alreadyRvmToday) {
+              const freshLead = await LeadCadence.findById(lead._id, {
+                rvmsSent: 1,
+                lastRvmAt: 1,
+              }).lean();
+              const freshAlreadyToday =
+                freshLead?.lastRvmAt &&
+                isSameCalendarDayPT(freshLead.lastRvmAt, new Date());
+
+              if (!freshAlreadyToday) {
+                if (lead.rvmDnc) {
+                  console.log(
+                    `[CADENCE] CaseID ${lead.caseId} — Day ${businessDaysSinceCreation(lead.createdAt)} noon RVM skipped (DNC: ${lead.rvmDncReason})`,
+                  );
+                  result.actions.push({
+                    type: "rvm-dnc",
+                    strategy: "noon-day2-9",
+                    reason: lead.rvmDncReason,
+                  });
+                } else if (actions.dropRvm) {
+                  const rvmNum = Math.min((freshLead?.rvmsSent || 0) + 1, 4);
+                  console.log(
+                    `[CADENCE] CaseID ${lead.caseId} — Day ${businessDaysSinceCreation(lead.createdAt)} noon RVM #${(freshLead?.rvmsSent || 0) + 1} (audio: ${rvmNum})`,
+                  );
+
+                  const rvmResult = await pacedRvmDrop(actions.dropRvm, {
+                    phone: lead.phone,
+                    caseId: lead.caseId,
+                    name: lead.name,
+                    source: `day${businessDaysSinceCreation(lead.createdAt)}-noon`,
+                    rvmNum,
+                    company: lead.company,
+                  });
+
+                  if (rvmResult.ok) {
+                    await LeadCadence.updateOne(
+                      { _id: lead._id },
+                      {
+                        $inc: { rvmsSent: 1 },
+                        $set: {
+                          lastRvmAt: new Date(),
+                          lastRvmActivityToken: rvmResult.activityToken || null,
+                        },
+                      },
+                    );
+                    result.actions.push({
+                      type: "rvm",
+                      strategy: "noon-day2-9",
+                      ok: true,
+                      num: (freshLead?.rvmsSent || 0) + 1,
+                    });
+                    rvmsDropped++;
+                  } else if (rvmResult.permanent) {
+                    const rvmDncReason = classifyRvmDncReason(rvmResult.error);
+                    console.warn(
+                      `[CADENCE] CaseID ${lead.caseId} — Noon RVM PERMANENT FAIL: ${rvmResult.error}`,
+                    );
+                    await LeadCadence.updateOne(
+                      { _id: lead._id },
+                      {
+                        $inc: { rvmsSent: 1 },
+                        $set: {
+                          lastRvmAt: new Date(),
+                          lastRvmStatus: rvmResult.error,
+                          rvmDnc: true,
+                          rvmDncReason,
+                          dncUpdatedAt: new Date(),
+                        },
+                      },
+                    );
+                    result.actions.push({
+                      type: "rvm",
+                      strategy: "noon-day2-9",
+                      ok: false,
+                      permanent: true,
+                      error: rvmResult.error,
+                    });
+                  } else {
+                    console.warn(
+                      `[CADENCE] CaseID ${lead.caseId} — Noon RVM failed: ${rvmResult.error}`,
+                    );
+                    result.actions.push({
+                      type: "rvm",
+                      strategy: "noon-day2-9",
+                      ok: false,
+                      error: rvmResult.error,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Day 10+ — no cadence actions (PB handles dialing)
+
+        // ════════════════════════════════════════════════════════
+        // TEXTS 3-5 (post Day 0)
+        // ════════════════════════════════════════════════════════
+        if (shouldSendText35(lead)) {
+          if (lead.smsDnc) {
+            console.log(
+              `[CADENCE] CaseID ${lead.caseId} — Text 3-5 skipped (DNC: ${lead.smsDncReason})`,
+            );
+            await LeadCadence.updateOne(
+              { _id: lead._id },
+              { $inc: { textsSent: 1 }, $set: { lastTextedAt: new Date() } },
+            );
+            result.actions.push({
+              type: "text-dnc",
+              reason: lead.smsDncReason,
+            });
+          } else {
+            const freshLead = await LeadCadence.findById(lead._id, {
+              textsSent: 1,
+            }).lean();
+            const freshTextsSent = freshLead?.textsSent || 0;
+            const textNum = freshTextsSent + 1;
+
+            if (
+              freshTextsSent === (lead.textsSent || 0) &&
+              textNum <= MAX_TEXTS
+            ) {
+              console.log(`[CADENCE] CaseID ${lead.caseId} — Text #${textNum}`);
+              const textResult = await actions.sendText(
+                lead.phone,
+                lead.name,
+                textNum,
+                lead.company,
+              );
+
+              if (textResult.ok) {
+                await LeadCadence.updateOne(
+                  { _id: lead._id },
+                  {
+                    $inc: { textsSent: 1 },
+                    $set: { lastTextedAt: new Date() },
+                  },
+                );
+                result.actions.push({
+                  type: "text",
+                  strategy: "scheduled",
+                  num: textNum,
+                  ok: true,
+                });
+                textsSent++;
+              } else {
+                console.warn(
+                  `[CADENCE] CaseID ${lead.caseId} — Text #${textNum} failed: ${textResult.error}`,
+                );
+                const errLower = (textResult.error || "").toLowerCase();
+                if (
+                  errLower.includes("opted out") ||
+                  errLower.includes("phone number is invalid")
+                ) {
+                  const smsDncReason = classifySmsDncReason(textResult.error);
+                  await LeadCadence.updateOne(
+                    { _id: lead._id },
+                    {
+                      $set: {
+                        phoneIsCell: false,
+                        phoneCanText: false,
+                        smsDnc: true,
+                        smsDncReason,
+                        dncUpdatedAt: new Date(),
+                      },
+                    },
+                  );
+                  console.log(
+                    `[CADENCE] CaseID ${lead.caseId} — SMS DNC set: ${smsDncReason}`,
+                  );
+                }
+                result.actions.push({
+                  type: "text",
+                  strategy: "scheduled",
+                  num: textNum,
+                  ok: false,
+                  error: textResult.error,
+                });
+              }
+            } else {
+              console.log(
+                `[CADENCE] CaseID ${lead.caseId} — Text skipped: count changed or cap reached`,
+              );
+            }
+          }
+        }
+
+        // ════════════════════════════════════════════════════════
+        // FOLLOW-UP EMAILS
+        // ════════════════════════════════════════════════════════
+        if (shouldEmail(lead)) {
+          const freshLead = await LeadCadence.findById(lead._id, {
+            emailsSent: 1,
+          }).lean();
+          const freshEmailsSent = freshLead?.emailsSent || 0;
+          const emailIndex = freshEmailsSent + 1;
+
+          if (freshEmailsSent === (lead.emailsSent || 0)) {
+            console.log(
+              `[CADENCE] CaseID ${lead.caseId} — Email #${emailIndex}`,
+            );
+            const emailResult = await actions.sendFollowUpEmail(
+              lead.email,
+              lead.name,
+              emailIndex,
+              lead.company,
+            );
+
+            if (emailResult.ok) {
+              await LeadCadence.updateOne(
+                { _id: lead._id },
+                {
+                  $inc: { emailsSent: 1 },
+                  $set: { lastEmailedAt: new Date() },
+                },
+              );
+              result.actions.push({ type: "email", num: emailIndex, ok: true });
+              emailsSent++;
+            } else {
+              console.warn(
+                `[CADENCE] CaseID ${lead.caseId} — Email #${emailIndex} failed: ${emailResult.error}`,
+              );
+              result.actions.push({
+                type: "email",
+                num: emailIndex,
+                ok: false,
+                error: emailResult.error,
+              });
+            }
+          } else {
+            console.log(
+              `[CADENCE] CaseID ${lead.caseId} — Email skipped: emailsSent changed (was ${lead.emailsSent || 0}, now ${freshEmailsSent})`,
+            );
+          }
+        }
+
+        // ════════════════════════════════════════════════════════
+        // CADENCE EXHAUSTION CHECK
+        // ════════════════════════════════════════════════════════
+        const finalLead = await LeadCadence.findById(lead._id).lean();
+        if (
+          finalLead &&
+          !finalLead.day0Connected &&
+          isCadenceExhausted(finalLead)
+        ) {
+          console.log(
+            `[CADENCE] CaseID ${lead.caseId} — CADENCE EXHAUSTED ` +
+              `(texts: ${finalLead.textsSent}/${MAX_TEXTS}, ` +
+              `rvms: ${finalLead.rvmsSent}/${MAX_RVMS_LIFETIME}, ` +
+              `emails: ${finalLead.emailsSent}/${MAX_EMAILS_LIFETIME})`,
+          );
+
+          try {
+            const logicsDomain = (finalLead.company || "wynn").toUpperCase();
+            await updateCaseStatus(
+              logicsDomain,
+              CADENCE_EXHAUSTED_STATUS,
+              finalLead.phone,
+            );
+            console.log(
+              `[CADENCE] CaseID ${lead.caseId} — ✓ Logics updated to status ${CADENCE_EXHAUSTED_STATUS}`,
+            );
+          } catch (err) {
+            console.error(
+              `[CADENCE] CaseID ${lead.caseId} — ✗ Logics status update failed: ${err.message}`,
+            );
+          }
+
+          await LeadCadence.updateOne(
+            { _id: lead._id },
+            {
+              $set: {
+                active: false,
+                lastLogicsStatus: CADENCE_EXHAUSTED_STATUS,
+              },
+            },
+          );
+          result.actions.push({
+            type: "cadence-exhausted",
+            status: CADENCE_EXHAUSTED_STATUS,
+          });
+          deactivated++;
+          console.log(
+            `[CADENCE] CaseID ${lead.caseId} — Deactivated (cadence exhausted)`,
+          );
+        }
+      } catch (err) {
+        console.error(`[CADENCE] CaseID ${lead.caseId} — Error:`, err.message);
+        result.actions.push({ type: "error", error: err.message });
+      }
+
+      results.push(result);
+      await new Promise((r) => setTimeout(r, 200)); // Lead-to-lead pacing
+    }
+
+    console.log(
+      `[CADENCE] ══ Done ══ ${results.length} leads | ` +
+        `${rvmsDropped} RVMs | ${textsSent} texts | ` +
+        `${emailsSent} emails | ${deactivated} deactivated`,
+    );
+
+    return {
+      skipped: false,
+      processed: results.length,
+      rvmsDropped,
+      textsSent,
+      emailsSent,
+      deactivated,
+      connectionResults,
+      results,
+    };
+  } finally {
+    tickRunning = false;
   }
-
-  console.log(`[CADENCE] ══ Done ══ Processed ${results.length} lead(s)`);
-  return {
-    skipped: false,
-    processed: results.length,
-    callsQueued: callsToQueue.length,
-    totalQueueSize: callQueue.length,
-    results,
-  };
 }
 
 module.exports = {
   runCadenceTick,
+  pacedRvmDrop,
   isBusinessHours,
   getTodayDateStr,
   daysSinceCreation,
-  shouldText,
-  shouldCall,
+  businessDaysSinceCreation,
+  getDay0Actions,
+  shouldSendText35,
   shouldEmail,
-  getQueueStatus,
-  clearCallQueue,
-  processCallQueue,
+  isDay2Plus,
+  isCadenceExhausted,
   ACTIVE_STATUSES,
+  DAY0_ACTIONS,
+  DAY2_9_RVM_HOUR,
+  DAY2_9_MAX_DAY,
+  TEXT_SCHEDULE,
+  MAX_TEXTS,
+  MAX_RVMS_LIFETIME,
+  MAX_EMAILS_LIFETIME,
+  CADENCE_EXHAUSTED_STATUS,
 };

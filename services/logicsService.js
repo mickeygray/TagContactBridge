@@ -196,6 +196,11 @@ async function fetchCaseAccountContact(domain, caseId) {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          SOURCE NAME MAPPING                               */
+/* -------------------------------------------------------------------------- */
+
+// Ad platform sources — same across all companies
 const SOURCE_NAME_MAP = {
   google: "VF Google",
   gclid: "VF Google",
@@ -208,11 +213,23 @@ const SOURCE_NAME_MAP = {
   tiktok: "VF TikTok",
   tt: "VF TikTok",
   ttclid: "VF TikTok",
-  "VF Landing Page": "VF Landing Page",
-  "LD Posting": "LD Posting",
+  "vf landing page": "VF Landing Page",
+  "ld posting": "LD Posting",
+  affiliate: "Affiliate",
 };
 
 const DEFAULT_SOURCE_NAME = "Digital Lead 2026";
+
+// Web form sources — these get the company-specific source name
+const WEB_FORM_SOURCES = [
+  "contact-form",
+  "lead-form",
+  "landing-qualify",
+  "state-tax-guide",
+  "caitlyn-verified",
+  "tax-stewart",
+  "tax-stewart-verified",
+];
 
 function formatPhoneForLogics(phone) {
   if (!phone) return undefined;
@@ -222,7 +239,7 @@ function formatPhoneForLogics(phone) {
   return `(${d.slice(0, 3)})${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
-function buildLeadAdPayload(fields, source, meta = {}) {
+function buildLeadAdPayload(fields, source, meta = {}, company = "WYNN") {
   const { name, email, phone, state, city } = fields;
   const nameParts = (name || "").trim().split(/\s+/);
   let firstName = nameParts[0] || "";
@@ -238,11 +255,25 @@ function buildLeadAdPayload(fields, source, meta = {}) {
     notes.push(`${source === "facebook" ? "FB" : "TT"} Form: ${meta.formId}`);
   if (meta.adgroupId) notes.push(`Ad Group: ${meta.adgroupId}`);
   if (meta.campaignId) notes.push(`Campaign: ${meta.campaignId}`);
-  notes.push(
-    `Source: ${source === "facebook" ? "Facebook" : "TikTok"} Lead Ad`,
-  );
+
+  // ── Resolve source name ────────────────────────────────────────────────
   const sourceKey = (source || "").toLowerCase().trim();
-  const sourceName = SOURCE_NAME_MAP[sourceKey] || DEFAULT_SOURCE_NAME;
+  let sourceName;
+
+  if (WEB_FORM_SOURCES.includes(sourceKey)) {
+    // Web form source — use company-specific name from companyConfig
+    try {
+      const { getCompanyConfig } = require("../config/companyConfig");
+      const companyConfig = getCompanyConfig(company);
+      sourceName = companyConfig.webFormSourceName || `${company} Web Form`;
+    } catch {
+      sourceName = `${company} Web Form`;
+    }
+  } else {
+    // Ad platform or other known source
+    sourceName = SOURCE_NAME_MAP[sourceKey] || DEFAULT_SOURCE_NAME;
+  }
+
   const payload = {
     FirstName: firstName,
     LastName: lastName,
@@ -261,7 +292,7 @@ function buildLeadAdPayload(fields, source, meta = {}) {
 
 async function createLeadAdCase(domain, fields, source, meta = {}) {
   try {
-    const payload = buildLeadAdPayload(fields, source, meta);
+    const payload = buildLeadAdPayload(fields, source, meta, domain);
     const result = await postCaseFile(domain, payload);
     const caseIdRaw =
       result?.Data?.CaseID ??
@@ -318,4 +349,5 @@ module.exports = {
   createLeadAdCase,
   SOURCE_NAME_MAP,
   DEFAULT_SOURCE_NAME,
+  WEB_FORM_SOURCES,
 };

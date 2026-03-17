@@ -11,7 +11,8 @@ const path = require("path");
 require("dotenv").config({
   path: "C:\\Users\\Admin\\Code\\TagContactBridge\\.env",
 });
-
+const { inbound: smsInbound } = require("./controllers/smsController");
+const { startAutoSendLoop } = require("./services/smsService");
 const connectDB = require("./config/db");
 connectDB();
 const app = express();
@@ -36,14 +37,24 @@ app.use("/api/list", listRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invite", inviteRoutes);
 app.use("/api/emails", require("./routes/emails"));
+app.use("/api/sms", require("./routes/sms"));
 app.use("/api/cleaner", require("./routes/cleaner"));
 app.use("/api/texts", require("./routes/texts"));
 app.use("/api/schedule", require("./routes/schedule"));
 app.use("/api/clients", clientRoutes);
+
+app.post("/sms/inbound", smsInbound);
 const buildDir = path.join(__dirname, "client", "build");
-app.use(express.static(buildDir));
-app.get("/*", (req, res) => {
-  res.sendFile(path.join(buildDir, "index.html"));
+// Serve React build
+app.use(express.static(path.join(__dirname, "client", "build")));
+
+// Catch-all — serves index.html for React Router
+app.get("*", (req, res) => {
+  res.sendFile(path.resolve(__dirname, "client", "build", "index.html"));
 });
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  startAutoSendLoop();
+});
