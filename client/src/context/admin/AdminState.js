@@ -1,82 +1,94 @@
+// client/src/context/admin/AdminState.js
 import React, { useReducer } from "react";
 import AdminContext from "./adminContext";
 import adminReducer from "./adminReducer";
-import { useApi } from "../../utils/api";
+
+const initialState = {
+  consentRecords: [],
+  consentRecord: null,
+  consentStats: null,
+  loading: false,
+  error: null,
+};
 
 const AdminState = ({ children }) => {
-  const initialState = {
-    requests: [],
-    users: [],
-    loading: false,
-  };
-
   const [state, dispatch] = useReducer(adminReducer, initialState);
-  const api = useApi();
-  api.defaults.withCredentials = true;
 
-  const getRequests = async () => {
-    dispatch({ type: "ADMIN_LOADING" });
+  // ── Search consent records ──────────────────────────────────
+  const searchConsentRecords = async (params = {}) => {
+    dispatch({ type: "SET_LOADING", payload: true });
     try {
-      const res = await api.get("/api/admin/requests");
-      dispatch({ type: "SET_REQUESTS", payload: res.data });
-    } catch (err) {
-      dispatch({ type: "ADMIN_ERROR" });
-    }
-  };
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) query.append(k, v);
+      });
 
-  const getUsers = async () => {
-    dispatch({ type: "ADMIN_LOADING" });
-    try {
-      const res = await api.get("/api/admin/users");
-      dispatch({ type: "SET_USERS", payload: res.data });
-    } catch (err) {
-      dispatch({ type: "ADMIN_ERROR" });
-    }
-  };
+      const res = await fetch(
+        `/api/admin/consent-records?${query.toString()}`,
+        {
+          credentials: "include",
+        },
+      );
+      const data = await res.json();
 
-  const inviteUser = async (inviteData) => {
-    dispatch({ type: "ADMIN_LOADING" });
-    try {
-      await api.post("/api/invite", inviteData);
-      // optional: dispatch success message
+      if (!data.ok) throw new Error(data.error || "Failed to fetch records");
+
+      dispatch({ type: "SET_CONSENT_RECORDS", payload: data.records });
     } catch (err) {
-      // optional: dispatch error message
+      dispatch({ type: "SET_ERROR", payload: err.message });
     } finally {
-      dispatch({ type: "ADMIN_DONE" });
+      dispatch({ type: "SET_LOADING", payload: false });
     }
   };
 
-  const deleteUser = async (id) => {
-    dispatch({ type: "ADMIN_LOADING" });
+  // ── Get single consent record ───────────────────────────────
+  const getConsentRecord = async (id) => {
+    dispatch({ type: "SET_LOADING", payload: true });
     try {
-      await api.delete(`/api/admin/user/${id}`);
-      getUsers();
+      const res = await fetch(`/api/admin/consent-records/${id}`, {
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Not found");
+      dispatch({ type: "SET_CONSENT_RECORD", payload: data.record });
     } catch (err) {
-      // handle error
+      dispatch({ type: "SET_ERROR", payload: err.message });
+    } finally {
+      dispatch({ type: "SET_LOADING", payload: false });
     }
   };
 
-  const logoutUser = async (id) => {
-    dispatch({ type: "ADMIN_LOADING" });
+  // ── Get consent stats ───────────────────────────────────────
+  const getConsentStats = async () => {
     try {
-      await api.post(`/api/admin/logout-user/${id}`);
-      getUsers();
+      const res = await fetch("/api/admin/consent-stats", {
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      dispatch({ type: "SET_CONSENT_STATS", payload: data.stats });
     } catch (err) {
-      // handle error
+      dispatch({ type: "SET_ERROR", payload: err.message });
     }
+  };
+
+  // ── Clear selected record ───────────────────────────────────
+  const clearConsentRecord = () => {
+    dispatch({ type: "SET_CONSENT_RECORD", payload: null });
   };
 
   return (
     <AdminContext.Provider
       value={{
-        requests: state.requests,
-        users: state.users,
+        consentRecords: state.consentRecords,
+        consentRecord: state.consentRecord,
+        consentStats: state.consentStats,
         loading: state.loading,
-        getRequests,
-        getUsers,
-        inviteUser,
-        deleteUser,
-        logoutUser,
+        error: state.error,
+        searchConsentRecords,
+        getConsentRecord,
+        getConsentStats,
+        clearConsentRecord,
       }}
     >
       {children}

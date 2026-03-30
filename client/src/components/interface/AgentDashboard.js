@@ -9,6 +9,7 @@ import UnifiedClientListManager from "../tools/listmanagers/UnifiedClientListMan
 import ListScrubber from "../tools/cleaner/ListScrubber";
 import CallFireDialer from "../tools/schedulemanager/CallFireDialer";
 import SmsInbox from "../tools/smsinbox/SmsInbox";
+import ConsentVault from "../tools/admin/ConsentVault";
 
 const AgentDashboard = () => {
   const [activeTool, setActiveTool] = useState("sms");
@@ -35,12 +36,13 @@ const AgentDashboard = () => {
         return <ScheduleFunnelDashboard />;
       case "callfire":
         return <CallFireDialer />;
+      case "consent":
+        return <ConsentVault />;
       default:
         return <SmsInbox />;
     }
   };
 
-  // Active tools configuration
   const tools = [
     { id: "sms", label: "SMS Intelligence", icon: "🤖", active: true },
     { id: "email", label: "Email Campaign Sender", icon: "✉️", active: true },
@@ -48,6 +50,7 @@ const AgentDashboard = () => {
     { id: "callfire", label: "CallFire Auto-Dialer", icon: "🔥", active: true },
     { id: "cleaner", label: "Phone/Email Scrubber", icon: "🧹", active: true },
     { id: "mail", label: "NCOA Direct Mail Prep", icon: "📬", active: true },
+    { id: "consent", label: "TCPA Consent Vault", icon: "🔐", active: true },
     // Inactive tools - uncomment when ready
     // { id: "logics", label: "List Upload Tool", icon: "📁", active: false },
     // { id: "period", label: "Aged Clients List", icon: "📅", active: false },

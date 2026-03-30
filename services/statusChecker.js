@@ -5,8 +5,11 @@
 // from the cadence engine.
 //
 // Checks every active lead's status in Logics CRM.
-// If status is no longer active (1 or 2), deletes from MongoDB.
-// Updates lastLogicsStatus and lastLogicsCheckAt on every lead.
+// If status is no longer active (1 or 2):
+//   - Deactivates in MongoDB (preserves history)
+//   - Sets all DNC flags
+//   - Removes from PhoneBurner
+//   - Does NOT re-push to Logics (Logics is the source of truth here)
 //
 // The cadence engine ONLY contacts leads that have been
 // status-checked within the last 15 minutes (freshness gate).
@@ -18,6 +21,7 @@
 
 const LeadCadence = require("../models/LeadCadence");
 const { fetchCaseInfo } = require("./logicsService");
+const { deactivateLead } = require("../utils/deactivateLead");
 
 const ACTIVE_STATUSES = [1, 2];
 const LEAD_PACING_MS = 150; // 150ms between Logics API calls
@@ -33,15 +37,13 @@ let running = false;
  * @param {object} lead — LeadCadence document
  * @returns {boolean}
  */
-
 function isStatusFresh(lead) {
   return true;
-}
-/*function isStatusFresh(lead) {
-  if (!lead.lastLogicsCheckAt) return false;
-  return (
-    Date.now() - new Date(lead.lastLogicsCheckAt).getTime() < CHECK_WINDOW_MS
-  );
+  // TODO: Re-enable when ready to gate cadence on freshness:
+  // if (!lead.lastLogicsCheckAt) return false;
+  // return (
+  //   Date.now() - new Date(lead.lastLogicsCheckAt).getTime() < CHECK_WINDOW_MS
+  // );
 }
 
 /**
@@ -80,7 +82,14 @@ async function runStatusCheck() {
     // Sort by lastLogicsCheckAt ascending — oldest/never-checked first
     const leads = await LeadCadence.find(
       { active: true },
-      { caseId: 1, company: 1, name: 1, phone: 1, lastLogicsCheckAt: 1 },
+      {
+        caseId: 1,
+        company: 1,
+        name: 1,
+        phone: 1,
+        lastLogicsCheckAt: 1,
+        pbContactId: 1,
+      },
     )
       .sort({ lastLogicsCheckAt: 1 })
       .lean();
@@ -121,9 +130,28 @@ async function runStatusCheck() {
 
         if (!ACTIVE_STATUSES.includes(status)) {
           console.log(
-            `[STATUS-CHECK] CaseID ${lead.caseId} — Status ${status} → removing`,
+            `[STATUS-CHECK] CaseID ${lead.caseId} — Status ${status} → deactivating`,
           );
-          await LeadCadence.deleteOne({ _id: lead._id });
+
+          // Determine reason from Logics status
+          const reason =
+            status === 173
+              ? "logics-dnc"
+              : status === 223
+                ? "logics-cadence-exhausted"
+                : `logics-status-${status}`;
+
+          // Full deactivation: Mongo + DNC flags + PB removal
+          // Do NOT push back to Logics — Logics is the source of truth here
+          await deactivateLead({
+            phone: lead.phone,
+            company: domain,
+            reason,
+            updateLogics: false, // Logics already has this status
+            caseId: lead.caseId,
+            mongoId: lead._id.toString(),
+          });
+
           results.deactivated++;
         }
       } catch (err) {
@@ -154,6 +182,7 @@ async function runStatusCheck() {
   console.log("[STATUS-CHECK] ══════════════════════════════════════════");
   return results;
 }
+
 /**
  * Get a Set of 10-digit phone numbers currently on an active RC call.
  * Used by cadence engine to skip leads mid-conversation.
@@ -200,6 +229,7 @@ function to10(phone) {
   if (digits.length === 10) return digits;
   return "";
 }
+
 module.exports = {
   runStatusCheck,
   isStatusFresh,

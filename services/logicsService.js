@@ -216,6 +216,11 @@ const SOURCE_NAME_MAP = {
   "vf landing page": "VF Landing Page",
   "ld posting": "LD Posting",
   affiliate: "Affiliate",
+  messenger: "Facebook Messenger",
+  "fb-messenger": "Facebook Messenger",
+  gs03rb7w: "LD Posting",
+  "ld posting": "LD Posting",
+  "ld-posting": "LD Posting",
 };
 
 const DEFAULT_SOURCE_NAME = "Digital Lead 2026";
@@ -229,8 +234,17 @@ const WEB_FORM_SOURCES = [
   "caitlyn-verified",
   "tax-stewart",
   "tax-stewart-verified",
+  "messenger",
+  "lead-form-affiliate",
 ];
 
+const AFFILIATE_SOURCE_MAP = {
+  oev4ll6o: "Affiliate - OEV4LL6O",
+};
+
+const AFFILIATE_NID_SOURCE_MAP = {
+  3702: "Affiliate - OEV4LL6O",
+};
 function formatPhoneForLogics(phone) {
   if (!phone) return undefined;
   let d = String(phone).replace(/\D/g, "");
@@ -238,7 +252,36 @@ function formatPhoneForLogics(phone) {
   if (d.length !== 10) return undefined;
   return `(${d.slice(0, 3)})${d.slice(3, 6)}-${d.slice(6)}`;
 }
+function resolveLogicsSourceName(source, meta = {}, company = "WYNN") {
+  const sourceKey = (source || "").toLowerCase().trim();
+  const trafficSource = (meta.trafficSource || "").toLowerCase().trim();
+  const affiliatePartner = (meta.affiliatePartner || "").toLowerCase().trim();
+  const affiliateNid = String(meta.affiliateNid || "").trim();
 
+  if (trafficSource === "affiliate" || sourceKey.includes("affiliate")) {
+    if (affiliatePartner && AFFILIATE_SOURCE_MAP[affiliatePartner]) {
+      return AFFILIATE_SOURCE_MAP[affiliatePartner];
+    }
+
+    if (affiliateNid && AFFILIATE_NID_SOURCE_MAP[affiliateNid]) {
+      return AFFILIATE_NID_SOURCE_MAP[affiliateNid];
+    }
+
+    return "Affiliate";
+  }
+
+  if (WEB_FORM_SOURCES.includes(sourceKey)) {
+    try {
+      const { getCompanyConfig } = require("../config/companyConfig");
+      const companyConfig = getCompanyConfig(company);
+      return companyConfig.webFormSourceName || `${company} Web Form`;
+    } catch {
+      return `${company} Web Form`;
+    }
+  }
+
+  return SOURCE_NAME_MAP[sourceKey] || DEFAULT_SOURCE_NAME;
+}
 function buildLeadAdPayload(fields, source, meta = {}, company = "WYNN") {
   const { name, email, phone, state, city } = fields;
   const nameParts = (name || "").trim().split(/\s+/);
@@ -255,24 +298,13 @@ function buildLeadAdPayload(fields, source, meta = {}, company = "WYNN") {
     notes.push(`${source === "facebook" ? "FB" : "TT"} Form: ${meta.formId}`);
   if (meta.adgroupId) notes.push(`Ad Group: ${meta.adgroupId}`);
   if (meta.campaignId) notes.push(`Campaign: ${meta.campaignId}`);
-
+  if (meta.affiliatePartner)
+    notes.push(`Affiliate Partner: ${meta.affiliatePartner}`);
+  if (meta.affiliateNid) notes.push(`Affiliate NID: ${meta.affiliateNid}`);
+  if (meta.affiliateClickId)
+    notes.push(`Affiliate Click ID: ${meta.affiliateClickId}`);
   // ── Resolve source name ────────────────────────────────────────────────
-  const sourceKey = (source || "").toLowerCase().trim();
-  let sourceName;
-
-  if (WEB_FORM_SOURCES.includes(sourceKey)) {
-    // Web form source — use company-specific name from companyConfig
-    try {
-      const { getCompanyConfig } = require("../config/companyConfig");
-      const companyConfig = getCompanyConfig(company);
-      sourceName = companyConfig.webFormSourceName || `${company} Web Form`;
-    } catch {
-      sourceName = `${company} Web Form`;
-    }
-  } else {
-    // Ad platform or other known source
-    sourceName = SOURCE_NAME_MAP[sourceKey] || DEFAULT_SOURCE_NAME;
-  }
+  const sourceName = resolveLogicsSourceName(source, meta, company);
 
   const payload = {
     FirstName: firstName,
@@ -284,6 +316,7 @@ function buildLeadAdPayload(fields, source, meta = {}, company = "WYNN") {
   if (formattedPhone) {
     payload.CellPhone = formattedPhone;
     payload.SMSPermit = "true";
+    payload.DuplicateCheck = "CellPhone"; // ← add this
   }
   if (state) payload.State = state.toUpperCase().slice(0, 2);
   if (notes.length) payload.Notes = notes.join(" | ");
@@ -294,6 +327,23 @@ async function createLeadAdCase(domain, fields, source, meta = {}) {
   try {
     const payload = buildLeadAdPayload(fields, source, meta, domain);
     const result = await postCaseFile(domain, payload);
+
+    // Logics returns Success: false with a duplicate message when DuplicateCheck hits
+    if (result?.Success === false) {
+      const msg = (result?.Message || result?.message || "").toLowerCase();
+      if (msg.includes("duplicate") || msg.includes("already exist")) {
+        console.log(
+          `[LOGICS] ⚠ Duplicate phone detected by Logics: ${fields.phone}`,
+        );
+        return {
+          ok: false,
+          caseId: null,
+          duplicate: true,
+          error: "Duplicate phone in Logics",
+        };
+      }
+    }
+
     const caseIdRaw =
       result?.Data?.CaseID ??
       result?.data?.Data?.CaseID ??
@@ -347,6 +397,9 @@ module.exports = {
   formatPhoneForLogics,
   buildLeadAdPayload,
   createLeadAdCase,
+  resolveLogicsSourceName,
+  AFFILIATE_SOURCE_MAP,
+  AFFILIATE_NID_SOURCE_MAP,
   SOURCE_NAME_MAP,
   DEFAULT_SOURCE_NAME,
   WEB_FORM_SOURCES,

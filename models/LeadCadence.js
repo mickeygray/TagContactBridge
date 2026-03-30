@@ -13,16 +13,17 @@ const leadCadenceSchema = new mongoose.Schema(
     state: { type: String, default: "" },
     source: {
       type: String,
-      enum: [
-        "facebook",
-        "tiktok",
-        "lead-contact",
-        "test",
-        "unknown",
-        "LD Posting",
-      ],
-      default: "unknown",
     },
+
+    // ── Case age (stored integer, NOT derived from createdAt) ──
+    // Starts at 0 on creation. Incremented by +1 at the first
+    // cadence tick of each new business day. This is the single
+    // source of truth for all schedule gates (texts, RVMs, emails,
+    // PhoneBurner folder cascade).
+    caseAge: { type: Number, default: 0 },
+    // "YYYY-MM-DD" PT — tracks which calendar day the last
+    // increment happened so we only bump once per day.
+    caseAgeUpdatedDate: { type: String, default: "" },
 
     // Validation results
     emailValid: { type: Boolean, default: false },
@@ -39,7 +40,6 @@ const leadCadenceSchema = new mongoose.Schema(
     },
 
     // Per-channel DNC flags
-    // Set on permanent SMS/RVM failures to skip future attempts
     smsDnc: { type: Boolean, default: false },
     smsDncReason: {
       type: String,
@@ -58,13 +58,12 @@ const leadCadenceSchema = new mongoose.Schema(
     day0CallsMade: { type: Number, default: 0 },
     day0Connected: { type: Boolean, default: false },
     day0ConnectedAt: { type: Date },
-    day0ConnectDuration: { type: Number }, // seconds
+    day0ConnectDuration: { type: Number },
     day0ConnectCallId: { type: String },
 
     // Worked lead — pause outreach until this date
-    // Set when a call lasts 5+ minutes (lead is being worked by rep)
     pauseOutreachUntil: { type: Date },
-    lastCallDuration: { type: Number }, // seconds
+    lastCallDuration: { type: Number },
     lastConnectCallId: { type: String },
 
     // Standard cadence tracking — calls
@@ -94,7 +93,7 @@ const leadCadenceSchema = new mongoose.Schema(
     emailsSent: { type: Number, default: 0 },
     lastEmailedAt: { type: Date },
 
-    // RVM (Ringless Voicemail) tracking
+    // RVM tracking
     rvmsSent: { type: Number, default: 0 },
     lastRvmAt: { type: Date },
     lastRvmActivityToken: { type: String },
@@ -102,7 +101,7 @@ const leadCadenceSchema = new mongoose.Schema(
     lastRvmStatusCode: { type: Number },
     lastRvmStatusAt: { type: Date },
 
-    // Alternating call/RVM logic (legacy — kept for compatibility)
+    // Legacy (kept for compatibility)
     nextOutreachType: {
       type: String,
       enum: ["call", "rvm", null],
@@ -116,13 +115,13 @@ const leadCadenceSchema = new mongoose.Schema(
     // PhoneBurner tracking
     pbPushed: { type: Boolean, default: false },
     pbPushedAt: { type: Date },
-    pbContactId: { type: String }, // PB contact_user_id for move/remove ops
-    pbCurrentFolder: { type: String }, // HOT, DAY1, DAY2, DAY3_10, DAY10_PLUS, TRANSFER
-    pbPreviousFolder: { type: String }, // folder before TRANSFER (for bounce-back)
-    pbDialCount: { type: Number, default: 0 }, // total PB dial attempts
-    pbLastDialedAt: { type: Date }, // last PB calldone timestamp
+    pbContactId: { type: String },
+    pbCurrentFolder: { type: String },
+    pbPreviousFolder: { type: String },
+    pbDialCount: { type: Number, default: 0 },
+    pbLastDialedAt: { type: Date },
 
-    // Active flag (deactivate when Logics status changes)
+    // Active flag
     active: { type: Boolean, default: true, index: true },
   },
   {
@@ -131,12 +130,12 @@ const leadCadenceSchema = new mongoose.Schema(
   },
 );
 
-// Compound indexes for common queries
+// Compound indexes
 leadCadenceSchema.index({ caseId: 1, company: 1 }, { unique: true });
 leadCadenceSchema.index({ active: 1, company: 1, createdAt: -1 });
 leadCadenceSchema.index({ active: 1, createdAt: -1 });
 leadCadenceSchema.index({ active: 1, day0Connected: 1, createdAt: -1 });
 leadCadenceSchema.index({ active: 1, phoneConnected: 1 });
-leadCadenceSchema.index({ active: 1, nextOutreachType: 1 });
+leadCadenceSchema.index({ active: 1, caseAge: 1 });
 
 module.exports = mongoose.model("LeadCadence", leadCadenceSchema);

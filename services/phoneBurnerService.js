@@ -1,36 +1,28 @@
 // services/phoneBurnerService.js
 // ─────────────────────────────────────────────────────────────
-// PhoneBurner integration — age-based folder management:
+// PhoneBurner integration — age-based folder management.
+//
+// CRITICAL CHANGE: Folder decisions now use the stored
+// `lead.caseAge` integer instead of deriving business days
+// from `createdAt`. This prevents premature folder moves
+// (e.g., moving a lead out of HOT before it's had a full
+// business day there).
 //
 //   FOLDERS (dial priority order):
-//     HOT        → Day 0 leads (speed-to-lead, pushed immediately)
-//     DAY1       → 1 business day old
-//     DAY2       → 2 business days old
-//     DAY3_10    → 3-10 business days old
-//     DAY10_PLUS → 10+ business days old (long-tail)
+//     HOT        → caseAge 0 (speed-to-lead)
+//     DAY1       → caseAge 1
+//     DAY2       → caseAge 2
+//     DAY3_10    → caseAge 3-10
+//     DAY10_PLUS → caseAge 10+
 //     TRANSFER   → live transfers (audited each morning)
 //
 //   MORNING ROTATION (7am CT, Mon-Fri):
-//     1. Audit TRANSFER folder:
-//        - Non-converted → bounce back to age-appropriate folder
-//        - Converted     → remove from PB
-//     2. DAY3_10: leads 10+ biz days old → DAY10_PLUS
-//     3. DAY2 → DAY3_10
-//     4. DAY1 → DAY2
-//     5. HOT  → DAY1
+//     1. Audit TRANSFER folder
+//     2. DAY3_10: caseAge 10+ → DAY10_PLUS
+//     3. DAY2: caseAge 3+ → DAY3_10
+//     4. DAY1: caseAge 2+ → DAY2
+//     5. HOT: caseAge 1+ → DAY1
 //     6. Load unpushed overnight leads → HOT
-//
-//   INTAKE:
-//     pushContact() → HOT folder immediately
-//     Stores pbContactId + pbCurrentFolder in Mongo
-//
-//   CALLDONE:
-//     DNC → remove from PB + Logics 173
-//     TRANSFER → save pbPreviousFolder, move to TRANSFER
-//     All calls → activity note to Logics
-//
-//   CLEANUP:
-//     Status checker deactivates → removePbContact()
 // ─────────────────────────────────────────────────────────────
 
 const axios = require("axios");
@@ -39,7 +31,7 @@ const {
   updateCaseStatus,
   fetchCaseInfo,
 } = require("./logicsService");
-
+const { deactivateLead } = require("../utils/deactivateLead");
 const PB_BASE = "https://www.phoneburner.com/rest/1";
 
 // ─── Folder Config ───────────────────────────────────────────────────────────
@@ -87,22 +79,26 @@ function getHeaders(seatKey) {
   };
 }
 
-// ─── Age Helper ──────────────────────────────────────────────────────────────
+// ─── Age → Folder Mapping ────────────────────────────────────────────────────
 
 /**
- * Returns the age-appropriate folder key for a lead based on business days.
+ * Returns the age-appropriate folder key based on stored caseAge.
+ * This is the ONLY function that maps age → folder. Used by:
+ *   - cascadeByAge (morning rotation)
+ *   - auditTransferFolder (bounce-back)
  */
-function getFolderForAge(createdAt) {
-  const bizDays = businessDaysSince(createdAt);
-  if (bizDays <= 0) return "HOT";
-  if (bizDays === 1) return "DAY1";
-  if (bizDays === 2) return "DAY2";
-  if (bizDays <= 10) return "DAY3_10";
+function getFolderForCaseAge(caseAge) {
+  if (caseAge <= 0) return "HOT";
+  if (caseAge === 1) return "DAY1";
+  if (caseAge === 2) return "DAY2";
+  if (caseAge <= 10) return "DAY3_10";
   return "DAY10_PLUS";
 }
 
 /**
- * Count business days since a date (Mon-Fri only).
+ * Legacy helper — derives business days from a date.
+ * Kept ONLY as a fallback when Mongo doc has no caseAge field
+ * (pre-migration leads). New code should use lead.caseAge.
  */
 function businessDaysSince(dateStr) {
   if (!dateStr) return 999;
@@ -228,7 +224,96 @@ async function initTokenRefresh() {
     }
   }
 }
+/**
+ * Morning cleanup: iterate all PB folders and remove any contact
+ * whose Mongo record is inactive, has DNC flags, or doesn't exist.
+ * Catches leads that were DNC'd overnight via text STOP, manual
+ * dashboard action, or Logics status change — none of which
+ * necessarily removed the PB contact in real time.
+ */
+async function cleanDeactivatedFromPb(LeadCadenceModel) {
+  const folderKeys = ["HOT", "DAY1", "DAY2", "DAY3_10", "DAY10_PLUS"];
+  let removed = 0,
+    errors = 0;
 
+  for (const folderKey of folderKeys) {
+    if (!SEATS[folderKey]?.folderId) continue;
+
+    try {
+      let page = 1;
+      let hasMore = true;
+      let removedThisPage;
+
+      while (hasMore) {
+        const data = await getFolderContacts(folderKey, page, 100);
+        const contacts = data.contacts || [];
+        if (!contacts.length) break;
+
+        removedThisPage = false;
+
+        for (const c of contacts) {
+          try {
+            const mongoIdField = c.custom_fields?.find(
+              (f) => f.name === "Mongo ID",
+            );
+            const mongoId = mongoIdField?.value;
+
+            let shouldRemove = false;
+
+            if (!mongoId) {
+              // No Mongo ID → can't verify, leave it
+              continue;
+            }
+
+            if (LeadCadenceModel) {
+              const lead = await LeadCadenceModel.findById(mongoId, {
+                active: 1,
+                smsDnc: 1,
+                rvmDnc: 1,
+              }).lean();
+
+              if (!lead) {
+                // Mongo record deleted — remove from PB
+                shouldRemove = true;
+              } else if (!lead.active) {
+                shouldRemove = true;
+              }
+            }
+
+            if (shouldRemove) {
+              await removeContact(c.contact_user_id, folderKey);
+              removed++;
+              removedThisPage = true;
+              console.log(
+                `[PB]   Cleaned ${c.contact_user_id} from ${folderKey} (inactive/DNC)`,
+              );
+            }
+
+            await new Promise((r) => setTimeout(r, 150));
+          } catch (err) {
+            console.error(
+              `[PB]   Cleanup error ${c.contact_user_id}: ${err.message}`,
+            );
+            errors++;
+          }
+        }
+
+        // If we removed contacts, PB re-paginates — refetch page 1
+        if (!removedThisPage) {
+          const totalPages = Math.ceil(
+            parseInt(data.total_results || "0") / 100,
+          );
+          page++;
+          if (page > totalPages) hasMore = false;
+        }
+      }
+    } catch (err) {
+      console.error(`[PB] Cleanup error in ${folderKey}: ${err.message}`);
+    }
+  }
+
+  return { removed, errors };
+}
 // ═════════════════════════════════════════════════════════════════════════════
 // OAUTH ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
@@ -373,7 +458,6 @@ async function pushContact(lead, seatKey = "HOT") {
     const msg = err.response?.data || err.message;
     const status = err.response?.status;
 
-    // Retry once on transient 5xx errors
     if (status && status >= 500 && status < 600) {
       console.log(`[PB] ${status} from PB — retrying in 2s...`);
       await new Promise((r) => setTimeout(r, 2000));
@@ -491,7 +575,7 @@ async function loadUnpushedLeads(LeadCadenceModel, company = "WYNN") {
 
 /**
  * Drain ALL contacts from one PB folder into another.
- * Used for simple cascades: HOT→DAY1, DAY1→DAY2, DAY2→DAY3_10
+ * Used for simple cascades where no age check is needed.
  */
 async function cascadeFolder(fromKey, toKey, LeadCadenceModel) {
   const fromSeat = SEATS[fromKey];
@@ -546,11 +630,14 @@ async function cascadeFolder(fromKey, toKey, LeadCadenceModel) {
 }
 
 /**
- * Age-check drain: only move contacts from DAY3_10 → DAY10_PLUS
- * if their lead is 10+ business days old in Mongo.
- * Contacts without a Mongo match or without createdAt get moved (safe default).
+ * Age-gated cascade: only move contacts whose stored caseAge
+ * meets the minimum threshold. Uses lead.caseAge from Mongo
+ * (NOT derived from createdAt).
+ *
+ * Falls back to businessDaysSince(createdAt) for pre-migration
+ * leads that don't have caseAge set yet.
  */
-async function cascadeByAge(fromKey, toKey, minBizDays, LeadCadenceModel) {
+async function cascadeByAge(fromKey, toKey, minCaseAge, LeadCadenceModel) {
   const fromSeat = SEATS[fromKey];
   const toSeat = SEATS[toKey];
 
@@ -587,11 +674,18 @@ async function cascadeByAge(fromKey, toKey, minBizDays, LeadCadenceModel) {
 
           if (mongoId && LeadCadenceModel) {
             const lead = await LeadCadenceModel.findById(mongoId, {
+              caseAge: 1,
               createdAt: 1,
             }).lean();
-            if (lead?.createdAt) {
-              const age = businessDaysSince(lead.createdAt);
-              if (age < minBizDays) {
+
+            if (lead) {
+              // Use stored caseAge if available, fall back to derived
+              const age =
+                lead.caseAge != null
+                  ? lead.caseAge
+                  : businessDaysSince(lead.createdAt);
+
+              if (age < minCaseAge) {
                 shouldMove = false;
                 skipped++;
               }
@@ -622,8 +716,6 @@ async function cascadeByAge(fromKey, toKey, minBizDays, LeadCadenceModel) {
         }
       }
 
-      // If we didn't move anything this page, advance to next page
-      // If we did move, re-fetch page 1 since PB re-paginates after moves
       if (!movedThisPage) {
         const totalPages = Math.ceil(parseInt(data.total_results || "0") / 100);
         page++;
@@ -638,7 +730,7 @@ async function cascadeByAge(fromKey, toKey, minBizDays, LeadCadenceModel) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TRANSFER AUDIT — bounce back to age-appropriate folder
+// TRANSFER AUDIT
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function auditTransferFolder(LeadCadenceModel) {
@@ -673,7 +765,6 @@ async function auditTransferFolder(LeadCadenceModel) {
           const domain = (domainField?.value || "WYNN").toUpperCase();
           const mongoId = mongoIdField?.value;
 
-          // Check Logics status
           let converted = false;
           if (caseId) {
             const info = await fetchCaseInfo(domain, parseInt(caseId));
@@ -683,16 +774,16 @@ async function auditTransferFolder(LeadCadenceModel) {
           }
 
           if (converted) {
-            // Progressed/converted — remove from PB entirely
             await removeContact(c.contact_user_id, "TRANSFER");
             console.log(`[PB]   Case ${caseId} converted → removed from PB`);
             removed++;
           } else {
-            // Not converted — figure out which folder to bounce back to
+            // Bounce back to age-appropriate folder
             let targetFolder = "DAY1"; // fallback
 
             if (mongoId && LeadCadenceModel) {
               const lead = await LeadCadenceModel.findById(mongoId, {
+                caseAge: 1,
                 createdAt: 1,
                 pbPreviousFolder: 1,
               }).lean();
@@ -701,11 +792,14 @@ async function auditTransferFolder(LeadCadenceModel) {
                 lead?.pbPreviousFolder &&
                 SEATS[lead.pbPreviousFolder]?.folderId
               ) {
-                // Use saved previous folder
                 targetFolder = lead.pbPreviousFolder;
-              } else if (lead?.createdAt) {
-                // Calculate from age
-                targetFolder = getFolderForAge(lead.createdAt);
+              } else if (lead) {
+                // Use stored caseAge, fall back to derived
+                const age =
+                  lead.caseAge != null
+                    ? lead.caseAge
+                    : businessDaysSince(lead.createdAt);
+                targetFolder = getFolderForCaseAge(age);
               }
             }
 
@@ -750,23 +844,23 @@ async function auditTransferFolder(LeadCadenceModel) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 7AM MORNING ROTATION — FULL AGE CASCADE
+// 7AM MORNING ROTATION
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Full morning rotation:
- *   1. Audit TRANSFER (bounce back to age-appropriate folder or remove)
- *   2. DAY3_10 → DAY10_PLUS (only leads 10+ biz days old)
- *   3. DAY2 → DAY3_10
- *   4. DAY1 → DAY2
- *   5. HOT  → DAY1
- *   6. Load unpushed leads → HOT
+ * Full morning rotation using stored caseAge thresholds:
+ *   1. Audit TRANSFER
+ *   2. DAY3_10 → DAY10_PLUS (caseAge 10+)
+ *   3. DAY2 → DAY3_10 (caseAge 3+)
+ *   4. DAY1 → DAY2 (caseAge 2+)
+ *   5. HOT  → DAY1 (caseAge 1+)
+ *   6. Load unpushed → HOT
  *
  * ORDER: oldest-first so nothing jumps two levels.
  */
 async function morningRotation(LeadCadenceModel, company = "WYNN") {
   console.log("[PB] ══════════════════════════════════════════════════");
-  console.log("[PB] 7am Morning Rotation — Age Cascade");
+  console.log("[PB] 7am Morning Rotation — caseAge Cascade");
   console.log("[PB] ══════════════════════════════════════════════════");
 
   // Step 1: Audit TRANSFER
@@ -776,8 +870,8 @@ async function morningRotation(LeadCadenceModel, company = "WYNN") {
     `[PB] ✓ TRANSFER: ${step1.bounced} bounced back, ${step1.removed} removed, ${step1.errors} errors`,
   );
 
-  // Step 2: DAY3_10 → DAY10_PLUS (age-gated: only 10+ biz days)
-  console.log("[PB] Step 2: DAY3_10 → DAY10_PLUS (10+ days only)...");
+  // Step 2: DAY3_10 → DAY10_PLUS (caseAge 10+)
+  console.log("[PB] Step 2: DAY3_10 → DAY10_PLUS (caseAge 10+)...");
   const step2 = await cascadeByAge(
     "DAY3_10",
     "DAY10_PLUS",
@@ -788,22 +882,22 @@ async function morningRotation(LeadCadenceModel, company = "WYNN") {
     `[PB] ✓ ${step2.moved} moved, ${step2.skipped} too young, ${step2.errors} errors`,
   );
 
-  // Step 3: DAY2 → DAY3_10 (age-gated: only 3+ biz days)
-  console.log("[PB] Step 3: DAY2 → DAY3_10 (3+ days only)...");
+  // Step 3: DAY2 → DAY3_10 (caseAge 3+)
+  console.log("[PB] Step 3: DAY2 → DAY3_10 (caseAge 3+)...");
   const step3 = await cascadeByAge("DAY2", "DAY3_10", 3, LeadCadenceModel);
   console.log(
     `[PB] ✓ ${step3.moved} moved, ${step3.skipped} too young, ${step3.errors} errors`,
   );
 
-  // Step 4: DAY1 → DAY2 (age-gated: only 2+ biz days)
-  console.log("[PB] Step 4: DAY1 → DAY2 (2+ days only)...");
+  // Step 4: DAY1 → DAY2 (caseAge 2+)
+  console.log("[PB] Step 4: DAY1 → DAY2 (caseAge 2+)...");
   const step4 = await cascadeByAge("DAY1", "DAY2", 2, LeadCadenceModel);
   console.log(
     `[PB] ✓ ${step4.moved} moved, ${step4.skipped} too young, ${step4.errors} errors`,
   );
 
-  // Step 5: HOT → DAY1 (age-gated: only 1+ biz days)
-  console.log("[PB] Step 5: HOT → DAY1 (1+ days only)...");
+  // Step 5: HOT → DAY1 (caseAge 1+)
+  console.log("[PB] Step 5: HOT → DAY1 (caseAge 1+)...");
   const step5 = await cascadeByAge("HOT", "DAY1", 1, LeadCadenceModel);
   console.log(
     `[PB] ✓ ${step5.moved} moved, ${step5.skipped} still fresh, ${step5.errors} errors`,
@@ -813,7 +907,7 @@ async function morningRotation(LeadCadenceModel, company = "WYNN") {
   console.log("[PB] Step 6: Loading unpushed leads into HOT...");
   const step6 = await loadUnpushedLeads(LeadCadenceModel, company);
   console.log(`[PB] ✓ ${step6.pushed} loaded into HOT`);
-
+  const step7 = await cleanDeactivatedFromPb(LeadCadenceModel);
   console.log("[PB] ══════════════════════════════════════════════════");
   console.log("[PB] Morning Rotation Summary:");
   console.log(
@@ -841,6 +935,7 @@ async function morningRotation(LeadCadenceModel, company = "WYNN") {
     day1_to_day2: step4,
     hot_to_day1: step5,
     unpushed_to_hot: step6,
+    cleanup: step7,
   };
 }
 
@@ -875,23 +970,26 @@ function mountCallDone(app) {
     );
 
     try {
-      // ── DNC: remove from PB + update Logics status 173 ──
       if (DNC_KEYS.includes(key)) {
-        if (contact?.phone) {
-          await updateCaseStatus(domain, 173, contact.phone);
-          console.log(`[PB-DONE] ✓ DNC: ${contact.phone}`);
-        }
-        if (pbContactId) {
-          await removeContact(pbContactId, "HOT").catch(() => {});
-          console.log(`[PB-DONE] ✓ Removed ${pbContactId} (DNC)`);
-        }
+        // Full deactivation: Logics 173 + Mongo + PB removal
+        const phone10 = (contact?.phone || "").replace(/\D/g, "");
+        await deactivateLead({
+          phone:
+            phone10.length === 11 && phone10.startsWith("1")
+              ? phone10.slice(1)
+              : phone10,
+          company: domain,
+          reason: "pb-dnc",
+          updateLogics: true,
+          caseId: caseId ? String(caseId) : null,
+          mongoId: mongoId || null,
+        }).catch((err) =>
+          console.error(`[PB-DONE] Deactivation error: ${err.message}`),
+        );
         actionLog.push({ domain, caseId, action: "status:DNC" });
-
-        // ── TRANSFER: save previous folder, move to TRANSFER ──
       } else if (key === "TRANSFER") {
         const transferFolder = SEATS.TRANSFER?.folderId;
         if (pbContactId && transferFolder) {
-          // Save pbPreviousFolder in Mongo so morning audit bounces back correctly
           if (mongoId) {
             const LeadCadence = require("../models/LeadCadence");
             const lead = await LeadCadence.findById(mongoId, {
@@ -916,7 +1014,6 @@ function mountCallDone(app) {
         actionLog.push({ domain, caseId, action: "transfer" });
       }
 
-      // ── Increment dial count on EVERY calldone ──
       if (mongoId) {
         const LeadCadence = require("../models/LeadCadence");
         await LeadCadence.updateOne(
@@ -927,7 +1024,6 @@ function mountCallDone(app) {
         );
       }
 
-      // ── Activity note on EVERY call ──
       if (caseId) {
         await createActivityLoop(domain, caseId, `PB: ${status}`);
         actionLog.push({ domain, caseId, action: `activity:${key}` });
@@ -951,7 +1047,7 @@ function clearActionLog() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PB CONTACT REMOVAL (called by statusChecker on deactivation)
+// PB CONTACT REMOVAL
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function removePbContact(pbContactId) {
@@ -1036,32 +1132,26 @@ async function setConnectMe(phoneNumber, seatKey = "HOT") {
 // ═════════════════════════════════════════════════════════════════════════════
 
 module.exports = {
-  // Lead intake
   pushContact,
   pushBatch,
-  // Morning cron
   loadUnpushedLeads,
   morningRotation,
   cascadeFolder,
   cascadeByAge,
   auditTransferFolder,
-  // Express routes
   mountCallDone,
   mountOAuth,
-  // Token management
   initTokenRefresh,
   refreshAccessToken,
-  // Folder ops
   getFolderContacts,
   getFolderCount,
   getFolders,
   removeContact,
+  cleanDeactivatedFromPb,
   moveContact,
   removePbContact,
-  // Helpers
-  getFolderForAge,
+  getFolderForCaseAge,
   businessDaysSince,
-  // Dashboard
   getUsageStats,
   setConnectMe,
   getActionLog,

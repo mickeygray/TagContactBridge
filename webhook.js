@@ -1,6 +1,6 @@
 // webhook.js
 require("dotenv").config();
-
+const PrePing = require("./models/PrePing");
 const express = require("express");
 const bodyParser = require("body-parser");
 const path = require("path");
@@ -10,10 +10,7 @@ const { createLeadAdCase } = require("./services/logicsService");
 const { validateLead } = require("./services/validationService");
 const LeadCadence = require("./models/LeadCadence");
 const { getSmsContent } = require("./services/smsContent");
-const {
-  runCadenceTick,
-  daysSinceCreation,
-} = require("./services/cadenceEngine");
+const { runCadenceTick } = require("./services/cadenceEngine");
 const {
   dropVoicemail,
   handleDropWebhook,
@@ -27,6 +24,7 @@ connectDB().then(() => {
     console.error("[STARTUP] Migration error:", err.message),
   );
 });
+
 const {
   getCompanyConfig,
   resolveCompanyFromFbPageId,
@@ -44,7 +42,14 @@ const cookieParser = require("cookie-parser");
 
 const deployService = require("./services/deployService");
 const { mountDeployPanel } = require("./services/deployPanel");
+const {
+  processFacebookWebhook,
+  getMessengerStats,
+} = require("./services/facebookMessenger");
+const { processInstagramWebhook } = require("./services/instagramService");
+const tiktokAuthService = require("./services/tiktokAuthService");
 
+const ConsentRecord = require("./models/ConsentRecord");
 /* -------------------------------------------------------------------------- */
 /*                                 CONFIG                                     */
 /* -------------------------------------------------------------------------- */
@@ -101,6 +106,37 @@ app.get("/pb/auth", (req, res) => {
   const url = `https://www.phoneburner.com/oauth/authorize?client_id=${process.env.PB_CLIENT_ID}&redirect_uri=https://tag-webhook.ngrok.app/pb/callback&response_type=code`;
   res.redirect(url);
 });
+
+async function checkInTrustedForm(certUrl) {
+  if (!certUrl || !process.env.TRUSTEDFORM_API_KEY) return;
+
+  // Extract cert ID from URL
+  // Format: https://cert.trustedform.com/CERT_ID
+  const match = certUrl.match(/trustedform\.com\/([a-f0-9]+)/);
+  if (!match) return;
+
+  const certId = match[1];
+
+  try {
+    await axios.post(
+      `https://cert.trustedform.com/${certId}/check_in`,
+      {},
+      {
+        auth: {
+          username: "API",
+          password: process.env.TRUSTEDFORM_API_KEY,
+        },
+        headers: { "Content-Type": "application/json" },
+        timeout: 10000,
+      },
+    );
+    console.log(`[TRUSTEDFORM] ✓ Checked in cert: ${certId}`);
+  } catch (err) {
+    console.error(
+      `[TRUSTEDFORM] ✗ Check-in failed: ${err.response?.data?.message || err.message}`,
+    );
+  }
+}
 
 // ── PB OAuth: catches the redirect, exchanges for token ──
 app.get("/pb/callback", async (req, res) => {
@@ -302,48 +338,32 @@ function normalizeTikTokFields(fieldData) {
   };
 }
 
-function normalizeLeadContactPayload(body) {
-  const b = body || {};
+function normalizeLeadContactPayload(body = {}) {
   const name =
-    b.name ||
-    b.full_name ||
-    b.fullName ||
-    [b.first_name || b.firstName, b.last_name || b.lastName]
-      .filter(Boolean)
-      .join(" ") ||
+    body.name ||
+    [body.first_name, body.last_name].filter(Boolean).join(" ") ||
     "";
 
-  let sourceValue = "";
-  for (const key of Object.keys(b)) {
-    if (key.toLowerCase().includes("source")) {
-      sourceValue = b[key];
-      break;
-    }
-  }
-
-  let source;
-  if (sourceValue === "GS03RB7W") {
-    source = "LD Posting";
-  } else if (
-    sourceValue === "VF Landing Page" ||
-    String(sourceValue).toLowerCase().includes("landing")
-  ) {
-    source = "VF Landing Page";
-  } else if (sourceValue) {
-    source = sourceValue;
-  } else {
-    source = "Digital Lead 2026";
-  }
-
   return {
-    name: String(name).trim(),
-    email: String(b.email || b.email_address || b.emailAddress || "").trim(),
-    phone: normalizePhone(
-      b.phone || b.phone_number || b.phoneNumber || b.mobile || b.cell || "",
-    ).digits,
-    city: String(b.city || "").trim(),
-    state: String(b.state || b.region || "").trim(),
-    source,
+    name,
+    email: body.email || "",
+    phone: body.phone || "",
+    city: body.city || "",
+    state: body.state || "",
+    message: body.message || "",
+    source: body.source || "",
+    company: body.company || "",
+    trafficSource: body.trafficSource || "",
+    affiliatePartner: body.affiliatePartner || "",
+    affiliateNid: body.affiliateNid || "",
+    affiliateClickId: body.affiliateClickId || "",
+    affiliateReferer: body.affiliateReferer || "",
+    affiliateSub1: body.affiliateSub1 || "",
+    affiliateSub2: body.affiliateSub2 || "",
+    // ── Consent tokens ──
+    trustedFormCertUrl:
+      body.tf || body.trustedform_cert_url || body.xxTrustedFormCertUrl || "",
+    jornayaLeadId: body.jl || body.leadid_token || body.jornaya_lead_id || "",
   };
 }
 
@@ -378,6 +398,12 @@ async function processLead(fields, opts = {}) {
     caseId: null,
     mongoId: null,
   };
+  function getTodayPT() {
+    const now = new Date(
+      new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }),
+    );
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }
 
   // SPAM CHECK: reject gibberish names before anything
   function isGibberishName(name) {
@@ -411,7 +437,26 @@ async function processLead(fields, opts = {}) {
       reason: "gibberish-name",
     };
   }
-
+  // DUPE CHECK: reject duplicate phone numbers
+  if (fields.phone) {
+    const { digits } = normalizePhone(fields.phone);
+    if (digits) {
+      const existing = await LeadCadence.findOne({
+        phone: { $regex: digits.replace(/^\+1/, "") },
+      }).lean();
+      if (existing) {
+        console.log(
+          `[PIPELINE] ✗ Rejected — duplicate phone: ${digits} (existing caseId: ${existing.caseId})`,
+        );
+        return {
+          ...results,
+          rejected: true,
+          reason: "duplicate-phone",
+          existingCaseId: existing.caseId,
+        };
+      }
+    }
+  }
   // STEP 1: VALIDATE
   console.log(`[PIPELINE] Step 1: Validating phone/email...`);
   const validation = await validateLead({
@@ -433,9 +478,14 @@ async function processLead(fields, opts = {}) {
     console.log(`[PIPELINE] Step 2: Creating Logics case...`);
     const logicsResult = await createLeadAdCase(company, fields, source, meta);
     results.caseId = logicsResult.caseId;
+
+    if (logicsResult.duplicate) {
+      console.log(`[PIPELINE] ✗ Rejected — duplicate phone in Logics`);
+      return { ...results, rejected: true, reason: "duplicate-phone-logics" };
+    }
+
     console.log(`[PIPELINE] Logics CaseID: ${results.caseId || "FAILED"}`);
   }
-
   // STEP 3: SAVE TO MONGODB
   if (results.caseId) {
     console.log(`[PIPELINE] Step 3: Saving to MongoDB...`);
@@ -458,11 +508,7 @@ async function processLead(fields, opts = {}) {
           phone: fields.phone || "",
           city: fields.city || "",
           state: fields.state || "",
-          source: ["facebook", "tiktok", "lead-contact", "test"].includes(
-            source,
-          )
-            ? source
-            : "unknown",
+          source: source,
           emailValid: validation.emailCanSend,
           phoneConnected: validation.phoneValid,
           phoneIsCell: validation.phoneIsCell,
@@ -479,6 +525,9 @@ async function processLead(fields, opts = {}) {
           day0Connected: false,
           welcomeEmailSent: false,
           active: true,
+          // ── NEW: stored case age ──
+          caseAge: 0,
+          caseAgeUpdatedDate: getTodayPT(),
         });
         results.mongoId = leadDoc._id;
         console.log(`[PIPELINE] MongoDB: ✓ Saved — ID: ${leadDoc._id}`);
@@ -573,7 +622,13 @@ async function processLead(fields, opts = {}) {
     if (results.mongoId && results.outreach.emailResult?.ok) {
       await LeadCadence.updateOne(
         { _id: results.mongoId },
-        { $set: { welcomeEmailSent: true } },
+        {
+          $set: {
+            welcomeEmailSent: true,
+            emailsSent: 1,
+            lastEmailedAt: new Date(),
+          },
+        },
       ).catch(() => {});
     }
   } else {
@@ -668,8 +723,12 @@ app.post("/fb/webhook", async (req, res) => {
 
   try {
     const body = req.body;
-    if (body.object !== "page") return;
+    if (body.object === "instagram") {
+      await processInstagramWebhook(body);
+      return;
+    }
 
+    if (body.object !== "page") return;
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
         if (change.field !== "leadgen") continue;
@@ -694,11 +753,12 @@ app.post("/fb/webhook", async (req, res) => {
         });
       }
     }
+    await processFacebookWebhook(body);
+    await processInstagramWebhook(body);
   } catch (err) {
     console.error("[FB] Error:", err);
   }
 });
-
 async function fetchFacebookLeadData(leadgenId, company = "WYNN") {
   try {
     const token = getFbPageToken(company);
@@ -735,6 +795,39 @@ app.get("/tt/webhook", (req, res) => {
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
+});
+
+// ─── TIKTOK OAUTH ────────────────────────────────────────────
+
+app.get("/tt/oauth/start", (req, res) => {
+  const company = (req.query.company || "").toUpperCase();
+  if (!["TAG", "WYNN"].includes(company)) {
+    return res.status(400).send("Use ?company=TAG or ?company=WYNN");
+  }
+  const { url } = tiktokAuthService.buildAuthUrl(company);
+  console.log(`[TT-AUTH] Redirecting ${company} to TikTok OAuth...`);
+  res.redirect(url);
+});
+
+app.get("/tt/oauth/callback", async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  if (error)
+    return res.status(400).send(`TikTok auth failed: ${error_description}`);
+  if (!code || !state) return res.status(400).send("Missing code or state");
+  const result = await tiktokAuthService.handleCallback(code, state);
+  if (!result.ok)
+    return res.status(500).send(`Token exchange failed: ${result.error}`);
+  res.send(`<h2>✅ ${result.company} authorized. You can close this window.</h2>
+    <p>Authorize the other brand: <a href="/tt/oauth/start?company=${result.company === "TAG" ? "WYNN" : "TAG"}">click here</a></p>`);
+});
+
+app.get("/tt/oauth/status", async (req, res) => {
+  const statuses = await tiktokAuthService.getTokenStatus();
+  res.json(
+    statuses.length
+      ? statuses
+      : { message: "No tokens. Visit /tt/oauth/start?company=TAG" },
+  );
 });
 
 app.post("/sms/inbound", (req, res) => {
@@ -801,17 +894,66 @@ app.post("/lead-contact", async (req, res) => {
   }
 
   console.log("[LEAD-CONTACT] Received:", fields);
+
+  // ── Check if this email was pre-pinged (LD Posting) ──
+  const emailHash = fields.email
+    ? crypto
+        .createHash("md5")
+        .update(fields.email.toLowerCase().trim())
+        .digest("hex")
+    : null;
+
+  const wasPrePinged = emailHash
+    ? await PrePing.findOneAndDelete({
+        emailHash: emailHash.toLowerCase(),
+      }).lean()
+    : null;
+
+  const resolvedSource = wasPrePinged
+    ? "ld-posting"
+    : fields.source || "lead-contact";
+  console.log(
+    `[LEAD-CONTACT] Source resolved: ${resolvedSource}${wasPrePinged ? " (via pre-ping)" : ""}`,
+  );
+
   const company = resolveCompanyFromPayload(req.body, req.headers);
   const result = await processLead(fields, {
-    source: fields.source || "lead-contact",
+    source: resolvedSource,
     company,
-    meta: { received_at: new Date().toISOString() },
+    meta: {
+      received_at: new Date().toISOString(),
+      trafficSource: fields.trafficSource || "",
+      affiliatePartner: fields.affiliatePartner || "",
+      affiliateNid: fields.affiliateNid || "",
+      affiliateClickId: fields.affiliateClickId || "",
+      affiliateReferer: fields.affiliateReferer || "",
+    },
     doEmail: true,
     doSms: true,
     doDial: true,
     doCase: true,
     doNotify: true,
   });
+
+  // ── Store consent record (immutable, permanent) ──
+  if (!result.rejected) {
+    ConsentRecord.create({
+      email: fields.email,
+      phone: fields.phone,
+      caseId: result.caseId || "",
+      company,
+      source: resolvedSource,
+      trustedFormCertUrl: fields.trustedFormCertUrl || "",
+      jornayaLeadId: fields.jornayaLeadId || "",
+      receivedAt: new Date(),
+      ip: req.headers["x-forwarded-for"] || req.ip || "",
+      userAgent: req.headers["user-agent"] || "",
+    }).catch((err) =>
+      console.error("[CONSENT] Failed to store consent record:", err.message),
+    );
+
+    checkInTrustedForm(fields.trustedFormCertUrl).catch(() => {});
+  }
 
   return res.json({ ok: true, ...result });
 });
@@ -939,7 +1081,7 @@ app.post("/lead-contact/pre-ping", async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Missing state", code: "MISSING_STATE" });
     }
-    if (
+    /* if (
       config.allowedStates.length &&
       !config.allowedStates.includes(normalizedState)
     ) {
@@ -950,7 +1092,7 @@ app.post("/lead-contact/pre-ping", async (req, res) => {
         allowedStates: config.allowedStates,
       });
     }
-
+*/
     const age = calculateAge(dob);
     if (age === null) {
       return res.status(400).json({
@@ -980,11 +1122,15 @@ app.post("/lead-contact/pre-ping", async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Duplicate email", code: "DUPLICATE_EMAIL" });
     }
-
+    await PrePing.findOneAndUpdate(
+      { emailHash: hash.toLowerCase() },
+      { emailHash: hash.toLowerCase(), createdAt: new Date() },
+      { upsert: true },
+    ).catch(() => {});
     return res.status(200).json({
       ok: true,
       message: "Lead accepted - proceed with full submission to /lead-contact",
-      checks: { state: normalizedState, age, emailNew: true },
+      checks: { age, emailNew: true },
     });
   } catch (err) {
     console.error("[PRE-PING] Error:", err.message);

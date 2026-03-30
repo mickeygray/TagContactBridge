@@ -22,7 +22,7 @@ router.post("/conversations/:id/send", ctrl.manualSend);
 router.post("/conversations/:id/regenerate", ctrl.regenerate);
 router.post("/conversations/:id/sleep", ctrl.sleepBot);
 router.post("/conversations/:id/wake", ctrl.wakeBot);
-router.post("/sms/conversations/:id/dnc", ctrl.markDnc);
+router.post("/conversations/:id/dnc", ctrl.markDnc);
 // Settings
 router.get("/settings", ctrl.getSettings);
 router.put("/settings", ctrl.updateSettings);

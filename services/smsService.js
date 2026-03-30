@@ -13,9 +13,17 @@ const LeadCadence = require("../models/LeadCadence");
 const { getCompanyConfig } = require("../config/companyConfig");
 const { updateCaseStatus } = require("./logicsService");
 const nodemailer = require("nodemailer");
-
+const { deactivateLead } = require("../utils/deactivateLead");
 // ─── Runtime Settings ────────────────────────────────────────────────────────
+const HARD_STOP_KEYWORDS = ["stop", "unsubscribe", "cancel", "quit"];
 
+function isHardStop(message) {
+  const clean = (message || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "");
+  return HARD_STOP_KEYWORDS.includes(clean);
+}
 let autoSendEnabled = process.env.SMS_AUTO_SEND_ENABLED !== "false";
 let autoSendDelayMs =
   Number(process.env.SMS_AUTO_SEND_DELAY_MS) || 5 * 60 * 1000;
@@ -278,7 +286,7 @@ async function generateResponse(
     }
 
     const resp = await openai.chat.completions.create({
-      model: process.env.SMS_AI_MODEL || "gpt-4o-mini",
+      model: process.env.SMS_AI_MODEL || "gpt-5-mini",
       messages,
       max_tokens: 200,
       temperature: 0.7,
@@ -304,31 +312,32 @@ async function generateResponse(
     return { ok: false, response: null, error: err.message, leadInfo: lead };
   }
 }
-// ── Manual DNC — called from dashboard button ────────────────
 async function markLogicsDnc(conversationId) {
   const convo = await SmsConversation.findById(conversationId);
   if (!convo) return { ok: false, error: "Not found" };
 
   const phone = convo.customerPhone;
   const company = convo.company;
-  const formattedPhone =
-    phone.length === 10
-      ? `(${phone.slice(0, 3)})${phone.slice(3, 6)}-${phone.slice(6)}`
-      : phone;
 
-  console.log(`[SMS-SVC] Manual DNC: ${phone} (${company}) → Logics 173`);
+  console.log(`[SMS-SVC] Manual DNC: ${phone} (${company})`);
 
-  try {
-    await updateCaseStatus(company, 173, formattedPhone);
-    convo.logicsDncSent = true;
-    convo.logicsDncAt = new Date();
-    await convo.save();
-    console.log(`[SMS-SVC] ✓ Logics → 173 DNC for ${phone}`);
-    return { ok: true };
-  } catch (err) {
-    console.error(`[SMS-SVC] ✗ Logics DNC failed: ${err.message}`);
-    return { ok: false, error: err.message };
-  }
+  // Full deactivation: Logics 173 + Mongo + PB removal
+  const result = await deactivateLead({
+    phone,
+    company,
+    reason: "manual-dnc",
+    updateLogics: true,
+  });
+
+  convo.logicsDncSent = true;
+  convo.logicsDncAt = new Date();
+  convo.contactType = "opt-out";
+  convo.botSleeping = true;
+  convo.autoRespondEnabled = false;
+  convo.autoSendAt = null;
+  await convo.save();
+
+  return { ok: result.ok };
 }
 // ═════════════════════════════════════════════════════════════════════════════
 // SEND VIA CALLRAIL
@@ -657,26 +666,35 @@ async function handleInbound({
   const ai = await generateResponse(company, phone, content, convo.messages);
 
   // Check for opt-out signal from AI
-  let isOptOut = false;
   if (ai.ok && ai.response) {
-    if (ai.response.startsWith("[OPT-OUT]")) {
-      isOptOut = true;
+    // ── Classify opt-out type ────────────────────────────────
+    const hardStop = isHardStop(content);
+    const aiOptOut = ai.response.startsWith("[OPT-OUT]");
+
+    if (aiOptOut) {
       ai.response = ai.response.replace("[OPT-OUT]", "").trim();
-      console.log(`[SMS-SVC] ⛔ OPT-OUT detected in AI response`);
-      console.log(`[SMS-SVC]   Goodbye: "${ai.response.slice(0, 80)}..."`);
     }
 
-    convo.proposedResponse = ai.response;
+    // Populate lead info on conversation
     if (ai.leadInfo) {
       convo.leadName = ai.leadInfo.name || convo.leadName;
       convo.leadEmail = ai.leadInfo.email || convo.leadEmail;
       convo.caseId = ai.leadInfo.caseId || convo.caseId;
     }
 
-    if (isOptOut) {
-      // Opt-out: send the goodbye immediately, kill auto-respond, deactivate
+    convo.proposedResponse = ai.response;
+
+    if (hardStop) {
+      // ═══════════════════════════════════════════════════════
+      // HARD STOP — TCPA keyword (STOP, UNSUBSCRIBE, etc.)
+      // Full deactivation: Logics 173 + Mongo + PB removal
+      // ═══════════════════════════════════════════════════════
+      console.log(
+        `[SMS-SVC] 🛑 HARD STOP: "${content}" from ${phone} (${company})`,
+      );
+
       convo.responseStatus = "pending";
-      convo.autoSendAt = null; // no timer — we handle opt-outs via dashboard or immediately
+      convo.autoSendAt = null;
       convo.autoRespondEnabled = false;
       convo.botSleeping = true;
       convo.contactType = "opt-out";
@@ -689,44 +707,69 @@ async function handleInbound({
         timestamp: new Date(),
       });
 
-      // Deactivate in LeadCadence so cadence engine stops texting them
-      console.log(
-        `[SMS-SVC] ⛔ Deactivating LeadCadence records for ${phone} (${company})`,
+      // Full deactivation
+      await deactivateLead({
+        phone,
+        company,
+        reason: "sms-opt-out",
+        updateLogics: true,
+      }).catch((err) =>
+        console.error("[SMS-SVC] Deactivation error:", err.message),
       );
+
+      console.log(
+        `[SMS-SVC] 🛑 Lead fully deactivated — awaiting goodbye approval`,
+      );
+    } else if (aiOptOut) {
+      // ═══════════════════════════════════════════════════════
+      // SOFT DECLINE — AI detected opt-out intent
+      // ("not interested", "already have a service", etc.)
+      // Just sleep the bot — do NOT deactivate the lead.
+      // A rep can still call them via PhoneBurner.
+      // ═══════════════════════════════════════════════════════
+      console.log(
+        `[SMS-SVC] 💤 SOFT DECLINE: AI flagged opt-out for ${phone} (${company})`,
+      );
+      console.log(`[SMS-SVC]   Their message: "${content}"`);
+      console.log(
+        `[SMS-SVC]   Action: Sleep bot only — lead stays active in Logics + PB`,
+      );
+
+      convo.responseStatus = "pending";
+      convo.autoSendAt = null;
+      convo.autoRespondEnabled = false;
+      convo.botSleeping = true;
+      // NOTE: contactType stays as-is (prospect/client) — NOT set to "opt-out"
+
+      convo.messages.push({
+        direction: "outbound",
+        content: ai.response,
+        aiGenerated: true,
+        status: "pending",
+        timestamp: new Date(),
+      });
+
+      // Set SMS DNC only (stop automated texts) but leave lead active
       await LeadCadence.updateMany(
-        { phone, company },
+        { phone, company, active: true },
         {
           $set: {
-            active: false,
-            deactivatedAt: new Date(),
-            deactivatedReason: "sms-opt-out",
+            smsDnc: true,
+            smsDncReason: "opted-out",
+            dncUpdatedAt: new Date(),
           },
         },
       ).catch((err) =>
-        console.error("[SMS-SVC] Lead deactivate error:", err.message),
+        console.error("[SMS-SVC] SMS DNC flag error:", err.message),
       );
-      /*
-      // Update Logics to DNC status 173
-      const formattedPhone =
-        phone.length === 10
-          ? `(${phone.slice(0, 3)})${phone.slice(3, 6)}-${phone.slice(6)}`
-          : phone;
+
       console.log(
-        `[SMS-SVC] ⛔ Updating Logics → status 173 DNC (${formattedPhone})`,
-      );
-      await updateCaseStatus(company, 173, formattedPhone)
-        .then(() =>
-          console.log(`[SMS-SVC] ⛔ ✓ Logics status → 173 DNC for ${phone}`),
-        )
-        .catch((err) =>
-          console.error("[SMS-SVC] ✗ Logics DNC update error:", err.message),
-        );
-*/
-      console.log(
-        `[SMS-SVC] ⛔ Lead deactivated, bot sleeping — awaiting goodbye approval`,
+        `[SMS-SVC] 💤 Bot sleeping, smsDnc set — awaiting goodbye approval`,
       );
     } else {
-      // Normal response — apply auto-send timer
+      // ═══════════════════════════════════════════════════════
+      // NORMAL RESPONSE — apply auto-send timer
+      // ═══════════════════════════════════════════════════════
       const canAuto =
         autoSendEnabled &&
         autoSendDelayMs > 0 &&

@@ -20,6 +20,12 @@ const Navbar = () => {
             <Link to="/" className="btn btn-outline">
               Marketing Tools
             </Link>
+            <Link to="/ringbridge" className="btn btn-outline">
+              RingBridge
+            </Link>
+            <Link to="/deploy" className="btn btn-outline">
+              Deploy
+            </Link>
 
             <button className="btn btn-outline" onClick={handleLogout}>
               Logout

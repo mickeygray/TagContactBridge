@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RingBridge — Agent Status</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --surface: #12171f;
+      --surface-2: #1a2029;
+      --border: #1e2530;
+      --text: #c5cdd8;
+      --text-dim: #5c6775;
+      --text-bright: #e6ecf2;
+      --accent: #3b82f6;
+
+      /* Status colors */
+      --available: #22c55e;
+      --available-bg: rgba(34, 197, 94, 0.08);
+      --available-border: rgba(34, 197, 94, 0.25);
+
+      --oncall: #ef4444;
+      --oncall-bg: rgba(239, 68, 68, 0.08);
+      --oncall-border: rgba(239, 68, 68, 0.25);
+
+      --ringing: #f59e0b;
+      --ringing-bg: rgba(245, 158, 11, 0.08);
+      --ringing-border: rgba(245, 158, 11, 0.25);
+
+      --disposition: #a855f7;
+      --disposition-bg: rgba(168, 85, 247, 0.08);
+      --disposition-border: rgba(168, 85, 247, 0.25);
+
+      --away: #6b7280;
+      --away-bg: rgba(107, 114, 128, 0.08);
+      --away-border: rgba(107, 114, 128, 0.25);
+
+      --offline: #374151;
+      --offline-bg: rgba(55, 65, 81, 0.05);
+      --offline-border: rgba(55, 65, 81, 0.2);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ─── Header ────────────────────────────────── */
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: -0.5px;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .connection-badge.connected {
+      background: rgba(34, 197, 94, 0.1);
+      color: var(--available);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+    }
+
+    .connection-badge.disconnected {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--oncall);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .connection-badge.offline-mode {
+      background: rgba(245, 158, 11, 0.1);
+      color: var(--ringing);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+
+    .pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn:hover { background: var(--border); color: var(--text-bright); }
+
+    .timestamp {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* ─── Stats Bar ─────────────────────────────── */
+
+    .stats-bar {
+      display: flex;
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat-cell {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px;
+      background: var(--surface);
+    }
+
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      font-weight: 600;
+    }
+
+    /* ─── Agent Grid ────────────────────────────── */
+
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+      padding: 24px 32px;
+    }
+
+    .agent-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .agent-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--offline);
+      transition: background 0.3s;
+    }
+
+    .agent-card[data-status="available"]::before { background: var(--available); }
+    .agent-card[data-status="onCall"]::before { background: var(--oncall); }
+    .agent-card[data-status="ringing"]::before { background: var(--ringing); }
+    .agent-card[data-status="disposition"]::before { background: var(--disposition); }
+    .agent-card[data-status="away"]::before { background: var(--away); }
+    .agent-card[data-status="offline"]::before { background: var(--offline); }
+
+    .agent-card[data-status="available"] { border-color: var(--available-border); background: var(--available-bg); }
+    .agent-card[data-status="onCall"] { border-color: var(--oncall-border); background: var(--oncall-bg); }
+    .agent-card[data-status="ringing"] { border-color: var(--ringing-border); background: var(--ringing-bg); animation: ring-pulse 1s ease-in-out infinite; }
+    .agent-card[data-status="disposition"] { border-color: var(--disposition-border); background: var(--disposition-bg); }
+
+    @keyframes ring-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+      50% { box-shadow: 0 0 20px 2px rgba(245, 158, 11, 0.15); }
+    }
+
+    .agent-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .agent-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-bright);
+      line-height: 1.2;
+    }
+
+    .agent-company {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(59, 130, 246, 0.1);
+      color: var(--accent);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-badge[data-status="available"] { background: rgba(34,197,94,0.12); color: var(--available); }
+    .status-badge[data-status="available"] .status-dot { background: var(--available); box-shadow: 0 0 6px var(--available); }
+
+    .status-badge[data-status="onCall"] { background: rgba(239,68,68,0.12); color: var(--oncall); }
+    .status-badge[data-status="onCall"] .status-dot { background: var(--oncall); box-shadow: 0 0 6px var(--oncall); animation: pulse 1.5s infinite; }
+
+    .status-badge[data-status="ringing"] { background: rgba(245,158,11,0.12); color: var(--ringing); }
+    .status-badge[data-status="ringing"] .status-dot { background: var(--ringing); box-shadow: 0 0 6px var(--ringing); animation: pulse 0.6s infinite; }
+
+    .status-badge[data-status="disposition"] { background: rgba(168,85,247,0.12); color: var(--disposition); }
+    .status-badge[data-status="disposition"] .status-dot { background: var(--disposition); }
+
+    .status-badge[data-status="away"] { background: rgba(107,114,128,0.12); color: var(--away); }
+    .status-badge[data-status="away"] .status-dot { background: var(--away); }
+
+    .status-badge[data-status="offline"] { background: rgba(55,65,81,0.12); color: var(--offline); }
+    .status-badge[data-status="offline"] .status-dot { background: var(--offline); }
+
+    .call-info {
+      margin-top: 12px;
+      padding: 10px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .call-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .call-row + .call-row { margin-top: 4px; }
+
+    .call-label {
+      color: var(--text-dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .call-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .call-timer {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--oncall);
+    }
+
+    .agent-stats {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    .mini-stat {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .mini-stat .label { color: var(--text-dim); font-size: 9px; text-transform: uppercase; }
+    .mini-stat .value { color: var(--text); font-weight: 600; }
+
+    .agent-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .meta-item {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* ─── Event Log ─────────────────────────────── */
+
+    .event-log-section {
+      padding: 0 32px 32px;
+    }
+
+    .section-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    .event-log {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+
+    .event-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.3s;
+    }
+
+    .event-row:last-child { border-bottom: none; }
+    .event-row.flash { background: rgba(59, 130, 246, 0.06); }
+
+    .event-time { color: var(--text-dim); min-width: 75px; }
+    .event-agent { color: var(--accent); min-width: 110px; font-weight: 600; }
+    .event-msg { color: var(--text); flex: 1; }
+    .event-transition { color: var(--text-dim); }
+
+    .event-log::-webkit-scrollbar { width: 6px; }
+    .event-log::-webkit-scrollbar-track { background: transparent; }
+    .event-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ─── Empty State ───────────────────────────── */
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 32px;
+      text-align: center;
+    }
+
+    .empty-state h2 {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      color: var(--text-bright);
+      margin-bottom: 8px;
+    }
+
+    .empty-state p {
+      color: var(--text-dim);
+      max-width: 500px;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .empty-state code {
+      background: var(--surface-2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--accent);
+    }
+
+    /* ─── Add Agent Modal ───────────────────────── */
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 400px;
+      max-width: 90vw;
+    }
+
+    .modal h3 {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      color: var(--text-bright);
+      margin-bottom: 20px;
+    }
+
+    .field { margin-bottom: 14px; }
+
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-bright);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    .field input:focus, .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .btn-primary {
+      padding: 8px 18px;
+      border-radius: 6px;
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .btn-primary:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">Ring<span>Bridge</span></div>
+      <div id="connectionBadge" class="connection-badge disconnected">
+        <div class="pulse"></div>
+        <span>Connecting</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="clock" class="timestamp"></div>
+      <button class="btn" onclick="openAddAgent()">+ Add Agent</button>
+      <button class="btn" onclick="refreshAll()">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-cell">
+      <div class="stat-value" id="statTotal" style="color:var(--text-bright)">0</div>
+      <div class="stat-label">Agents</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-value" id="statAvailable" style="color:var(--available)">0</div>
+      <div class="stat-label">Available</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-value" id="statOnCall" style="color:var(--oncall)">0</div>
+      <div class="stat-label">On Call</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-value" id="statDisposition" style="color:var(--disposition)">0</div>
+      <div class="stat-label">Disposition</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-value" id="statAway" style="color:var(--away)">0</div>
+      <div class="stat-label">Away</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-value" id="statCalls" style="color:var(--text-bright)">0</div>
+      <div class="stat-label">Calls Today</div>
+    </div>
+  </div>
+
+  <!-- Agent Grid -->
+  <div id="agentGrid" class="agent-grid"></div>
+
+  <!-- Empty State -->
+  <div id="emptyState" class="empty-state" style="display:none">
+    <h2>No agents configured</h2>
+    <p>
+      Add agents to start monitoring. You'll need their RingEX extension ID.<br><br>
+      Click <strong>+ Add Agent</strong> above, or use the API:<br>
+      <code>POST /api/admin/agents { extensionId, name, company }</code><br><br>
+      To discover extension IDs on your account:<br>
+      <code>GET /api/admin/extensions</code>
+    </p>
+  </div>
+
+  <!-- Event Log -->
+  <div class="event-log-section">
+    <div class="section-title">Live Event Log</div>
+    <div id="eventLog" class="event-log">
+      <div class="event-row">
+        <span class="event-time">--:--:--</span>
+        <span class="event-agent">SYSTEM</span>
+        <span class="event-msg">Waiting for events...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Agent Modal -->
+  <div id="addAgentModal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h3>Add Agent</h3>
+      <div class="field">
+        <label>Extension ID</label>
+        <input type="text" id="inputExtId" placeholder="e.g. 1234567890">
+      </div>
+      <div class="field">
+        <label>Display Name</label>
+        <input type="text" id="inputName" placeholder="e.g. John Smith">
+      </div>
+      <div class="field">
+        <label>Company</label>
+        <select id="inputCompany">
+          <option value="TAG">TAG — Tax Advocate Group</option>
+          <option value="WYNN">WYNN — Wynn Tax Solutions</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="addAgent()">Add Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';  // Same origin
+    let agents = {};
+    let eventSource = null;
+    let callTimers = {};
+
+    // ─── SSE Connection ────────────────────────────
+
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+
+      eventSource = new EventSource(`${API}/api/events`);
+
+      eventSource.onopen = () => {
+        setBadge('connected', 'SSE Live');
+        logEvent('SYSTEM', 'Connected to event stream');
+      };
+
+      eventSource.onerror = () => {
+        setBadge('disconnected', 'Disconnected');
+        // Auto-reconnect is built into EventSource
+      };
+
+      // Initial state load
+      eventSource.addEventListener('initialState', (e) => {
+        const data = JSON.parse(e.data);
+        agents = {};
+        data.forEach(a => { agents[a.extensionId] = a; });
+        renderAll();
+        logEvent('SYSTEM', `Loaded ${data.length} agent(s)`);
+      });
+
+      // Real-time updates
+      eventSource.addEventListener('agentUpdate', (e) => {
+        const data = JSON.parse(e.data);
+        agents[data.extensionId] = data;
+        renderAgent(data.extensionId);
+        updateStats();
+
+        // Log the transition
+        if (data.previousStatus !== data.status) {
+          logEvent(data.name, `${data.previousStatus} → ${data.status}`, data.status);
+        }
+      });
+    }
+
+    // ─── Rendering ─────────────────────────────────
+
+    function renderAll() {
+      const grid = document.getElementById('agentGrid');
+      const empty = document.getElementById('emptyState');
+      const ids = Object.keys(agents);
+
+      if (ids.length === 0) {
+        grid.innerHTML = '';
+        empty.style.display = 'flex';
+        updateStats();
+        return;
+      }
+
+      empty.style.display = 'none';
+      grid.innerHTML = ids.map(id => agentCardHTML(agents[id])).join('');
+      updateStats();
+      startCallTimers();
+    }
+
+    function renderAgent(extensionId) {
+      const agent = agents[extensionId];
+      if (!agent) return;
+
+      const existing = document.getElementById(`agent-${extensionId}`);
+      if (existing) {
+        const temp = document.createElement('div');
+        temp.innerHTML = agentCardHTML(agent);
+        const newCard = temp.firstElementChild;
+
+        // Flash animation on state change
+        newCard.style.animation = 'none';
+        existing.replaceWith(newCard);
+        requestAnimationFrame(() => {
+          newCard.style.animation = '';
+        });
+      } else {
+        document.getElementById('agentGrid').insertAdjacentHTML('beforeend', agentCardHTML(agent));
+        document.getElementById('emptyState').style.display = 'none';
+      }
+
+      startCallTimers();
+      updateStats();
+    }
+
+    function agentCardHTML(a) {
+      const status = a.status || 'offline';
+      const hasCall = a.currentCall && a.currentCall.sessionId;
+      const stats = a.dailyStats || {};
+
+      let callHTML = '';
+      if (hasCall || ['onCall', 'ringing'].includes(status)) {
+        const c = a.currentCall || {};
+        callHTML = `
+          <div class="call-info">
+            <div class="call-row">
+              <span class="call-label">${c.direction || '—'}</span>
+              <span class="call-timer" id="timer-${a.extensionId}">00:00</span>
+            </div>
+            ${c.from ? `<div class="call-row"><span class="call-label">From</span><span class="call-value">${c.fromName || ''} ${c.from || ''}</span></div>` : ''}
+            ${c.to ? `<div class="call-row"><span class="call-label">To</span><span class="call-value">${c.to}</span></div>` : ''}
+          </div>`;
+      }
+
+      return `
+        <div class="agent-card" id="agent-${a.extensionId}" data-status="${status}">
+          <div class="agent-top">
+            <div>
+              <div class="agent-name">${a.name}</div>
+              <div style="margin-top:6px">
+                <span class="status-badge" data-status="${status}">
+                  <span class="status-dot"></span>
+                  ${formatStatus(status)}
+                </span>
+              </div>
+            </div>
+            <span class="agent-company">${a.company || 'TAG'}</span>
+          </div>
+          ${callHTML}
+          <div class="agent-stats">
+            <div class="mini-stat"><span class="label">Calls</span><span class="value">${stats.totalCalls || 0}</span></div>
+            <div class="mini-stat" style="color:var(--available)"><span class="label">Good</span><span class="value">${stats.goodCalls || 0}</span></div>
+            <div class="mini-stat" style="color:var(--oncall)"><span class="label">Bad</span><span class="value">${stats.badCalls || 0}</span></div>
+            <div class="mini-stat"><span class="label">Hot</span><span class="value">${stats.hot || 0}</span></div>
+            <div class="mini-stat"><span class="label">D1</span><span class="value">${stats.day1 || 0}</span></div>
+            <div class="mini-stat"><span class="label">Aged</span><span class="value">${stats.aged || 0}</span></div>
+          </div>
+          <div class="agent-meta">
+            <span class="meta-item">EX: ${a.exTelephonyStatus || '—'}</span>
+            <span class="meta-item">Pres: ${a.exPresenceStatus || '—'}</span>
+            <span class="meta-item">${a.hasWebhook ? '⚡ Webhook' : '⚠ No webhook'}</span>
+          </div>
+        </div>`;
+    }
+
+    function formatStatus(s) {
+      const map = {
+        available: 'Available',
+        onCall: 'On Call',
+        ringing: 'Ringing',
+        disposition: 'Disposition',
+        away: 'Away',
+        offline: 'Offline'
+      };
+      return map[s] || s;
+    }
+
+    // ─── Stats ─────────────────────────────────────
+
+    function updateStats() {
+      const all = Object.values(agents);
+      const byStatus = (s) => all.filter(a => a.status === s).length;
+
+      document.getElementById('statTotal').textContent = all.length;
+      document.getElementById('statAvailable').textContent = byStatus('available');
+      document.getElementById('statOnCall').textContent = byStatus('onCall') + byStatus('ringing');
+      document.getElementById('statDisposition').textContent = byStatus('disposition');
+      document.getElementById('statAway').textContent = byStatus('away') + byStatus('offline');
+      document.getElementById('statCalls').textContent = all.reduce((sum, a) => sum + (a.dailyStats?.totalCalls || 0), 0);
+    }
+
+    // ─── Call Timers ───────────────────────────────
+
+    function startCallTimers() {
+      // Update call duration timers every second
+      Object.values(agents).forEach(a => {
+        if (['onCall', 'ringing'].includes(a.status) && a.currentCall?.startTime) {
+          if (!callTimers[a.extensionId]) {
+            callTimers[a.extensionId] = true;
+          }
+        } else {
+          delete callTimers[a.extensionId];
+        }
+      });
+    }
+
+    setInterval(() => {
+      Object.values(agents).forEach(a => {
+        if (['onCall', 'ringing'].includes(a.status) && a.currentCall?.startTime) {
+          const el = document.getElementById(`timer-${a.extensionId}`);
+          if (el) {
+            const elapsed = Math.floor((Date.now() - new Date(a.currentCall.startTime).getTime()) / 1000);
+            const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const secs = (elapsed % 60).toString().padStart(2, '0');
+            el.textContent = `${mins}:${secs}`;
+          }
+        }
+      });
+    }, 1000);
+
+    // ─── Event Log ─────────────────────────────────
+
+    function logEvent(agent, msg, status) {
+      const log = document.getElementById('eventLog');
+      const time = new Date().toTimeString().split(' ')[0];
+
+      const row = document.createElement('div');
+      row.className = 'event-row flash';
+      row.innerHTML = `
+        <span class="event-time">${time}</span>
+        <span class="event-agent">${agent}</span>
+        <span class="event-msg">${msg}</span>
+      `;
+
+      // Insert at top
+      if (log.firstChild) {
+        log.insertBefore(row, log.firstChild);
+      } else {
+        log.appendChild(row);
+      }
+
+      // Remove flash after animation
+      setTimeout(() => row.classList.remove('flash'), 1500);
+
+      // Keep max 100 entries
+      while (log.children.length > 100) {
+        log.removeChild(log.lastChild);
+      }
+    }
+
+    // ─── Connection Badge ──────────────────────────
+
+    function setBadge(state, text) {
+      const badge = document.getElementById('connectionBadge');
+      badge.className = `connection-badge ${state}`;
+      badge.querySelector('span').textContent = text;
+    }
+
+    // ─── Actions ───────────────────────────────────
+
+    function openAddAgent() {
+      document.getElementById('addAgentModal').classList.add('open');
+      document.getElementById('inputExtId').focus();
+    }
+
+    function closeModal() {
+      document.getElementById('addAgentModal').classList.remove('open');
+    }
+
+    async function addAgent() {
+      const extensionId = document.getElementById('inputExtId').value.trim();
+      const name = document.getElementById('inputName').value.trim();
+      const company = document.getElementById('inputCompany').value;
+
+      if (!extensionId || !name) return alert('Extension ID and name are required');
+
+      try {
+        const resp = await fetch(`${API}/api/admin/agents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ extensionId, name, company })
+        });
+        const data = await resp.json();
+
+        if (data.success) {
+          closeModal();
+          logEvent('SYSTEM', `Added agent: ${name} (ext ${extensionId})`);
+          // SSE will pick up the new agent on next event, but let's refresh now
+          refreshAll();
+        } else {
+          alert(data.error || 'Failed to add agent');
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    async function refreshAll() {
+      try {
+        const resp = await fetch(`${API}/api/admin/agents`);
+        const data = await resp.json();
+        if (data.success) {
+          agents = {};
+          data.agents.forEach(a => { agents[a.extensionId] = a; });
+          renderAll();
+          logEvent('SYSTEM', 'Manual refresh');
+        }
+      } catch (err) {
+        logEvent('SYSTEM', 'Refresh failed: ' + err.message);
+      }
+    }
+
+    // ─── Clock ─────────────────────────────────────
+
+    function updateClock() {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ─── Init ──────────────────────────────────────
+
+    connectSSE();
+  </script>
+</body>
+</html>

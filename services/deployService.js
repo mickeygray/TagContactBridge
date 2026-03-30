@@ -1,60 +1,19 @@
 // services/deployService.js
 // ─────────────────────────────────────────────────────────────
-// Deploy service — builds React locally then SSH/SCPs the
-// build folder to EC2 instances.
-//
-// SAFETY FEATURES:
-//   - Atomic swap: unpack to temp dir, verify, then mv (no gap)
-//   - Permission fix: chown/chmod so Nginx can read everything
-//   - Post-deploy verification: curl the site, check for 200 + HTML
-//   - Auto-rollback: if verification fails, reverts immediately
-//   - Keeps last 3 backups for manual rollback
-//
-// FLOW:
-//   git push (local commits) → git pull (other machines) →
-//   npm run build (local) → tar → SCP → unpack to temp →
-//   verify temp → atomic mv swap → fix permissions →
-//   nginx reload → pm2 restart → verify live → done
-//   (if verify fails → auto rollback)
-//
-// STANDALONE:  node scripts/deploy.js deploy wynn
-// INTEGRATED:  mountDeployRoutes(app)
+// Deploy service — tells EC2 to pull from GitHub.
 // ─────────────────────────────────────────────────────────────
 
 const { NodeSSH } = require("node-ssh");
-const path = require("path");
 const fs = require("fs");
+const path = require("path");
 const { execSync, execFileSync } = require("child_process");
-const express = require("express");
 
-// ─── Safety Helpers ─────────────────────────────────────────
-
-/**
- * Escape a string for safe use in a remote shell command.
- * Wraps in single quotes, escaping any internal single quotes.
- */
 function shellEscape(val) {
   if (val === undefined || val === null) return "''";
   return "'" + String(val).replace(/'/g, "'\\''") + "'";
 }
 
-/**
- * Verify tar is available on this machine before we need it.
- */
-function checkTarAvailable() {
-  try {
-    execSync("tar --version", { stdio: "pipe" });
-    return true;
-  } catch {
-    throw new Error(
-      "tar is not available on this machine. Install tar or use Windows 10+ which includes it.",
-    );
-  }
-}
-
 const DEPLOY_SECRET = process.env.DEPLOY_SECRET || "";
-
-// ─── Site Config ─────────────────────────────────────────────
 
 const SITES = {
   wynn: {
@@ -62,10 +21,10 @@ const SITES = {
     host: process.env.DEPLOY_WYNN_HOST || "",
     user: process.env.DEPLOY_WYNN_USER || "ubuntu",
     pemPath: process.env.DEPLOY_WYNN_PEM || "",
-    remotePath: process.env.DEPLOY_WYNN_PATH || "/var/www/WynnTax/client",
-    localBuildPath: process.env.DEPLOY_WYNN_LOCAL_BUILD || "",
-    localRepoPath: process.env.DEPLOY_WYNN_REPO || "", // git repo root
-    pm2Process: process.env.DEPLOY_WYNN_PM2 || "all",
+    remotePath: process.env.DEPLOY_WYNN_PATH || "/var/www/WynnTax",
+    localRepoPath: process.env.DEPLOY_WYNN_REPO || "",
+    pm2Process: process.env.DEPLOY_WYNN_PM2 || "backend",
+    branch: process.env.DEPLOY_WYNN_BRANCH || "master",
     url: "https://www.wynntaxsolutions.com",
   },
   tag: {
@@ -73,16 +32,13 @@ const SITES = {
     host: process.env.DEPLOY_TAG_HOST || "",
     user: process.env.DEPLOY_TAG_USER || "ubuntu",
     pemPath: process.env.DEPLOY_TAG_PEM || "",
-    remotePath:
-      process.env.DEPLOY_TAG_PATH || "/var/www/TaxAdvocateGroup/client",
-    localBuildPath: process.env.DEPLOY_TAG_LOCAL_BUILD || "",
+    remotePath: process.env.DEPLOY_TAG_PATH || "/var/www/TaxAdvocateGroup",
     localRepoPath: process.env.DEPLOY_TAG_REPO || "",
-    pm2Process: process.env.DEPLOY_TAG_PM2 || "all",
+    pm2Process: process.env.DEPLOY_TAG_PM2 || "backend",
+    branch: process.env.DEPLOY_TAG_BRANCH || "master",
     url: "https://www.taxadvocategroup.com",
   },
 };
-
-// ─── Deploy State ────────────────────────────────────────────
 
 const deployHistory = {};
 
@@ -102,139 +58,64 @@ function logEvent(brand, event) {
   }
 }
 
-// ─── Local Helpers ───────────────────────────────────────────
-
-function countLocalPages(dir) {
-  let count = 0;
-  const walk = (d) => {
-    for (const f of fs.readdirSync(d, { withFileTypes: true })) {
-      if (f.isDirectory()) walk(path.join(d, f.name));
-      else if (f.name === "index.html") count++;
-    }
-  };
-  walk(dir);
-  return count;
-}
-
-// ═════════════════════════════════════════════════════════════
-// DEPLOY
-// ═════════════════════════════════════════════════════════════
-
 async function deployBuild(brand, opts = {}, onLog = console.log) {
   const site = SITES[brand];
   if (!site) throw new Error(`Unknown brand: ${brand}`);
-  if (!site.host)
-    throw new Error(
-      `No host configured for ${brand}. Set DEPLOY_${brand.toUpperCase()}_HOST`,
-    );
+  if (!site.host) throw new Error(`No host configured for ${brand}`);
   if (!site.pemPath || !fs.existsSync(site.pemPath)) {
-    throw new Error(
-      `PEM not found: ${site.pemPath}. Set DEPLOY_${brand.toUpperCase()}_PEM`,
-    );
+    throw new Error(`PEM not found: ${site.pemPath}`);
   }
 
-  const buildDir = opts.buildPath || site.localBuildPath;
-  const clientDir = buildDir ? path.resolve(buildDir, "..") : null;
-  const repoDir =
-    site.localRepoPath || (clientDir ? path.resolve(clientDir, "..") : null);
-  const skipBuild = opts.skipBuild || false;
-  const dryRun = opts.dryRun || false;
+  const repoDir = site.localRepoPath;
   const commitMsg = opts.commitMsg || null;
-  const pullFirst = opts.pull || !!commitMsg; // auto-enable git when committing
-
-  // Pre-flight: verify tar exists
-  checkTarAvailable();
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const backupName = `build-backup-${timestamp}`;
-  const tempName = `build-new-${timestamp}`;
+  const dryRun = opts.dryRun || false;
   const startTime = Date.now();
   const ssh = new NodeSSH();
-  let tarFile = null;
+  const branch = site.branch || "master";
+  const pm2Name = site.pm2Process || "backend";
 
-  // ── Pre-flight ───────────────────────────────────────────
+  const esc = {
+    path: shellEscape(site.remotePath),
+    pm2: shellEscape(pm2Name),
+    branch: shellEscape(branch),
+    url: shellEscape(site.url),
+  };
+
   onLog(`[DEPLOY:${brand}] ══════════════════════════════════════════`);
   onLog(`[DEPLOY:${brand}] Deploy: ${site.label}`);
+  onLog(`[DEPLOY:${brand}]   Host:     ${site.user}@${site.host}`);
+  onLog(`[DEPLOY:${brand}]   Remote:   ${site.remotePath}`);
+  onLog(`[DEPLOY:${brand}]   Branch:   ${branch}`);
+  onLog(`[DEPLOY:${brand}]   PM2:      ${pm2Name}`);
+  onLog(`[DEPLOY:${brand}]   Dry run:  ${dryRun}`);
   onLog(`[DEPLOY:${brand}] ══════════════════════════════════════════`);
-  onLog(`[DEPLOY:${brand}] Config:`);
-  onLog(`[DEPLOY:${brand}]   Host:       ${site.user}@${site.host}`);
-  onLog(`[DEPLOY:${brand}]   PEM:        ${site.pemPath}`);
-  onLog(`[DEPLOY:${brand}]   Remote:     ${site.remotePath}/build`);
-  onLog(`[DEPLOY:${brand}]   Local:      ${buildDir || "from build step"}`);
-  onLog(`[DEPLOY:${brand}]   Repo:       ${repoDir || "not set"}`);
-  onLog(`[DEPLOY:${brand}]   Pull:       ${pullFirst}`);
-  onLog(`[DEPLOY:${brand}]   Skip build: ${skipBuild}`);
-  onLog(`[DEPLOY:${brand}]   Dry run:    ${dryRun}`);
-  onLog(`[DEPLOY:${brand}]   PM2:        ${site.pm2Process || "all"}`);
-  onLog(`[DEPLOY:${brand}]   Timestamp:  ${timestamp}`);
 
   try {
-    // ── Step 0a: Git pull ────────────────────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    if (pullFirst) {
-      onLog(`[DEPLOY:${brand}] Step 0a: Git push + pull`);
+    // ── Step 1: Local git push ─────────────────────────────────
+    onLog(`[DEPLOY:${brand}] Step 1: Local git push`);
 
-      if (!repoDir || !fs.existsSync(path.join(repoDir, ".git"))) {
-        throw new Error(
-          `No .git found at ${repoDir}. Set DEPLOY_${brand.toUpperCase()}_REPO to the repo root, or make sure LOCAL_BUILD is inside a git repo.`,
-        );
-      }
-
-      onLog(`[DEPLOY:${brand}]   Repo: ${repoDir}`);
-
-      // Check for uncommitted changes
-      if (!commitMsg) {
-        // No commit message — stash any dirty state before pull
-        try {
-          const status = execSync("git status --porcelain", {
-            cwd: repoDir,
-            stdio: "pipe",
-            encoding: "utf8",
-          }).trim();
-
-          if (status) {
-            const changedCount = status.split("\n").length;
-            onLog(
-              `[DEPLOY:${brand}]   ⚠ ${changedCount} uncommitted change(s) detected`,
-            );
-            onLog(`[DEPLOY:${brand}]   Stashing local changes before pull...`);
-            execSync("git stash", { cwd: repoDir, stdio: "pipe" });
-            onLog(`[DEPLOY:${brand}]   ✓ Stashed`);
-          }
-        } catch (statusErr) {
-          onLog(
-            `[DEPLOY:${brand}]   ⚠ Could not check git status: ${statusErr.message}`,
-          );
-        }
-      }
-
-      // Get current branch
-      let branch = "unknown";
+    if (repoDir && fs.existsSync(path.join(repoDir, ".git"))) {
+      let localBranch = "master";
       try {
-        branch = execSync("git rev-parse --abbrev-ref HEAD", {
+        localBranch = execSync("git rev-parse --abbrev-ref HEAD", {
           cwd: repoDir,
           stdio: "pipe",
           encoding: "utf8",
         }).trim();
       } catch {}
-      onLog(`[DEPLOY:${brand}]   Branch: ${branch}`);
+      onLog(`[DEPLOY:${brand}]   Branch: ${localBranch}`);
 
-      // Commit if a message was provided
       if (commitMsg) {
         onLog(`[DEPLOY:${brand}]   Committing: "${commitMsg}"`);
         try {
-          // Stage all changes
           execSync("git add -A", { cwd: repoDir, stdio: "pipe" });
-
-          // Check if there's anything to commit
           const staged = execSync("git diff --cached --stat", {
             cwd: repoDir,
             stdio: "pipe",
             encoding: "utf8",
           }).trim();
-
           if (staged) {
-            const fileCount = staged.split("\n").length - 1; // last line is summary
+            const fileCount = staged.split("\n").length - 1;
             onLog(`[DEPLOY:${brand}]   Staged: ${fileCount} file(s)`);
             execFileSync("git", ["commit", "-m", commitMsg], {
               cwd: repoDir,
@@ -242,650 +123,411 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
             });
             onLog(`[DEPLOY:${brand}]   ✓ Committed`);
           } else {
-            onLog(
-              `[DEPLOY:${brand}]   No changes to commit (working tree clean)`,
-            );
-          }
-        } catch (commitErr) {
-          const stderr =
-            commitErr.stderr?.toString().slice(-300) || commitErr.message;
-          // "nothing to commit" is not an error
-          if (stderr.includes("nothing to commit")) {
             onLog(`[DEPLOY:${brand}]   No changes to commit`);
-          } else {
+          }
+        } catch (e) {
+          const stderr = e.stderr?.toString().slice(-300) || e.message;
+          if (!stderr.includes("nothing to commit"))
             throw new Error(`Git commit failed: ${stderr}`);
-          }
+          onLog(`[DEPLOY:${brand}]   No changes to commit`);
         }
       }
 
-      // Push any committed but unpushed changes
       try {
-        const unpushed = execSync(`git log origin/${branch}..HEAD --oneline`, {
-          cwd: repoDir,
-          stdio: "pipe",
-          encoding: "utf8",
-        }).trim();
-
-        if (unpushed) {
-          const commitCount = unpushed.split("\n").length;
-          onLog(
-            `[DEPLOY:${brand}]   ${commitCount} unpushed commit(s) — pushing...`,
-          );
-          execSync("git push", {
-            cwd: repoDir,
-            stdio: "pipe",
-            timeout: 30000,
-          });
-          onLog(`[DEPLOY:${brand}]   ✓ Pushed`);
-        } else {
-          onLog(`[DEPLOY:${brand}]   No unpushed commits`);
-        }
-      } catch (pushErr) {
-        const stderr =
-          pushErr.stderr?.toString().slice(-300) || pushErr.message;
-        throw new Error(`Git push failed: ${stderr}`);
-      }
-
-      // Pull (catches changes from other machines)
-      try {
-        const pullOutput = execSync("git pull --ff-only", {
-          cwd: repoDir,
-          stdio: "pipe",
-          encoding: "utf8",
-          timeout: 30000,
-        }).trim();
-
-        if (pullOutput.includes("Already up to date")) {
-          onLog(`[DEPLOY:${brand}]   ✓ Already up to date`);
-        } else {
-          // Show what changed
-          const lines = pullOutput.split("\n").slice(0, 5);
-          lines.forEach((l) => onLog(`[DEPLOY:${brand}]   ${l}`));
-          if (pullOutput.split("\n").length > 5) {
-            onLog(
-              `[DEPLOY:${brand}]   ... (${pullOutput.split("\n").length} lines total)`,
-            );
-          }
-          onLog(`[DEPLOY:${brand}]   ✓ Pulled latest`);
-        }
-      } catch (pullErr) {
-        const stderr =
-          pullErr.stderr?.toString().slice(-300) || pullErr.message;
-        throw new Error(`Git pull failed: ${stderr}`);
-      }
-
-      // Pop stash if we stashed (only when no commitMsg)
-      if (!commitMsg) {
-        try {
-          const stashList = execSync("git stash list", {
+        const unpushed = execSync(
+          `git log origin/${localBranch}..HEAD --oneline`,
+          {
             cwd: repoDir,
             stdio: "pipe",
             encoding: "utf8",
-          }).trim();
-          if (stashList) {
-            execSync("git stash pop", { cwd: repoDir, stdio: "pipe" });
-            onLog(
-              `[DEPLOY:${brand}]   ✓ Stash popped (local changes restored)`,
-            );
-          }
-        } catch {}
+          },
+        ).trim();
+        if (unpushed) {
+          const count = unpushed.split("\n").length;
+          onLog(`[DEPLOY:${brand}]   Pushing ${count} commit(s)...`);
+          execSync("git push", { cwd: repoDir, stdio: "pipe", timeout: 30000 });
+          onLog(`[DEPLOY:${brand}]   ✓ Pushed`);
+        } else {
+          onLog(`[DEPLOY:${brand}]   Already pushed`);
+        }
+      } catch (e) {
+        throw new Error(
+          `Git push failed: ${e.stderr?.toString().slice(-300) || e.message}`,
+        );
       }
 
-      // Log the commit we're deploying
       try {
-        const commitInfo = execSync('git log -1 --format="%h %s (%cr)"', {
+        const info = execSync('git log -1 --format="%h %s (%cr)"', {
           cwd: repoDir,
           stdio: "pipe",
           encoding: "utf8",
         }).trim();
-        onLog(`[DEPLOY:${brand}]   Deploying: ${commitInfo}`);
+        onLog(`[DEPLOY:${brand}]   Deploying: ${info}`);
       } catch {}
     } else {
       onLog(
-        `[DEPLOY:${brand}] Step 0a: Git push + pull skipped (no --pull flag)`,
-      );
-
-      // Still log the current commit if we can find the repo
-      if (repoDir && fs.existsSync(path.join(repoDir, ".git"))) {
-        try {
-          const commitInfo = execSync('git log -1 --format="%h %s (%cr)"', {
-            cwd: repoDir,
-            stdio: "pipe",
-            encoding: "utf8",
-          }).trim();
-          onLog(`[DEPLOY:${brand}]   Current: ${commitInfo}`);
-        } catch {}
-      }
-    }
-
-    // ── Step 0b: Local build ─────────────────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    if (!skipBuild) {
-      onLog(`[DEPLOY:${brand}] Step 0b: Local build`);
-
-      if (!clientDir || !fs.existsSync(path.join(clientDir, "package.json"))) {
-        throw new Error(
-          `No package.json at ${clientDir}. Set DEPLOY_${brand.toUpperCase()}_LOCAL_BUILD to client/build path.`,
-        );
-      }
-
-      onLog(`[DEPLOY:${brand}]   Dir: ${clientDir}`);
-      onLog(`[DEPLOY:${brand}]   Running: npm run build`);
-      const buildStart = Date.now();
-
-      try {
-        execSync("npm run build", {
-          cwd: clientDir,
-          stdio: "pipe",
-          timeout: 5 * 60 * 1000,
-          env: { ...process.env, CI: "false" },
-        });
-      } catch (buildErr) {
-        const stderr =
-          buildErr.stderr?.toString().slice(-500) || buildErr.message;
-        throw new Error(`Build failed: ${stderr}`);
-      }
-
-      const builtIndex = path.join(clientDir, "build", "index.html");
-      if (!fs.existsSync(builtIndex)) {
-        throw new Error(
-          "Build completed but no index.html — react-snap may have failed",
-        );
-      }
-
-      const localPages = countLocalPages(path.join(clientDir, "build"));
-      const buildSec = ((Date.now() - buildStart) / 1000).toFixed(1);
-      onLog(
-        `[DEPLOY:${brand}]   ✓ Build complete — ${localPages} pages in ${buildSec}s`,
-      );
-    } else {
-      onLog(`[DEPLOY:${brand}] Step 0b: Build skipped (--skip)`);
-    }
-
-    // Resolve final build path
-    const finalBuildDir = skipBuild ? buildDir : path.join(clientDir, "build");
-
-    if (!finalBuildDir || !fs.existsSync(finalBuildDir)) {
-      throw new Error(`Build dir not found: ${finalBuildDir}`);
-    }
-    if (!fs.existsSync(path.join(finalBuildDir, "index.html"))) {
-      throw new Error(`No index.html in ${finalBuildDir}`);
-    }
-    if (!fs.existsSync(path.join(finalBuildDir, "static"))) {
-      throw new Error(
-        `No static/ folder in ${finalBuildDir} — CSS/JS will be missing`,
+        `[DEPLOY:${brand}]   No local repo configured — assuming already pushed`,
       );
     }
 
-    const localPageCount = countLocalPages(finalBuildDir);
-    onLog(
-      `[DEPLOY:${brand}]   Verified: ${localPageCount} pages, static/ present`,
-    );
-
-    // ── Step 1: Tar ──────────────────────────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 1: Zip build`);
-    onLog(`[DEPLOY:${brand}]   Source: ${finalBuildDir}`);
-
-    tarFile = path.join(
-      require("os").tmpdir(),
-      `deploy-${brand}-${timestamp}.tar.gz`,
-    );
-    execSync(`tar -czf "${tarFile}" -C "${finalBuildDir}" .`, {
-      stdio: "pipe",
-    });
-    const tarSize = (fs.statSync(tarFile).size / 1024 / 1024).toFixed(1);
-    onLog(`[DEPLOY:${brand}]   ✓ Created: ${tarSize} MB`);
-
-    // ── Step 2: SSH connect ──────────────────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
+    // ── Step 2: SSH connect ────────────────────────────────────
     onLog(`[DEPLOY:${brand}] Step 2: SSH connect`);
-    onLog(`[DEPLOY:${brand}]   Host: ${site.user}@${site.host}`);
-    onLog(`[DEPLOY:${brand}]   Key:  ${site.pemPath}`);
-
     await ssh.connect({
       host: site.host,
       username: site.user,
       privateKeyPath: site.pemPath,
-      readyTimeout: 15000,
+      readyTimeout: 30000,
     });
     onLog(`[DEPLOY:${brand}]   ✓ Connected`);
 
-    // ── Step 3: Upload ───────────────────────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 3: Upload to EC2`);
-    onLog(`[DEPLOY:${brand}]   Remote: /tmp/build-deploy.tar.gz`);
-
-    await ssh.putFile(tarFile, "/tmp/build-deploy.tar.gz");
-    onLog(`[DEPLOY:${brand}]   ✓ Uploaded (${tarSize} MB)`);
-
-    // ── Step 4: Unpack to temp dir + verify ──────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 4: Unpack + verify on EC2`);
-    onLog(`[DEPLOY:${brand}]   Temp dir: ${tempName}`);
-
-    const escapedRemotePath = shellEscape(site.remotePath);
-    const escapedTempName = shellEscape(tempName);
-    const escapedBackupName = shellEscape(backupName);
-    const escapedPm2 = shellEscape(site.pm2Process || "all");
-    const escapedUrl = shellEscape(site.url);
-
-    const unpackResult = await ssh.execCommand(`
-      set -e
-      cd ${escapedRemotePath}
-
-      # Clean any leftover temp dir
-      sudo rm -rf ${escapedTempName}
-
-      # Unpack to temp
-      sudo mkdir ${escapedTempName}
-      sudo tar -xzf /tmp/build-deploy.tar.gz -C ${escapedTempName}
-      sudo rm /tmp/build-deploy.tar.gz
-
-      # Verify temp build is valid
-      if [ ! -f ${escapedTempName}/index.html ]; then
-        echo "VERIFY:FAIL:no index.html"
-        exit 1
-      fi
-      if [ ! -d ${escapedTempName}/static ]; then
-        echo "VERIFY:FAIL:no static dir"
-        exit 1
-      fi
-
-      # Count pages in temp
-      PAGE_COUNT=$(find ${escapedTempName} -name 'index.html' | wc -l)
-      CSS_COUNT=$(find ${escapedTempName}/static/css -name '*.css' 2>/dev/null | wc -l)
-      JS_COUNT=$(find ${escapedTempName}/static/js -name '*.js' 2>/dev/null | wc -l)
-      echo "VERIFY:OK"
-      echo "PAGES:$PAGE_COUNT"
-      echo "CSS:$CSS_COUNT"
-      echo "JS:$JS_COUNT"
+    // ── Step 3: Current state ──────────────────────────────────
+    onLog(`[DEPLOY:${brand}] Step 3: Current state`);
+    const stateResult = await ssh.execCommand(`
+      cd ${esc.path}
+      CURRENT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      CURRENT_MSG=$(git log -1 --format="%s" 2>/dev/null || echo "unknown")
+      BEHIND=$(git fetch origin ${esc.branch} 2>/dev/null && git rev-list HEAD..origin/${esc.branch} --count 2>/dev/null || echo "?")
+      INCOMING=$(git log HEAD..origin/${esc.branch} --oneline 2>/dev/null || echo "")
+      echo "CURRENT:$CURRENT"
+      echo "CURRENT_MSG:$CURRENT_MSG"
+      echo "BEHIND:$BEHIND"
+      echo "INCOMING:$INCOMING"
     `);
 
-    if (
-      unpackResult.code !== 0 ||
-      unpackResult.stdout.includes("VERIFY:FAIL")
-    ) {
-      const reason =
-        (unpackResult.stdout.match(/VERIFY:FAIL:(.+)/) || [])[1] ||
-        unpackResult.stderr;
-      await ssh
-        .execCommand(`sudo rm -rf ${escapedRemotePath}/${escapedTempName}`)
-        .catch(() => {});
-      throw new Error(`Remote verification failed: ${reason}`);
-    }
+    const stateOutput = stateResult.stdout;
+    const getState = (key) =>
+      (stateOutput.match(new RegExp(`${key}:(.+)`)) || [])[1]?.trim() || "";
+    const currentSha = getState("CURRENT");
+    const currentMsg = getState("CURRENT_MSG");
+    const behind = getState("BEHIND");
 
-    const unpackOutput = unpackResult.stdout;
-    const remotePages = parseInt(
-      (unpackOutput.match(/PAGES:(\d+)/) || [])[1] || "0",
-    );
-    const cssCount = parseInt(
-      (unpackOutput.match(/CSS:(\d+)/) || [])[1] || "0",
-    );
-    const jsCount = parseInt((unpackOutput.match(/JS:(\d+)/) || [])[1] || "0");
+    onLog(`[DEPLOY:${brand}]   Current:  ${currentSha} — ${currentMsg}`);
+    onLog(`[DEPLOY:${brand}]   Behind:   ${behind} commit(s)`);
 
-    onLog(
-      `[DEPLOY:${brand}]   ✓ Verified: ${remotePages} pages, ${cssCount} CSS, ${jsCount} JS`,
-    );
-
-    // Sanity check: remote page count should match local
-    if (localPageCount > 0 && remotePages < localPageCount * 0.5) {
-      await ssh
-        .execCommand(`sudo rm -rf ${escapedRemotePath}/${escapedTempName}`)
-        .catch(() => {});
-      throw new Error(
-        `Page count mismatch: local=${localPageCount} remote=${remotePages}. Possible corrupt upload.`,
-      );
-    }
-
-    // ── DRY RUN EXIT ─────────────────────────────────────────
-    if (dryRun) {
-      onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-      onLog(`[DEPLOY:${brand}] DRY RUN — All checks passed, cleaning up`);
-      onLog(`[DEPLOY:${brand}]   Local build:  ✓ ${localPageCount} pages`);
-      onLog(`[DEPLOY:${brand}]   Upload:       ✓ ${tarSize} MB`);
-      onLog(
-        `[DEPLOY:${brand}]   Remote unpack:✓ ${remotePages} pages, ${cssCount} CSS, ${jsCount} JS`,
-      );
-      onLog(
-        `[DEPLOY:${brand}]   Page match:   ✓ local=${localPageCount} remote=${remotePages}`,
-      );
-      onLog(`[DEPLOY:${brand}]   Removing temp folder on EC2...`);
-
-      await ssh.execCommand(
-        `sudo rm -rf ${escapedRemotePath}/${escapedTempName}`,
-      );
-      onLog(`[DEPLOY:${brand}]   ✓ Temp folder cleaned`);
-
-      fs.unlinkSync(tarFile);
-      onLog(`[DEPLOY:${brand}]   ✓ Local tar cleaned`);
-
+    if (behind === "0") {
+      onLog(`[DEPLOY:${brand}]   Already up to date — nothing to deploy`);
+      ssh.dispose();
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-      onLog(
-        `[DEPLOY:${brand}] ✓ DRY RUN complete in ${duration}s — no changes made to live site`,
-      );
+      return {
+        ok: true,
+        brand,
+        upToDate: true,
+        currentSha,
+        duration: `${duration}s`,
+        url: site.url,
+      };
+    }
 
-      const result = {
+    if (dryRun) {
+      onLog(`[DEPLOY:${brand}] DRY RUN — would deploy ${behind} commit(s)`);
+      ssh.dispose();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      return {
         ok: true,
         dryRun: true,
         brand,
-        pageCount: remotePages,
-        cssFiles: cssCount,
-        jsFiles: jsCount,
-        localPages: localPageCount,
+        currentSha,
+        behind: parseInt(behind) || 0,
         duration: `${duration}s`,
-        timestamp,
         url: site.url,
-        message: "All checks passed. Run without --dry to deploy for real.",
       };
-      logEvent(brand, { action: "dry-run", ...result });
-      return result;
     }
 
-    // ── Step 5: Atomic swap ──────────────────────────────────
-    // Two mv operations = near-instant, no gap for broken CSS
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 5: Atomic swap`);
-    onLog(`[DEPLOY:${brand}]   ${tempName} → build (backup → ${backupName})`);
-
-    const swapResult = await ssh.execCommand(`
-      set -e
-      cd ${escapedRemotePath}
-
-      # Atomic swap: backup old, move new into place
-      if [ -d build ]; then
-        sudo mv build ${escapedBackupName}
-        echo "BACKUP:${backupName}"
-      fi
-      sudo mv ${escapedTempName} build
-
-      echo "SWAP:OK"
-    `);
-
-    if (swapResult.code !== 0 || !swapResult.stdout.includes("SWAP:OK")) {
-      throw new Error(
-        `Atomic swap failed: ${swapResult.stderr || swapResult.stdout}`,
-      );
-    }
-
-    const didBackup = swapResult.stdout.includes("BACKUP:");
+    // ── Step 4: Deploy ─────────────────────────────────────────
+    onLog(`[DEPLOY:${brand}] Step 4: Deploy`);
     onLog(
-      `[DEPLOY:${brand}]   ✓ Swap complete${didBackup ? ` (old → ${backupName})` : " (no previous build)"}`,
+      `[DEPLOY:${brand}]   pm2 stop → git fetch → reset --hard → clean → npm install → pm2 start`,
     );
 
-    // ── Step 6: Permissions + Nginx + PM2 ────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 6: Permissions, Nginx, PM2`);
+    const deployResult = await ssh.execCommand(
+      `
+      set -e
+      cd ${esc.path}
 
-    const serviceResult = await ssh.execCommand(`
-      cd ${escapedRemotePath}
+      PREV_SHA=$(git rev-parse HEAD)
+      echo "PREV_SHA:$PREV_SHA"
 
-      # Fix permissions so Nginx can read
-      sudo chmod -R 755 build/
-      sudo chown -R www-data:www-data build/ 2>/dev/null && echo "PERMS:fixed" || echo "PERMS:skipped (no sudo)"
+      # Stop the specific pm2 process — no || true so failure is visible
+      pm2 stop ${esc.pm2} 2>/dev/null || sudo -u ubuntu pm2 stop ${esc.pm2} 2>/dev/null || echo "PM2_STOP_WARN:process may not have been running"
+      echo "PM2:stopped"
+
+      # Fetch + hard reset + clean
+      sudo chown -R ubuntu:ubuntu ${esc.path}
+      git fetch origin ${esc.branch}
+      git reset --hard origin/${esc.branch}
+      git clean -fd
+      echo "GIT:reset"
+
+      NEW_SHA=$(git rev-parse --short HEAD)
+      NEW_MSG=$(git log -1 --format="%s")
+      echo "NEW_SHA:$NEW_SHA"
+      echo "NEW_MSG:$NEW_MSG"
+
+      # npm install if package.json changed
+      if ! git diff --quiet $PREV_SHA HEAD -- package.json package-lock.json 2>/dev/null; then
+        echo "PACKAGES:changed"
+        npm install --production 2>&1 | tail -5
+        echo "NPM:installed"
+      else
+        echo "PACKAGES:unchanged"
+        echo "NPM:skipped"
+      fi
+
+      # Fix permissions
+      if [ -d client/build ]; then
+        sudo chmod -R 755 client/build/ 2>/dev/null || true
+        sudo chown -R www-data:www-data client/build/ 2>/dev/null || true
+        echo "PERMS:fixed"
+      else
+        echo "PERMS:no-build-dir"
+      fi
 
       # Reload Nginx
-      sudo nginx -s reload 2>/dev/null && echo "NGINX:reloaded" || sudo systemctl reload nginx 2>/dev/null && echo "NGINX:reloaded" || echo "NGINX:skipped"
+      sudo nginx -s reload 2>/dev/null || sudo systemctl reload nginx 2>/dev/null || true
+      echo "NGINX:reloaded"
 
-      # Restart PM2
-      sudo -u ubuntu pm2 restart ${escapedPm2} 2>/dev/null && echo "PM2:restarted" || pm2 restart ${escapedPm2} 2>/dev/null && echo "PM2:restarted" || echo "PM2:skipped"
+      # Start PM2 — try each method, fail loudly if all fail
+      pm2 start ${esc.pm2} 2>/dev/null \
+        || sudo -u ubuntu pm2 start ${esc.pm2} 2>/dev/null \
+        || pm2 restart ${esc.pm2} 2>/dev/null \
+        || { echo "PM2_START_FAILED:true"; exit 1; }
 
-      # Cleanup old backups (keep last 3)
-      sudo ls -dt build-backup-* 2>/dev/null | tail -n +4 | sudo xargs rm -rf 2>/dev/null || true
-      BACKUP_COUNT=$(ls -d build-backup-* 2>/dev/null | wc -l)
-      echo "BACKUPS_KEPT:$BACKUP_COUNT"
-    `);
+      # Wait for PM2 to settle
+      sleep 3
 
-    const svcOutput = serviceResult.stdout;
-    const permsStatus = (svcOutput.match(/PERMS:(.+)/) || [])[1] || "unknown";
-    const nginxStatus = (svcOutput.match(/NGINX:(\w+)/) || [])[1] || "unknown";
-    const pm2Status = (svcOutput.match(/PM2:(\w+)/) || [])[1] || "unknown";
-    const backupsKept = (svcOutput.match(/BACKUPS_KEPT:(\d+)/) || [])[1] || "?";
+      # ── FIX: Check specifically for THIS process, not all processes ──
+      PM2_BACKEND_ONLINE=$(pm2 list 2>/dev/null | grep -E "${pm2Name}.*online" | wc -l | tr -d ' ')
+      PM2_ALL_ONLINE=$(pm2 list 2>/dev/null | grep -c "online" || echo "0")
+      echo "PM2_BACKEND_ONLINE:$PM2_BACKEND_ONLINE"
+      echo "PM2_ALL_ONLINE:$PM2_ALL_ONLINE"
 
-    onLog(`[DEPLOY:${brand}]   Permissions: ${permsStatus}`);
-    onLog(`[DEPLOY:${brand}]   Nginx:       ${nginxStatus}`);
-    onLog(`[DEPLOY:${brand}]   PM2:         ${pm2Status}`);
-    onLog(`[DEPLOY:${brand}]   Backups:     ${backupsKept} kept`);
+      # Count build files
+      PAGE_COUNT=$(find client/build -name 'index.html' 2>/dev/null | wc -l)
+      CSS_COUNT=$(find client/build/static/css -name '*.css' 2>/dev/null | wc -l)
+      JS_COUNT=$(find client/build/static/js -name '*.js' 2>/dev/null | wc -l)
+      echo "PAGES:$PAGE_COUNT"
+      echo "CSS:$CSS_COUNT"
+      echo "JS:$JS_COUNT"
+    `.replace("${pm2Name}", pm2Name),
+    );
 
-    // ── Step 7: Post-deploy verification ─────────────────────
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] Step 7: Post-deploy verification`);
-    onLog(`[DEPLOY:${brand}]   Checking: ${site.url}`);
+    const output = deployResult.stdout;
+    const get = (key) =>
+      (output.match(new RegExp(`${key}:(.+)`)) || [])[1]?.trim() || "";
 
-    let siteOk = false;
-    let verifyError = "";
+    const prevSha = get("PREV_SHA")?.slice(0, 7) || currentSha;
+    const newSha = get("NEW_SHA");
+    const newMsg = get("NEW_MSG");
+    const packages = get("PACKAGES");
+    const npm = get("NPM");
+    const perms = get("PERMS");
+    const nginx = get("NGINX");
+    // ── FIX: Use per-process check, not total count ──
+    const pm2BackendOnline = parseInt(get("PM2_BACKEND_ONLINE") || "0");
+    const pm2AllOnline = parseInt(get("PM2_ALL_ONLINE") || "0");
+    const pm2StartFailed = output.includes("PM2_START_FAILED:true");
+    const pages = parseInt(get("PAGES") || "0");
+    const css = parseInt(get("CSS") || "0");
+    const js = parseInt(get("JS") || "0");
 
-    // Wait a moment for Nginx/PM2 to finish restarting
-    await new Promise((r) => setTimeout(r, 3000));
+    onLog(`[DEPLOY:${brand}]   Previous:       ${prevSha}`);
+    onLog(`[DEPLOY:${brand}]   Now:            ${newSha} — ${newMsg}`);
+    onLog(`[DEPLOY:${brand}]   Packages:       ${packages}`);
+    onLog(`[DEPLOY:${brand}]   NPM:            ${npm}`);
+    onLog(`[DEPLOY:${brand}]   Permissions:    ${perms}`);
+    onLog(`[DEPLOY:${brand}]   Nginx:          ${nginx}`);
+    onLog(
+      `[DEPLOY:${brand}]   ${pm2Name} online: ${pm2BackendOnline ? "✓ YES" : "✗ NO"} (${pm2AllOnline} total online)`,
+    );
+    onLog(
+      `[DEPLOY:${brand}]   Build:          ${pages} pages, ${css} CSS, ${js} JS`,
+    );
 
-    try {
-      // First: disk-level check — verify CSS/JS files exist on disk after swap
-      const diskCheck = await ssh.execCommand(`
-        cd ${escapedRemotePath}/build
-        CSS_EXISTS=$(find static/css -name '*.css' 2>/dev/null | head -1)
-        JS_EXISTS=$(find static/js -name '*.js' 2>/dev/null | head -1)
-        echo "DISK_CSS:$CSS_EXISTS"
-        echo "DISK_JS:$JS_EXISTS"
-      `);
-      const diskCss =
-        (diskCheck.stdout.match(/DISK_CSS:(.+)/) || [])[1]?.trim() || "";
-      const diskJs =
-        (diskCheck.stdout.match(/DISK_JS:(.+)/) || [])[1]?.trim() || "";
-
-      if (!diskCss || !diskJs) {
-        verifyError = `Disk check failed: CSS=${diskCss || "MISSING"} JS=${diskJs || "MISSING"}`;
-      } else {
-        onLog(`[DEPLOY:${brand}]   Disk check: CSS ✓ JS ✓`);
-
-        // Second: HTTP check
-        const verifyResult = await ssh.execCommand(
-          `curl -s -o /dev/null -w "%{http_code}" --max-time 10 ${escapedUrl}`,
-        );
-        const httpStatus = verifyResult.stdout.trim();
-        onLog(`[DEPLOY:${brand}]   HTTP status: ${httpStatus}`);
-
-        if (httpStatus === "200") {
-          const htmlCheck = await ssh.execCommand(
-            `curl -s --max-time 10 ${escapedUrl} | grep -c 'static/css' || echo "0"`,
-          );
-          const cssRefs = parseInt(htmlCheck.stdout.trim() || "0");
-          onLog(`[DEPLOY:${brand}]   CSS references in HTML: ${cssRefs}`);
-
-          if (cssRefs > 0) {
-            siteOk = true;
-            onLog(`[DEPLOY:${brand}]   ✓ Site is live and CSS is loading`);
-          } else {
-            verifyError =
-              "HTML returned 200 but no CSS references found — possible broken build";
-          }
-        } else {
-          verifyError = `Site returned HTTP ${httpStatus} instead of 200`;
-        }
+    if (deployResult.stderr) {
+      const errLines = deployResult.stderr.trim().split("\n").slice(-5);
+      for (const line of errLines) {
+        if (line.trim()) onLog(`[DEPLOY:${brand}]   stderr: ${line}`);
       }
-    } catch (err) {
-      verifyError = `Verification failed: ${err.message}`;
     }
 
-    // ── Auto-rollback if verification failed ─────────────────
-    if (!siteOk && didBackup) {
-      onLog(`[DEPLOY:${brand}]   ✗ ${verifyError}`);
-      onLog(`[DEPLOY:${brand}]   ⚠ AUTO-ROLLBACK: reverting to ${backupName}`);
+    // ── Step 5: Verify ─────────────────────────────────────────
+    onLog(`[DEPLOY:${brand}] Step 5: Verify`);
 
-      const rollbackResult = await ssh.execCommand(`
-        set -e
-        cd ${escapedRemotePath}
-        sudo rm -rf build
-        sudo mv ${escapedBackupName} build
-        sudo chmod -R 755 build/
-        sudo chown -R www-data:www-data build/ 2>/dev/null || true
-        sudo nginx -s reload 2>/dev/null || sudo systemctl reload nginx 2>/dev/null || true
-        sudo -u ubuntu pm2 restart ${escapedPm2} 2>/dev/null || pm2 restart ${escapedPm2} 2>/dev/null || true
-        echo "ROLLBACK:OK"
-      `);
+    if (pages > 0 && css > 0 && js > 0) {
+      onLog(`[DEPLOY:${brand}]   Disk: ✓ ${pages} pages, ${css} CSS, ${js} JS`);
+    } else {
+      onLog(`[DEPLOY:${brand}]   Disk: ⚠ pages=${pages} css=${css} js=${js}`);
+    }
 
-      if (rollbackResult.stdout.includes("ROLLBACK:OK")) {
-        onLog(`[DEPLOY:${brand}]   ✓ Rolled back successfully`);
-        onLog(
-          `[DEPLOY:${brand}]   Site should be restored to previous version`,
-        );
-      } else {
-        onLog(
-          `[DEPLOY:${brand}]   ✗ Rollback may have failed: ${rollbackResult.stderr}`,
-        );
-      }
-
-      throw new Error(
-        `Deploy verification failed (auto-rolled back): ${verifyError}`,
-      );
-    } else if (!siteOk && !didBackup) {
-      onLog(`[DEPLOY:${brand}]   ⚠ ${verifyError}`);
+    // Give PM2 a second chance if not online yet
+    let finalBackendOnline = pm2BackendOnline;
+    if (finalBackendOnline === 0 && !pm2StartFailed) {
       onLog(
-        `[DEPLOY:${brand}]   ⚠ No backup to rollback to — this was the first deploy`,
+        `[DEPLOY:${brand}]   ${pm2Name} not online yet — waiting 5 more seconds...`,
+      );
+      await new Promise((r) => setTimeout(r, 5000));
+      const pm2Retry = await ssh.execCommand(
+        `pm2 list 2>/dev/null | grep -E "${pm2Name}.*online" | wc -l | tr -d ' '`,
+      );
+      finalBackendOnline = parseInt(pm2Retry.stdout.trim() || "0");
+    }
+
+    if (finalBackendOnline > 0) {
+      onLog(`[DEPLOY:${brand}]   PM2: ✓ ${pm2Name} is online`);
+    } else {
+      onLog(
+        `[DEPLOY:${brand}]   PM2: ✗ ${pm2Name} is NOT online — initiating rollback`,
       );
     }
 
-    // ── Done ─────────────────────────────────────────────────
-    // Cleanup local tar
-    fs.unlinkSync(tarFile);
+    // Auto-rollback if the named process is down
+    if (finalBackendOnline === 0) {
+      onLog(
+        `[DEPLOY:${brand}]   ⚠ AUTO-ROLLBACK to ${prevSha} (${pm2Name} not online)`,
+      );
 
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
+      await ssh.execCommand(`
+        cd ${esc.path}
+        pm2 stop ${esc.pm2} 2>/dev/null || true
+        sudo chown -R ubuntu:ubuntu ${esc.path}
+        git reset --hard ${shellEscape(prevSha)}
+        git clean -fd
+        sudo chmod -R 755 client/build/ 2>/dev/null || true
+        sudo chown -R www-data:www-data client/build/ 2>/dev/null || true
+        sudo nginx -s reload 2>/dev/null || true
+        pm2 start ${esc.pm2} 2>/dev/null || pm2 restart ${esc.pm2} 2>/dev/null || true
+      `);
+
+      onLog(`[DEPLOY:${brand}]   ✓ Rolled back to ${prevSha}`);
+      throw new Error(
+        `Deploy failed — ${pm2Name} not online (auto-rolled back)`,
+      );
+    }
+
+    // ── Done ───────────────────────────────────────────────────
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    onLog(`[DEPLOY:${brand}] ✓ All steps complete in ${duration}s`);
+    onLog(`[DEPLOY:${brand}] ✓ Deploy complete in ${duration}s`);
+    onLog(`[DEPLOY:${brand}]   ${prevSha} → ${newSha}`);
 
     const result = {
       ok: true,
       brand,
-      backup: didBackup ? backupName : null,
-      pageCount: remotePages,
-      cssFiles: cssCount,
-      jsFiles: jsCount,
-      nginx: nginxStatus,
-      pm2: pm2Status,
-      permissions: permsStatus,
-      verified: siteOk,
+      prevSha,
+      newSha,
+      newMsg,
+      packagesChanged: packages === "changed",
+      pm2Online: finalBackendOnline,
+      pageCount: pages,
+      cssFiles: css,
+      jsFiles: js,
+      verified: finalBackendOnline > 0,
       duration: `${duration}s`,
-      timestamp,
       url: site.url,
     };
 
     deployHistory[brand] = { ...getStatus(brand), lastDeploy: result };
     logEvent(brand, { action: "deploy", ...result });
-
     return result;
   } catch (err) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    onLog(`[DEPLOY:${brand}] ──────────────────────────────────────────`);
-    onLog(`[DEPLOY:${brand}] ✗ FAILED after ${duration}s`);
-    onLog(`[DEPLOY:${brand}] ✗ Error: ${err.message}`);
-    onLog(`[DEPLOY:${brand}] ══════════════════════════════════════════`);
+    onLog(`[DEPLOY:${brand}] ✗ FAILED after ${duration}s: ${err.message}`);
     logEvent(brand, { action: "deploy-failed", error: err.message, duration });
-
-    // Cleanup local tar if it exists
-    if (tarFile) {
-      try {
-        fs.unlinkSync(tarFile);
-      } catch {}
-    }
-
     throw err;
   } finally {
     ssh.dispose();
   }
 }
 
-// ═════════════════════════════════════════════════════════════
-// ROLLBACK
-// ═════════════════════════════════════════════════════════════
-
 async function rollbackBuild(brand, onLog = console.log) {
   const site = SITES[brand];
   if (!site) throw new Error(`Unknown brand: ${brand}`);
   if (!site.host) throw new Error(`No host configured for ${brand}`);
 
+  const pm2Name = site.pm2Process || "backend";
   const ssh = new NodeSSH();
+  const esc = {
+    path: shellEscape(site.remotePath),
+    pm2: shellEscape(pm2Name),
+    url: shellEscape(site.url),
+  };
 
   try {
-    onLog(`[ROLLBACK:${brand}] Connecting to ${site.user}@${site.host}...`);
+    onLog(`[ROLLBACK:${brand}] Connecting...`);
     await ssh.connect({
       host: site.host,
       username: site.user,
       privateKeyPath: site.pemPath,
-      readyTimeout: 15000,
+      readyTimeout: 30000,
     });
     onLog(`[ROLLBACK:${brand}] ✓ Connected`);
 
-    onLog(`[ROLLBACK:${brand}] Finding latest backup...`);
-    const escapedPath = shellEscape(site.remotePath);
-    const escapedPm2 = shellEscape(site.pm2Process || "all");
-
-    const result = await ssh.execCommand(`
+    const result = await ssh.execCommand(
+      `
       set -e
-      cd ${escapedPath}
+      cd ${esc.path}
 
-      # Find latest backup
-      LATEST=$(ls -dt build-backup-* 2>/dev/null | head -1)
-      if [ -z "$LATEST" ]; then
-        echo "ERROR:no backups found"
+      CURRENT=$(git rev-parse --short HEAD)
+      echo "CURRENT:$CURRENT"
+
+      PREV=$(git rev-parse --short HEAD~1 2>/dev/null)
+      PREV_MSG=$(git log -1 --format="%s" HEAD~1 2>/dev/null)
+      if [ -z "$PREV" ]; then
+        echo "ERROR:no previous commit"
         exit 1
       fi
+      echo "TARGET:$PREV"
+      echo "TARGET_MSG:$PREV_MSG"
 
-      echo "RESTORING:$LATEST"
+      pm2 stop ${esc.pm2} 2>/dev/null || true
+      sudo chown -R ubuntu:ubuntu ${esc.path}
+      git reset --hard $PREV
+      git clean -fd
 
-      # Save current broken build just in case
-      if [ -d build ]; then
-        sudo mv build build-broken-$(date +%Y%m%d-%H%M%S)
+      if [ -d client/build ]; then
+        sudo chmod -R 755 client/build/
+        sudo chown -R www-data:www-data client/build/ 2>/dev/null || true
       fi
 
-      # Atomic: move backup into place
-      sudo mv "$LATEST" build
+      sudo nginx -s reload 2>/dev/null || sudo systemctl reload nginx 2>/dev/null || true
+      pm2 start ${esc.pm2} 2>/dev/null || pm2 restart ${esc.pm2} 2>/dev/null || true
 
-      # Fix permissions
-      sudo chmod -R 755 build/
-      sudo chown -R www-data:www-data build/ 2>/dev/null || true
-
-      # Count pages
-      PAGE_COUNT=$(find build -name 'index.html' | wc -l)
+      sleep 2
+      PM2_BACKEND_ONLINE=$(pm2 list 2>/dev/null | grep -E "${pm2Name}.*online" | wc -l | tr -d ' ')
+      PAGE_COUNT=$(find client/build -name 'index.html' 2>/dev/null | wc -l)
+      echo "PM2_BACKEND_ONLINE:$PM2_BACKEND_ONLINE"
       echo "PAGES:$PAGE_COUNT"
+    `.replace("${pm2Name}", pm2Name),
+    );
 
-      # Restart services
-      sudo nginx -s reload 2>/dev/null && echo "NGINX:reloaded" || sudo systemctl reload nginx 2>/dev/null && echo "NGINX:reloaded" || echo "NGINX:skipped"
-      sudo -u ubuntu pm2 restart ${escapedPm2} 2>/dev/null && echo "PM2:restarted" || pm2 restart ${escapedPm2} 2>/dev/null && echo "PM2:restarted" || echo "PM2:skipped"
-
-      # Cleanup broken builds
-      sudo ls -dt build-broken-* 2>/dev/null | tail -n +2 | sudo xargs rm -rf 2>/dev/null || true
-    `);
-
-    if (result.code !== 0 || result.stdout.includes("ERROR:")) {
-      throw new Error(
-        result.stdout.includes("ERROR:")
-          ? "No backups found on server"
-          : result.stderr,
-      );
+    if (result.stdout.includes("ERROR:")) {
+      throw new Error("No previous commit to rollback to");
     }
 
-    const restored =
-      (result.stdout.match(/RESTORING:(.+)/) || [])[1] || "unknown";
-    const pageCount = parseInt(
-      (result.stdout.match(/PAGES:(\d+)/) || [])[1] || "0",
-    );
-    const nginxStatus =
-      (result.stdout.match(/NGINX:(\w+)/) || [])[1] || "unknown";
-    const pm2Status = (result.stdout.match(/PM2:(\w+)/) || [])[1] || "unknown";
+    const output = result.stdout;
+    const get = (key) =>
+      (output.match(new RegExp(`${key}:(.+)`)) || [])[1]?.trim() || "";
 
-    onLog(`[ROLLBACK:${brand}] ✓ Restored: ${restored}`);
-    onLog(`[ROLLBACK:${brand}]   Pages: ${pageCount}`);
-    onLog(`[ROLLBACK:${brand}]   Nginx: ${nginxStatus}`);
-    onLog(`[ROLLBACK:${brand}]   PM2:   ${pm2Status}`);
+    const current = get("CURRENT");
+    const target = get("TARGET");
+    const targetMsg = get("TARGET_MSG");
+    const pm2BackendOnline = parseInt(get("PM2_BACKEND_ONLINE") || "0");
+    const pages = parseInt(get("PAGES") || "0");
+
+    onLog(`[ROLLBACK:${brand}] ✓ Rolled back: ${current} → ${target}`);
+    onLog(`[ROLLBACK:${brand}]   Commit: ${targetMsg}`);
+    onLog(
+      `[ROLLBACK:${brand}]   ${pm2Name} online: ${pm2BackendOnline ? "✓ YES" : "✗ NO"}`,
+    );
+    onLog(`[ROLLBACK:${brand}]   Pages:  ${pages}`);
 
     const rollbackResult = {
       ok: true,
       brand,
-      restored,
-      pageCount,
-      nginx: nginxStatus,
-      pm2: pm2Status,
-      timestamp: new Date().toISOString(),
+      from: current,
+      to: target,
+      toMsg: targetMsg,
+      pm2Online: pm2BackendOnline,
+      pageCount: pages,
     };
 
     deployHistory[brand] = {
@@ -893,7 +535,6 @@ async function rollbackBuild(brand, onLog = console.log) {
       lastRollback: rollbackResult,
     };
     logEvent(brand, { action: "rollback", ...rollbackResult });
-
     return rollbackResult;
   } catch (err) {
     onLog(`[ROLLBACK:${brand}] ✗ ${err.message}`);
@@ -904,68 +545,71 @@ async function rollbackBuild(brand, onLog = console.log) {
   }
 }
 
-// ═════════════════════════════════════════════════════════════
-// REMOTE STATUS CHECK
-// ═════════════════════════════════════════════════════════════
-
 async function checkRemote(brand) {
   const site = SITES[brand];
   if (!site || !site.host) return { ok: false, error: "not configured" };
 
+  const pm2Name = site.pm2Process || "backend";
   const ssh = new NodeSSH();
-
   try {
     await ssh.connect({
       host: site.host,
       username: site.user,
       privateKeyPath: site.pemPath,
-      readyTimeout: 15000,
+      readyTimeout: 30000,
     });
 
-    const escapedPath = shellEscape(site.remotePath);
-    const result = await ssh.execCommand(`
+    const esc = { path: shellEscape(site.remotePath) };
+    const result = await ssh.execCommand(
+      `
       set -e
-      cd ${escapedPath}
-      echo "BUILD_EXISTS:$([ -d build ] && echo yes || echo no)"
-      echo "PAGE_COUNT:$(find build -name 'index.html' 2>/dev/null | wc -l)"
-      echo "CSS_COUNT:$(find build/static/css -name '*.css' 2>/dev/null | wc -l)"
-      echo "JS_COUNT:$(find build/static/js -name '*.js' 2>/dev/null | wc -l)"
-      echo "BUILD_DATE:$(stat -c %Y build/index.html 2>/dev/null || echo 0)"
-      echo "BUILD_OWNER:$(stat -c %U build/index.html 2>/dev/null || echo unknown)"
-      echo "BACKUPS:$(ls -d build-backup-* 2>/dev/null | wc -l)"
-      echo "BACKUP_LIST:$(ls -dt build-backup-* 2>/dev/null | head -5 | tr '\\n' ',')"
-      echo "DISK:$(df -h ${escapedPath} | tail -1 | awk '{print $4}')"
+      cd ${esc.path}
+      echo "SHA:$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+      echo "MSG:$(git log -1 --format='%s' 2>/dev/null || echo unknown)"
+      echo "DATE:$(git log -1 --format='%ci' 2>/dev/null || echo unknown)"
+      echo "PAGE_COUNT:$(find client/build -name 'index.html' 2>/dev/null | wc -l)"
+      echo "CSS_COUNT:$(find client/build/static/css -name '*.css' 2>/dev/null | wc -l)"
+      echo "JS_COUNT:$(find client/build/static/js -name '*.js' 2>/dev/null | wc -l)"
+      echo "DISK:$(df -h ${esc.path} | tail -1 | awk '{print $4}')"
       echo "NGINX:$(sudo nginx -t 2>&1 | tail -1)"
-      echo "PM2:$(pm2 list 2>/dev/null | grep -c 'online' || echo 0) online"
-    `);
-
-    if (result.code !== 0) {
-      return {
-        ok: false,
-        error: `Remote command failed (exit ${result.code}): ${result.stderr || result.stdout}`,
-      };
-    }
+      echo "PM2_ALL:$(pm2 list 2>/dev/null | grep -c 'online' || echo 0) online"
+      echo "PM2_BACKEND:$(pm2 list 2>/dev/null | grep -E '${pm2Name}.*online' | wc -l | tr -d ' ')"
+      echo "RECENT:$(git log --oneline -5 2>/dev/null || echo none)"
+    `.replace("${pm2Name}", pm2Name),
+    );
 
     const output = result.stdout;
     const get = (key) =>
       (output.match(new RegExp(`${key}:(.+)`)) || [])[1]?.trim() || "";
 
-    const buildDate = parseInt(get("BUILD_DATE"));
-
     return {
       ok: true,
       brand,
-      buildExists: get("BUILD_EXISTS") === "yes",
+      sha: get("SHA"),
+      commitMsg: get("MSG"),
+      commitDate: get("DATE"),
       pageCount: parseInt(get("PAGE_COUNT") || "0"),
       cssFiles: parseInt(get("CSS_COUNT") || "0"),
       jsFiles: parseInt(get("JS_COUNT") || "0"),
-      buildDate: buildDate ? new Date(buildDate * 1000).toISOString() : null,
-      buildOwner: get("BUILD_OWNER"),
-      backupCount: parseInt(get("BACKUPS") || "0"),
-      recentBackups: get("BACKUP_LIST").split(",").filter(Boolean),
       diskFree: get("DISK"),
       nginx: get("NGINX"),
-      pm2: get("PM2"),
+      pm2: get("PM2_ALL"),
+      // ── FIX: expose per-process status for dashboard ──
+      pm2Backend:
+        parseInt(get("PM2_BACKEND") || "0") > 0
+          ? `${pm2Name}: online`
+          : `${pm2Name}: OFFLINE`,
+      pm2BackendOnline: parseInt(get("PM2_BACKEND") || "0") > 0,
+      recentCommits: output
+        .split("\n")
+        .filter(
+          (l) =>
+            l.startsWith("RECENT:") ||
+            (!l.includes(":") && l.match(/^[a-f0-9]{7}/)),
+        )
+        .map((l) => l.replace("RECENT:", "").trim())
+        .filter(Boolean)
+        .slice(0, 5),
     };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -974,175 +618,4 @@ async function checkRemote(brand) {
   }
 }
 
-// ═════════════════════════════════════════════════════════════
-// EXPRESS ROUTES (for later integration into server.js)
-// ═════════════════════════════════════════════════════════════
-
-function mountDeployRoutes(app) {
-  // Auth middleware — requires DEPLOY_SECRET in .env
-  // Pass as x-deploy-key header or ?key= query param
-  const requireAuth = (req, res, next) => {
-    if (!DEPLOY_SECRET) {
-      return res.status(500).json({
-        ok: false,
-        error: "DEPLOY_SECRET not configured — deploy routes are disabled",
-      });
-    }
-    const provided =
-      req.headers["x-deploy-key"] || req.query?.key || req.body?.key;
-    if (provided !== DEPLOY_SECRET) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
-    next();
-  };
-
-  app.get("/deploy/sites", requireAuth, (req, res) => {
-    const sites = {};
-    for (const [brand, config] of Object.entries(SITES)) {
-      sites[brand] = {
-        label: config.label,
-        host: config.host ? `${config.user}@${config.host}` : "not configured",
-        remotePath: config.remotePath,
-        localBuildPath: config.localBuildPath || "not set",
-        url: config.url,
-        configured: !!(config.host && config.pemPath),
-        status: getStatus(brand),
-      };
-    }
-    res.json({ ok: true, sites });
-  });
-
-  app.post("/deploy/:brand", requireAuth, async (req, res) => {
-    const { brand } = req.params;
-    if (!SITES[brand])
-      return res
-        .status(400)
-        .json({ ok: false, error: `Unknown brand: ${brand}` });
-
-    const logs = [];
-    const onLog = (line) => {
-      logs.push(line);
-      console.log(line);
-    };
-
-    try {
-      const result = await deployBuild(
-        brand,
-        {
-          buildPath: req.body?.buildPath || null,
-          skipBuild: req.body?.skipBuild || false,
-          dryRun: req.body?.dryRun || false,
-          pull: req.body?.pull || !!req.body?.commitMsg,
-          commitMsg: req.body?.commitMsg || null,
-        },
-        onLog,
-      );
-      res.json({ ...result, logs });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message, logs });
-    }
-  });
-
-  app.post("/deploy/:brand/restart", requireAuth, async (req, res) => {
-    const { brand } = req.params;
-    const site = SITES[brand];
-    if (!site)
-      return res
-        .status(400)
-        .json({ ok: false, error: `Unknown brand: ${brand}` });
-    if (!site.host)
-      return res.status(400).json({ ok: false, error: `No host for ${brand}` });
-
-    const processName = req.body?.process || site.pm2Process || "all";
-    const escapedProcess = shellEscape(processName);
-    const ssh = new NodeSSH();
-
-    try {
-      await ssh.connect({
-        host: site.host,
-        username: site.user,
-        privateKeyPath: site.pemPath,
-        readyTimeout: 15000,
-      });
-      const result = await ssh.execCommand(
-        `sudo -u ubuntu pm2 restart ${escapedProcess} && sudo -u ubuntu pm2 status || pm2 restart ${escapedProcess} && pm2 status`,
-      );
-
-      if (result.code !== 0) {
-        throw new Error(
-          `PM2 restart failed (exit ${result.code}): ${result.stderr || result.stdout}`,
-        );
-      }
-
-      logEvent(brand, { action: "restart", process: processName });
-      res.json({
-        ok: true,
-        brand,
-        process: processName,
-        output: result.stdout,
-      });
-    } catch (err) {
-      logEvent(brand, { action: "restart-failed", error: err.message });
-      res.status(500).json({ ok: false, error: err.message });
-    } finally {
-      ssh.dispose();
-    }
-  });
-
-  app.post("/deploy/:brand/rollback", requireAuth, async (req, res) => {
-    const { brand } = req.params;
-    if (!SITES[brand])
-      return res
-        .status(400)
-        .json({ ok: false, error: `Unknown brand: ${brand}` });
-
-    const logs = [];
-    const onLog = (line) => {
-      logs.push(line);
-      console.log(line);
-    };
-
-    try {
-      const result = await rollbackBuild(brand, onLog);
-      res.json({ ...result, logs });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message, logs });
-    }
-  });
-
-  app.get("/deploy/:brand/status", requireAuth, async (req, res) => {
-    const { brand } = req.params;
-    if (!SITES[brand])
-      return res
-        .status(400)
-        .json({ ok: false, error: `Unknown brand: ${brand}` });
-
-    try {
-      const remote = await checkRemote(brand);
-      res.json({
-        ok: true,
-        brand,
-        label: SITES[brand].label,
-        remote,
-        history: getStatus(brand),
-      });
-    } catch (err) {
-      res.json({
-        ok: true,
-        brand,
-        remote: { ok: false, error: err.message },
-        history: getStatus(brand),
-      });
-    }
-  });
-}
-
-// ─── Exports ─────────────────────────────────────────────────
-
-module.exports = {
-  deployBuild,
-  rollbackBuild,
-  checkRemote,
-  mountDeployRoutes,
-  SITES,
-};
+module.exports = { deployBuild, rollbackBuild, checkRemote, SITES };

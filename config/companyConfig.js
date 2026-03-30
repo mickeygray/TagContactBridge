@@ -40,6 +40,7 @@ const COMPANIES = {
       process.env.WYNN_RINGOUT_CALLER ||
       process.env.RING_CENTRAL_RINGOUT_CALLER ||
       "",
+    igPageToken: process.env.WYNN_IG_PAGE_TOKEN || "",
     callrailAccountId: process.env.CALL_RAIL_ACCOUNT_ID || "",
     callrailKey: process.env.CALL_RAIL_KEY || "",
     callrailTrackingNumber:
@@ -52,7 +53,7 @@ const COMPANIES = {
       "",
     localPhone: "310-561-1009",
     tollFreePhone: "866-770-3749",
-
+    igAccountId: "17841475556334227",
     // SMS
     scheduleUrl:
       process.env.WYNN_SCHEDULE_URL ||
@@ -104,6 +105,8 @@ const COMPANIES = {
       process.env.TAG_CALL_RAIL_ACCOUNT_ID ||
       process.env.CALL_RAIL_ACCOUNT_ID ||
       "",
+    igAccountId: "17841475461748041",
+    igPageToken: process.env.TAG_IG_PAGE_TOKEN || "",
     callrailKey:
       process.env.TAG_CALL_RAIL_KEY || process.env.CALL_RAIL_KEY || "",
     callrailTrackingNumber: process.env.TAG_CALLRAIL_TRACKING || "",
@@ -184,14 +187,21 @@ function getCompanyKeys() {
 function resolveCompanyFromFbPageId(pageId) {
   if (!pageId) return DEFAULT_COMPANY;
   const pid = String(pageId);
+
+  // Instagram account ID mappings
+  if (pid === "17841475556334227") return "WYNN";
+  if (pid === "17841475461748041") return "TAG";
+
   for (const config of Object.values(COMPANIES)) {
     if (config.fbPageId && String(config.fbPageId) === pid) {
       return config.key;
     }
   }
+
   console.warn(
     `[COMPANY] Unknown FB page_id: ${pageId} → defaulting to ${DEFAULT_COMPANY}`,
   );
+  console.log(`[IG] Event for pageId ${pageId} → company: ${company}`);
   return DEFAULT_COMPANY;
 }
 
@@ -257,12 +267,17 @@ function getFbPageToken(company) {
   return getCompanyConfig(company).fbPageToken || "";
 }
 
+function getIgPageToken(company) {
+  return getCompanyConfig(company).igPageToken || "";
+}
+
 module.exports = {
   getCompanyConfig,
   getTemplatePaths,
   getRvmAudioBase,
   getCompanyKeys,
   resolveCompanyFromFbPageId,
+  getIgPageToken,
   resolveCompanyFromTtAdvertiserId,
   resolveCompanyFromPayload,
   getFbPageToken,

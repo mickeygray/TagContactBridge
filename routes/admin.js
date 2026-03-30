@@ -1,143 +1,100 @@
+// routes/admin.js
 const express = require("express");
-const bcrypt = require("bcryptjs");
-const User = require("../models/User");
-const UserRequest = require("../models/UserRequest");
-const sendEmail = require("../utils/sendEmail");
-const {
-  authMiddleware,
-  requireAdmin,
-} = require("../middleware/authMiddleware");
-
 const router = express.Router();
+const ConsentRecord = require("../models/ConsentRecord");
 
-let adminOTPs = {}; // In-memory OTP store (consider Redis in production)
+// ─── GET /api/admin/consent-records ──────────────────────────
+// Search consent records by email, phone, caseId, or date range
+// Query params: email, phone, caseId, source, company, from, to, limit
+// ─────────────────────────────────────────────────────────────
 
-// Admin-only access
-router.use(authMiddleware, requireAdmin);
-
-// Get all pending account requests
-router.get("/requests", authMiddleware, requireAdmin, async (req, res) => {
-  const requests = await UserRequest.find({ status: "pending" });
-  res.json(requests);
-});
-
-// Send admin OTP
-router.post("/request-admin-otp", async (req, res) => {
-  const { emailRequesting } = req.body;
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-  adminOTPs[emailRequesting] = { code, expires: Date.now() + 5 * 60 * 1000 };
-
-  await sendEmail({
-    to: process.env.ADMIN_EMAIL,
-    subject: "⚠️ Admin Role OTP Request",
-    text: `OTP for ${emailRequesting}: ${code}`,
-    html: `<p>One-time admin code for <strong>${emailRequesting}</strong>:</p><h2>${code}</h2>`,
-  });
-
-  res.json({ message: "OTP sent for verification" });
-});
-
-// Verify admin OTP
-router.post("/verify-admin-otp", async (req, res) => {
-  const { emailRequesting, otp } = req.body;
-  const record = adminOTPs[emailRequesting];
-
-  if (!record || record.code !== otp || Date.now() > record.expires) {
-    return res.status(400).json({ message: "Invalid or expired OTP" });
-  }
-
-  delete adminOTPs[emailRequesting];
-  res.json({ verified: true });
-});
-
-// Approve request
-router.post("/approve/:id", async (req, res) => {
+router.get("/consent-records", async (req, res) => {
   try {
-    const request = await UserRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ message: "Request not found" });
+    const {
+      email,
+      phone,
+      caseId,
+      source,
+      company,
+      from,
+      to,
+      limit = 50,
+    } = req.query;
 
-    const tempPassword = Math.random().toString(36).slice(-8);
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const query = {};
 
-    const user = new User({
-      email: request.email,
-      passwordHash,
-      role: request.roleRequested || "agent",
-      marketingAccess: request.marketingAccess || false,
-      lastLogin: null,
-      isOnline: false,
+    if (email) query.email = { $regex: email, $options: "i" };
+    if (phone)
+      query.phone = { $regex: phone.replace(/\D/g, ""), $options: "i" };
+    if (caseId) query.caseId = { $regex: caseId, $options: "i" };
+    if (source) query.source = source;
+    if (company) query.company = company;
+
+    if (from || to) {
+      query.receivedAt = {};
+      if (from) query.receivedAt.$gte = new Date(from);
+      if (to) query.receivedAt.$lte = new Date(to);
+    }
+
+    const records = await ConsentRecord.find(query)
+      .sort({ receivedAt: -1 })
+      .limit(Math.min(Number(limit), 200))
+      .lean();
+
+    res.json({ ok: true, count: records.length, records });
+  } catch (err) {
+    console.error("[ADMIN] consent-records error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── GET /api/admin/consent-records/:id ──────────────────────
+// Get a single consent record by MongoDB ID
+// ─────────────────────────────────────────────────────────────
+
+router.get("/consent-records/:id", async (req, res) => {
+  try {
+    const record = await ConsentRecord.findById(req.params.id).lean();
+    if (!record) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, record });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── GET /api/admin/consent-records/stats ────────────────────
+// Summary stats for the vault
+// ─────────────────────────────────────────────────────────────
+
+router.get("/consent-stats", async (req, res) => {
+  try {
+    const total = await ConsentRecord.countDocuments();
+    const withTrustedForm = await ConsentRecord.countDocuments({
+      trustedFormCertUrl: { $ne: "" },
     });
-
-    await user.save();
-    request.status = "approved";
-    await request.save();
-
-    await sendEmail({
-      to: request.email,
-      subject: "✅ Account Approved",
-      html: `<p>Your account has been approved.<br />Temporary password: <strong>${tempPassword}</strong></p>`,
+    const withJornaya = await ConsentRecord.countDocuments({
+      jornayaLeadId: { $ne: "" },
     });
+    const bySource = await ConsentRecord.aggregate([
+      { $group: { _id: "$source", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+    const byCompany = await ConsentRecord.aggregate([
+      { $group: { _id: "$company", count: { $sum: 1 } } },
+    ]);
 
-    res.json({ message: "User approved and created" });
-  } catch (err) {
-    res.status(500).json({ message: "Error approving user" });
-  }
-});
-
-// Reject request
-router.post("/reject/:id", async (req, res) => {
-  try {
-    const request = await UserRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ message: "Request not found" });
-
-    request.status = "rejected";
-    await request.save();
-
-    await sendEmail({
-      to: request.email,
-      subject: "❌ Account Rejected",
-      html: "<p>Your request to join has been declined.</p>",
+    res.json({
+      ok: true,
+      stats: {
+        total,
+        withTrustedForm,
+        withJornaya,
+        bySource,
+        byCompany,
+      },
     });
-
-    res.json({ message: "Request rejected" });
   } catch (err) {
-    res.status(500).json({ message: "Error rejecting request" });
-  }
-});
-
-// Get all users
-router.get("/users", async (req, res) => {
-  try {
-    const users = await User.find().select("-passwordHash");
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: "Error fetching users" });
-  }
-});
-
-// Delete user
-router.delete("/user/:id", async (req, res) => {
-  try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "User deleted" });
-  } catch (err) {
-    res.status(500).json({ message: "Error deleting user" });
-  }
-});
-
-// Force logout user (flag for frontend to detect if needed)
-router.post("/logout-user/:id", async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    user.isOnline = false;
-    await user.save();
-
-    res.json({ message: "User logged out" });
-  } catch (err) {
-    res.status(500).json({ message: "Error forcing logout" });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

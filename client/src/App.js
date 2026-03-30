@@ -1,10 +1,11 @@
 // client/src/App.js
 // ─────────────────────────────────────────────────────────────
-// Simplified routing:
-//   /dashboard  → main app (auth-gated)
-//   /deploy     → deploy tracker (auth-gated)
-//   /login      → fallback for JWT agents (nginx gate handles primary auth)
-//   /           → redirects to /dashboard
+// Routing:
+//   /dashboard    → main app (auth-gated)
+//   /ringbridge   → RingBridge agent status (auth-gated)
+//   /deploy       → deploy panel (auth-gated)
+//   /login        → fallback for JWT agents
+//   /             → redirects to /dashboard
 // ─────────────────────────────────────────────────────────────
 
 import React, { useContext } from "react";
@@ -32,6 +33,8 @@ import PrivateRoute from "./utils/PrivateRoute";
 import AgentDashboard from "./components/interface/AgentDashboard";
 import Toast from "./components/layout/Toast";
 import DeployTracker from "./components/tools/deploymentguide/DeploymentGuide";
+import RingBridgeDashboard from "./components/tools/ringcentral/RingBridgeDashboard";
+import DeployPanel from "./components/tools/deploypanel/DeployPanel";
 
 function AppContent() {
   const { loading, message, error, clearMessage } = useContext(MessageContext);
@@ -65,6 +68,26 @@ function AppContent() {
           element={
             <PrivateRoute>
               <AgentDashboard />
+            </PrivateRoute>
+          }
+        />
+
+        {/* RingBridge — real-time agent phone status */}
+        <Route
+          path="/ringbridge"
+          element={
+            <PrivateRoute>
+              <RingBridgeDashboard />
+            </PrivateRoute>
+          }
+        />
+
+        {/* Deploy panel — build & deploy management */}
+        <Route
+          path="/deploy"
+          element={
+            <PrivateRoute>
+              <DeployPanel />
             </PrivateRoute>
           }
         />
