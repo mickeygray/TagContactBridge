@@ -439,6 +439,7 @@ async function findCaseByPhone(phone, domain = null) {
           state: r.State || "",
           taxAmount: r.TaxAmount || 0,
           createdDate: r.CreatedDate || null,
+          sourceName: r.SourceName || "", // ← add this
         });
       }
     } catch (err) {
@@ -456,6 +457,7 @@ async function findCaseByPhone(phone, domain = null) {
 module.exports = {
   uploadCaseDocument,
   fetchCaseInfo,
+  findCaseByPhone,
   createActivityLoop,
   updateCaseStatus,
   postCaseFile,

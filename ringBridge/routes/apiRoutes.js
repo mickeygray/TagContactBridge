@@ -670,3 +670,71 @@ router.get('/admin/contacts/scored/csv', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ─── Daily Report ───────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/report/send
+ * Manually trigger the daily report email
+ * Body: { date?: '2026-03-30', recipients?: ['email@example.com'] }
+ */
+router.post('/admin/report/send', async (req, res) => {
+  try {
+    const { generateAndSend } = require('../services/dailyReportService');
+    const result = await generateAndSend({
+      dateOverride: req.body.date || null,
+      recipients: req.body.recipients || null,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/report/preview?date=2026-03-30
+ * Preview report data without sending the email
+ */
+router.get('/admin/report/preview', async (req, res) => {
+  try {
+    const reportDate = req.query.date || new Date().toISOString().split('T')[0];
+    const dayStart = new Date(`${reportDate}T00:00:00`);
+    const dayEnd = new Date(`${reportDate}T23:59:59.999`);
+
+    const scored = await ContactActivity.find({
+      direction: 'Outbound',
+      'caseMatch.domain': 'WYNN',
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      'callScore.overall': { $exists: true, $ne: null },
+    }).sort({ createdAt: 1 }).lean();
+
+    const unscored = await ContactActivity.find({
+      direction: 'Outbound',
+      'caseMatch.domain': 'WYNN',
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      $or: [
+        { 'callScore.overall': { $exists: false } },
+        { 'callScore.overall': null },
+      ],
+    }).sort({ createdAt: 1 }).lean();
+
+    res.json({
+      success: true,
+      date: reportDate,
+      scored: scored.length,
+      unscored: unscored.length,
+      calls: scored.map(a => ({
+        time: a.callStartTime,
+        agent: a.agentName,
+        phone: a.phoneFormatted || a.phone,
+        duration: a.durationSeconds,
+        score: a.callScore?.overall,
+        verdict: a.callScore?.lead_verdict,
+        summary: a.callScore?.summary,
+        redFlags: a.callScore?.red_flags,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
