@@ -1,6 +1,7 @@
 const Agent = require('../models/Agent');
 const EventLog = require('../models/EventLog');
 const log = require('../utils/logger');
+const logicsLookup = require('../services/logicsLookupService');
 
 // SSE clients for real-time dashboard updates
 const sseClients = new Set();
@@ -48,6 +49,8 @@ async function processPresenceEvent(event) {
 
   // Extract active call details
   const activeCall = activeCalls?.[0] || null;
+  // Snapshot current call before state machine may clear it (needed for enrichment on NoCall)
+  const previousCall = agent.currentCall ? { ...agent.currentCall.toObject?.() || agent.currentCall } : null;
 
   // State machine logic
   let newStatus = agent.status;
@@ -169,6 +172,19 @@ async function processPresenceEvent(event) {
     dailyStats: agent.dailyStats
   });
 
+  // ─── Contact Activity Enrichment ─────────────────────────
+  // Fire-and-forget: don't block webhook processing
+  if (telephonyStatus === 'CallConnected' && previousStatus !== 'onCall') {
+    logicsLookup.onCallStart(agent, activeCall).catch(err =>
+      log.warn(`ContactActivity call start failed: ${err.message}`)
+    );
+  }
+  if (telephonyStatus === 'NoCall' && ['onCall', 'ringing'].includes(previousStatus)) {
+    logicsLookup.onCallEnd(agent, previousCall || activeCall).catch(err =>
+      log.warn(`ContactActivity call end failed: ${err.message}`)
+    );
+  }
+
   return { previousStatus, newStatus: agent.status, agent };
 }
 
@@ -207,6 +223,11 @@ async function processDisposition(extensionId, type) {
   await eventLog.save();
 
   log.event(extensionId, `${agent.name}: disposition (${type}) → available`);
+
+  // Update ContactActivity with disposition
+  logicsLookup.onDisposition(extensionId, type).catch(err =>
+    log.warn(`ContactActivity disposition update failed: ${err.message}`)
+  );
 
   broadcastSSE('agentUpdate', {
     extensionId: extensionId.toString(),

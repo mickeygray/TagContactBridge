@@ -380,7 +380,79 @@ async function fetchCaseInfo(domain, caseId) {
     return { ok: false, error: err.response?.data?.Message || err.message };
   }
 }
+/**
+ * Find case(s) by phone number across one or all domains.
+ * RingBridge calls this to enrich call events with case data.
+ *
+ * @param {string} phone — raw digits, gets formatted automatically
+ * @param {string|null} domain — 'TAG'|'WYNN'|null (null = search both)
+ * @returns {object} { ok, matches: [{ domain, caseId, firstName, lastName, statusId, saleDate, email, phones }], raw }
+ */
+async function findCaseByPhone(phone, domain = null) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length < 10)
+    return { ok: false, matches: [], error: "Invalid phone" };
 
+  // Logics wants the raw digits or formatted — try both header styles
+  const domainsToSearch = domain ? [domain] : ["TAG", "WYNN"];
+  const matches = [];
+
+  for (const d of domainsToSearch) {
+    const { baseUrl, apiKey, secret } = config[d];
+    if (!baseUrl || !apiKey) continue;
+
+    try {
+      const resp = await axios.get(`${baseUrl}/Find/FindCaseByPhone`, {
+        headers: { phone: digits },
+        auth: { username: apiKey, password: secret },
+        timeout: 10000,
+      });
+
+      const body = resp.data;
+      if (!body?.Success) continue;
+
+      let records = body.data || body.Data || [];
+      if (typeof records === "string") {
+        try {
+          records = JSON.parse(records);
+        } catch {
+          records = [];
+        }
+      }
+      if (!Array.isArray(records)) records = [records];
+
+      for (const r of records) {
+        if (!r.CaseID) continue;
+        matches.push({
+          domain: d,
+          caseId: r.CaseID,
+          firstName: r.FirstName || "",
+          lastName: r.LastName || "",
+          name: `${r.FirstName || ""} ${r.LastName || ""}`.trim(),
+          statusId: r.StatusID,
+          saleDate: r.SaleDate || null,
+          email: r.Email || "",
+          cellPhone: r.CellPhone || "",
+          homePhone: r.HomePhone || "",
+          workPhone: r.WorkPhone || "",
+          city: r.City || "",
+          state: r.State || "",
+          taxAmount: r.TaxAmount || 0,
+          createdDate: r.CreatedDate || null,
+        });
+      }
+    } catch (err) {
+      console.log(`[LOGICS] FindCaseByPhone failed for ${d}: ${err.message}`);
+      // Don't fail the whole search — try the next domain
+    }
+  }
+
+  return {
+    ok: matches.length > 0,
+    matches,
+    phone: digits,
+  };
+}
 module.exports = {
   uploadCaseDocument,
   fetchCaseInfo,

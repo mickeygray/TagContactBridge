@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Agent = require('../models/Agent');
 const EventLog = require('../models/EventLog');
+const ContactActivity = require('../models/ContactActivity');
 const stateEngine = require('../engine/stateEngine');
 const rcAuthService = require('../services/rcAuthService');
 const webhookManager = require('../services/webhookManager');
@@ -328,3 +329,344 @@ router.get('/health', async (req, res) => {
 });
 
 module.exports = router;
+
+// ─── Contact Activity ─────────────────────────────────────────────────
+// (appended after module.exports — Express doesn't care about order)
+
+/**
+ * GET /api/admin/contacts
+ * List contact activity with filters
+ * Query: ?extensionId=&phone=&enrichment=matched|unmatched|pending&disposition=good|bad|none&limit=50&skip=0&from=&to=
+ */
+router.get('/admin/contacts', async (req, res) => {
+  try {
+    const { extensionId, phone, enrichment, disposition, limit, skip, from, to } = req.query;
+    const query = {};
+
+    if (extensionId) query.extensionId = extensionId;
+    if (phone) query.phone = { $regex: phone.replace(/\D/g, '') };
+    if (enrichment) query.enrichmentStatus = enrichment;
+    if (disposition) query.disposition = disposition;
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) query.createdAt.$lte = new Date(to);
+    }
+
+    const total = await ContactActivity.countDocuments(query);
+    const activities = await ContactActivity.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit) || 50)
+      .skip(parseInt(skip) || 0)
+      .lean();
+
+    res.json({ success: true, total, activities });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/csv
+ * Export contact activity as CSV
+ * Same filters as /admin/contacts
+ */
+router.get('/admin/contacts/csv', async (req, res) => {
+  try {
+    const { extensionId, phone, enrichment, disposition, from, to } = req.query;
+    const query = {};
+
+    if (extensionId) query.extensionId = extensionId;
+    if (phone) query.phone = { $regex: phone.replace(/\D/g, '') };
+    if (enrichment) query.enrichmentStatus = enrichment;
+    if (disposition) query.disposition = disposition;
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) query.createdAt.$lte = new Date(to);
+    }
+
+    const activities = await ContactActivity.find(query)
+      .sort({ createdAt: -1 })
+      .limit(5000)
+      .lean();
+
+    // Build CSV
+    const headers = [
+      'Date', 'Time', 'Agent', 'Company', 'Direction', 'Phone',
+      'Duration (s)', 'Disposition', 'Enrichment', 'Domain',
+      'Case ID', 'Case Name', 'Status ID', 'Email', 'City',
+      'State', 'Tax Amount', 'Session ID'
+    ];
+
+    const rows = activities.map(a => {
+      const dt = a.callStartTime ? new Date(a.callStartTime) : new Date(a.createdAt);
+      return [
+        dt.toLocaleDateString('en-US'),
+        dt.toLocaleTimeString('en-US'),
+        a.agentName || '',
+        a.company || '',
+        a.direction || '',
+        a.phoneFormatted || a.phone || '',
+        a.durationSeconds || 0,
+        a.disposition || '',
+        a.enrichmentStatus || '',
+        a.caseMatch?.domain || '',
+        a.caseMatch?.caseId || '',
+        a.caseMatch?.name || '',
+        a.caseMatch?.statusId || '',
+        a.caseMatch?.email || '',
+        a.caseMatch?.city || '',
+        a.caseMatch?.state || '',
+        a.caseMatch?.taxAmount || '',
+        a.callSessionId || '',
+      ].map(v => {
+        const s = String(v);
+        return s.includes(',') || s.includes('"') || s.includes('\n')
+          ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(',');
+    });
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const filename = `contact-activity-${new Date().toISOString().split('T')[0]}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/:id
+ * Get single contact activity detail (with all matches)
+ */
+router.get('/admin/contacts/:id', async (req, res) => {
+  try {
+    const activity = await ContactActivity.findById(req.params.id).lean();
+    if (!activity) return res.status(404).json({ success: false, error: 'Not found' });
+    res.json({ success: true, activity });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/contacts/:id/retry-enrichment
+ * Manually retry enrichment for an activity
+ */
+router.post('/admin/contacts/:id/retry-enrichment', async (req, res) => {
+  try {
+    const activity = await ContactActivity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ success: false, error: 'Not found' });
+    if (!activity.phone) return res.status(400).json({ success: false, error: 'No phone number' });
+
+    const { enrichActivity } = require('../services/logicsLookupService');
+    await enrichActivity(activity._id, activity.phone, true);
+
+    const updated = await ContactActivity.findById(req.params.id).lean();
+    res.json({ success: true, activity: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/stats/summary
+ * Aggregated stats for the contact activity dashboard
+ */
+router.get('/admin/contacts/stats/summary', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [todayStats, totalStats] = await Promise.all([
+      ContactActivity.aggregate([
+        { $match: { createdAt: { $gte: today } } },
+        { $group: {
+          _id: null,
+          total: { $sum: 1 },
+          matched: { $sum: { $cond: [{ $eq: ['$enrichmentStatus', 'matched'] }, 1, 0] } },
+          unmatched: { $sum: { $cond: [{ $eq: ['$enrichmentStatus', 'unmatched'] }, 1, 0] } },
+          good: { $sum: { $cond: [{ $eq: ['$disposition', 'good'] }, 1, 0] } },
+          bad: { $sum: { $cond: [{ $eq: ['$disposition', 'bad'] }, 1, 0] } },
+          inbound: { $sum: { $cond: [{ $eq: ['$direction', 'Inbound'] }, 1, 0] } },
+          outbound: { $sum: { $cond: [{ $eq: ['$direction', 'Outbound'] }, 1, 0] } },
+          avgDuration: { $avg: '$durationSeconds' },
+        }}
+      ]),
+      ContactActivity.countDocuments({}),
+    ]);
+
+    res.json({
+      success: true,
+      today: todayStats[0] || { total: 0, matched: 0, unmatched: 0, good: 0, bad: 0, inbound: 0, outbound: 0, avgDuration: 0 },
+      allTime: { total: totalStats },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Transcription ──────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/contacts/:id/retry-transcription
+ * Manually retry transcription + scoring for an outbound call
+ */
+router.post('/admin/contacts/:id/retry-transcription', async (req, res) => {
+  try {
+    const { retryTranscription } = require('../services/transcriptionService');
+    const result = await retryTranscription(req.params.id);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/:id/transcript
+ * Get just the transcript text for a call (for display/export)
+ */
+router.get('/admin/contacts/:id/transcript', async (req, res) => {
+  try {
+    const activity = await ContactActivity.findById(req.params.id).lean();
+    if (!activity) return res.status(404).json({ success: false, error: 'Not found' });
+    if (!activity.transcription?.text) return res.status(404).json({ success: false, error: 'No transcript available' });
+
+    // If ?format=text, return plain text
+    if (req.query.format === 'text') {
+      res.setHeader('Content-Type', 'text/plain');
+      return res.send(activity.transcription.text);
+    }
+
+    res.json({
+      success: true,
+      phone: activity.phoneFormatted || activity.phone,
+      agentName: activity.agentName,
+      direction: activity.direction,
+      duration: activity.durationSeconds,
+      transcript: activity.transcription.text,
+      transcribedAt: activity.transcription.transcribedAt,
+      callScore: activity.callScore,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/scored
+ * List scored outbound calls — the vendor quality report feed
+ * Query: ?verdict=hot|warm|cold|dead|fake&minScore=&maxScore=&limit=50&skip=0
+ */
+router.get('/admin/contacts/scored', async (req, res) => {
+  try {
+    const { verdict, minScore, maxScore, limit, skip } = req.query;
+    const query = {
+      direction: 'Outbound',
+      'transcription.status': 'completed',
+      'callScore.overall': { $exists: true },
+    };
+
+    if (verdict) query['callScore.lead_verdict'] = verdict;
+    if (minScore) query['callScore.overall'] = { ...query['callScore.overall'], $gte: parseInt(minScore) };
+    if (maxScore) query['callScore.overall'] = { ...query['callScore.overall'], $lte: parseInt(maxScore) };
+
+    const total = await ContactActivity.countDocuments(query);
+    const activities = await ContactActivity.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit) || 50)
+      .skip(parseInt(skip) || 0)
+      .select('agentName company phone phoneFormatted direction durationSeconds disposition enrichmentStatus caseMatch callScore transcription.status createdAt callStartTime')
+      .lean();
+
+    res.json({ success: true, total, activities });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/contacts/scored/csv
+ * Export scored calls as CSV for vendor reporting
+ */
+router.get('/admin/contacts/scored/csv', async (req, res) => {
+  try {
+    const { verdict, minScore, maxScore, from, to } = req.query;
+    const query = {
+      direction: 'Outbound',
+      'transcription.status': 'completed',
+      'callScore.overall': { $exists: true },
+    };
+
+    if (verdict) query['callScore.lead_verdict'] = verdict;
+    if (minScore) query['callScore.overall'] = { ...query['callScore.overall'], $gte: parseInt(minScore) };
+    if (maxScore) query['callScore.overall'] = { ...query['callScore.overall'], $lte: parseInt(maxScore) };
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) query.createdAt.$lte = new Date(to);
+    }
+
+    const activities = await ContactActivity.find(query)
+      .sort({ createdAt: -1 })
+      .limit(5000)
+      .lean();
+
+    const headers = [
+      'Date', 'Time', 'Agent', 'Company', 'Phone', 'Duration (s)',
+      'Disposition', 'Overall Score', 'Verdict',
+      'Contactability', 'Legitimacy', 'Tax Issue', 'Interest', 'Qualification',
+      'Answered', 'Voicemail', 'Tax Type', 'Tax Amount Mentioned',
+      'Willing to Proceed', 'Red Flags', 'Summary',
+      'Case Domain', 'Case ID', 'Case Name',
+    ];
+
+    const rows = activities.map(a => {
+      const dt = a.callStartTime ? new Date(a.callStartTime) : new Date(a.createdAt);
+      const s = a.callScore || {};
+      const d = s.dimensions || {};
+      const k = s.key_details || {};
+      return [
+        dt.toLocaleDateString('en-US'),
+        dt.toLocaleTimeString('en-US'),
+        a.agentName || '',
+        a.company || '',
+        a.phoneFormatted || a.phone || '',
+        a.durationSeconds || 0,
+        a.disposition || '',
+        s.overall || '',
+        s.lead_verdict || '',
+        d.contactability?.score || '',
+        d.legitimacy?.score || '',
+        d.tax_issue_present?.score || '',
+        d.interest_level?.score || '',
+        d.qualification?.score || '',
+        k.answered ?? '',
+        k.voicemail ?? '',
+        k.tax_type || '',
+        k.tax_amount_mentioned || '',
+        k.willing_to_proceed || '',
+        (s.red_flags || []).join('; '),
+        (s.summary || '').replace(/[\n\r]+/g, ' '),
+        a.caseMatch?.domain || '',
+        a.caseMatch?.caseId || '',
+        a.caseMatch?.name || '',
+      ].map(v => {
+        const str = String(v);
+        return str.includes(',') || str.includes('"') || str.includes('\n')
+          ? `"${str.replace(/"/g, '""')}"` : str;
+      }).join(',');
+    });
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const filename = `vendor-lead-scores-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

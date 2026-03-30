@@ -31,4 +31,6 @@ module.exports = {
   WIDGET_JWT_SECRET:
     process.env.RINGBRIDGE_JWT_SECRET || "change-me-in-production",
   PORT: process.env.RINGBRIDGE_PORT || 6000,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 };
