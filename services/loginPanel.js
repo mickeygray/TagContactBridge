@@ -1,8 +1,10 @@
-// services/deployPanel.js
+// services/loginPanel.js
 // ─────────────────────────────────────────────────────────────
 // Auth gate — email-based login via SendGrid.
-// After verification, redirects to React app at /dashboard.
-// All deploy/management UI lives in React now.
+// After verification, sets a session cookie and redirects
+// to the React app at /dashboard.
+//
+// Exports isValidSession so other route files can gate access.
 // ─────────────────────────────────────────────────────────────
 
 const crypto = require("crypto");
@@ -16,14 +18,21 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "deploy_session";
 
+const ALLOWED_EMAILS = [
+  "mgray@taxadvocategroup.com",
+  "manderson@taxadvocategroup.com",
+  "abanks@taxadvocategroup.com",
+];
+
 let pendingCode = null;
 let pendingCodeExpires = 0;
 let sessions = {};
 
 // ─── Email sender (SendGrid via nodemailer) ──────────────────
 
-async function sendEmailCode(code) {
-  if (!PANEL_EMAIL) throw new Error("ADMIN_EMAIL not set");
+async function sendEmailCode(code, toEmail) {
+  const recipient = toEmail || PANEL_EMAIL;
+  if (!recipient) throw new Error("No recipient email");
 
   const config = getCompanyConfig("TAG");
   const transport = nodemailer.createTransport({
@@ -41,7 +50,7 @@ async function sendEmailCode(code) {
 
   await transport.sendMail({
     from: `TagContactBridge <${config.fromEmail || "inquiry@taxadvocategroup.com"}>`,
-    to: PANEL_EMAIL,
+    to: recipient,
     subject: `Login Code: ${code}`,
     text: `Your verification code is: ${code}\n\nExpires in 10 minutes.`,
     html: `
@@ -56,7 +65,7 @@ async function sendEmailCode(code) {
     `,
   });
 
-  console.log(`[AUTH] Code sent via email to ${PANEL_EMAIL}`);
+  console.log(`[AUTH] Code sent via email to ${recipient}`);
 }
 
 // ─── Auth helpers ────────────────────────────────────────────
@@ -79,13 +88,11 @@ function isValidSession(req) {
   return true;
 }
 
-// ─── Mount routes ────────────────────────────────────────────
+// ─── Mount login routes ──────────────────────────────────────
 
-function mountDeployPanel(app, deployService) {
-  const { deployBuild, rollbackBuild, checkRemote, SITES } = deployService;
-
+function mountLoginPanel(app) {
   // ── Login page or redirect if already authed ───────────────
-  app.get("/panel", (req, res) => {
+  app.get("/login", (req, res) => {
     if (isValidSession(req)) {
       return res.redirect("/dashboard");
     }
@@ -93,12 +100,16 @@ function mountDeployPanel(app, deployService) {
   });
 
   // ── Send verification code ─────────────────────────────────
-  app.post("/panel/send-code", async (req, res) => {
+  app.post("/login/send-code", async (req, res) => {
     try {
+      const chosen = req.body?.email;
+      if (chosen && !ALLOWED_EMAILS.includes(chosen)) {
+        return res.status(400).json({ ok: false, error: "Invalid email" });
+      }
       const code = generateCode();
       pendingCode = code;
       pendingCodeExpires = Date.now() + CODE_TTL_MS;
-      await sendEmailCode(code);
+      await sendEmailCode(code, chosen || PANEL_EMAIL);
       res.json({ ok: true, message: "Code sent to email" });
     } catch (err) {
       console.error("[AUTH] Email send failed:", err.message);
@@ -109,7 +120,7 @@ function mountDeployPanel(app, deployService) {
   });
 
   // ── Verify code → set cookie → redirect to React app ──────
-  app.post("/panel/verify", (req, res) => {
+  app.post("/login/verify", (req, res) => {
     const { code } = req.body || {};
 
     if (!pendingCode || Date.now() > pendingCodeExpires) {
@@ -145,97 +156,16 @@ function mountDeployPanel(app, deployService) {
   });
 
   // ── Logout ─────────────────────────────────────────────────
-  app.get("/panel/logout", (req, res) => {
+  app.get("/logout", (req, res) => {
     const token = req.cookies?.[COOKIE_NAME];
     if (token) delete sessions[token];
     res.clearCookie(COOKIE_NAME, { path: "/" });
-    res.redirect("/panel");
-  });
-
-  // ── Deploy API endpoints (React calls these) ───────────────
-
-  app.post("/panel/action", async (req, res) => {
-    if (!isValidSession(req)) {
-      return res.status(401).json({ ok: false, error: "Not authenticated" });
-    }
-
-    const { action, brand, commitMsg } = req.body || {};
-
-    if (!brand || !SITES[brand]) {
-      return res.status(400).json({ ok: false, error: "Invalid brand" });
-    }
-
-    const logs = [];
-    const onLog = (line) => {
-      logs.push(line);
-      console.log(line);
-    };
-
-    try {
-      let result;
-
-      switch (action) {
-        case "deploy":
-          result = await deployBuild(
-            brand,
-            { commitMsg: commitMsg || null },
-            onLog,
-          );
-          break;
-
-        case "deploy-dry":
-          result = await deployBuild(
-            brand,
-            { dryRun: true, commitMsg: commitMsg || null },
-            onLog,
-          );
-          break;
-
-        case "restart":
-          const { NodeSSH } = require("node-ssh");
-          const site = SITES[brand];
-          const ssh = new NodeSSH();
-          await ssh.connect({
-            host: site.host,
-            username: site.user,
-            privateKeyPath: site.pemPath,
-            readyTimeout: 30000,
-          });
-          const restartResult = await ssh.execCommand(
-            `sudo -u ubuntu pm2 restart ${site.pm2Process || "all"} && sudo -u ubuntu pm2 status || pm2 restart ${site.pm2Process || "all"} && pm2 status`,
-          );
-          ssh.dispose();
-          result = { ok: true, output: restartResult.stdout };
-          onLog(
-            `[RESTART:${brand}] ${restartResult.code === 0 ? "✓" : "✗"} PM2 restart`,
-          );
-          break;
-
-        case "rollback":
-          result = await rollbackBuild(brand, onLog);
-          break;
-
-        default:
-          return res.status(400).json({ ok: false, error: "Unknown action" });
-      }
-
-      res.json({ ok: true, result, logs });
-    } catch (err) {
-      res.json({ ok: false, error: err.message, logs });
-    }
-  });
-
-  app.get("/panel/status/:brand", async (req, res) => {
-    if (!isValidSession(req)) {
-      return res.status(401).json({ ok: false, error: "Not authenticated" });
-    }
-    const info = await checkRemote(req.params.brand);
-    res.json(info);
+    res.redirect("/login");
   });
 }
 
 // ═════════════════════════════════════════════════════════════
-// LOGIN HTML — the only server-rendered page left
+// LOGIN HTML
 // ═════════════════════════════════════════════════════════════
 
 function loginHTML() {
@@ -331,8 +261,17 @@ function loginHTML() {
     <h1>TCB</h1>
     <p>Email verification required</p>
     <div class="email-hint">${emailHint}</div>
-
     <div id="step1" class="step active">
+      <select id="emailSelect" style="
+        font-family:'JetBrains Mono',monospace;
+        width:100%;padding:10px;border:1px solid #333;border-radius:8px;
+        background:#0a0a0a;color:#e0e0e0;font-size:12px;margin-bottom:12px;
+        outline:none;cursor:pointer;appearance:auto;
+      ">
+        <option value="mgray@taxadvocategroup.com">mgray@</option>
+        <option value="manderson@taxadvocategroup.com">manderson@</option>
+        <option value="abanks@taxadvocategroup.com">abanks@</option>
+      </select>
       <button class="btn-send" onclick="sendCode()" id="sendBtn">Send Code to Email</button>
       <div id="sendStatus"></div>
     </div>
@@ -353,7 +292,12 @@ function loginHTML() {
       status.className = 'sending';
       status.textContent = 'Sending...';
       try {
-        const res = await fetch('/panel/send-code', { method: 'POST' });
+        const email = document.getElementById('emailSelect').value;
+        const res = await fetch('/panel/send-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
         const data = await res.json();
         if (data.ok) {
           document.getElementById('step1').classList.remove('active');
@@ -401,4 +345,4 @@ function loginHTML() {
 </html>`;
 }
 
-module.exports = { mountDeployPanel };
+module.exports = { mountLoginPanel, isValidSession };

@@ -40,8 +40,8 @@ const {
 const pbService = require("./services/phoneBurnerService");
 const cookieParser = require("cookie-parser");
 
-const deployService = require("./services/deployService");
-const { mountDeployPanel } = require("./services/deployPanel");
+const { mountDeployRoutes } = require("./services/deployService");
+const { mountLoginPanel } = require("./services/loginPanel");
 const {
   processFacebookWebhook,
   getMessengerStats,
@@ -101,7 +101,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cookieParser());
-mountDeployPanel(app, deployService);
+mountLoginPanel(app);
+mountDeployRoutes(app);
 app.get("/pb/auth", (req, res) => {
   const url = `https://www.phoneburner.com/oauth/authorize?client_id=${process.env.PB_CLIENT_ID}&redirect_uri=https://tag-webhook.ngrok.app/pb/callback&response_type=code`;
   res.redirect(url);

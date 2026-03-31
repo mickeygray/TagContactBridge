@@ -1,6 +1,8 @@
 // services/deployService.js
 // ─────────────────────────────────────────────────────────────
-// Deploy service — tells EC2 to pull from GitHub.
+// Deploy service — SSH-based deploy/rollback to EC2.
+// Also mounts the /panel/action and /panel/status routes.
+// Auth gating imported from loginPanel.js.
 // ─────────────────────────────────────────────────────────────
 
 const { NodeSSH } = require("node-ssh");
@@ -57,6 +59,8 @@ function logEvent(brand, event) {
     deployHistory[brand].log = deployHistory[brand].log.slice(-20);
   }
 }
+
+// ─── Deploy ──────────────────────────────────────────────────
 
 async function deployBuild(brand, opts = {}, onLog = console.log) {
   const site = SITES[brand];
@@ -247,11 +251,9 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
       PREV_SHA=$(git rev-parse HEAD)
       echo "PREV_SHA:$PREV_SHA"
 
-      # Stop the specific pm2 process — no || true so failure is visible
       pm2 stop ${esc.pm2} 2>/dev/null || sudo -u ubuntu pm2 stop ${esc.pm2} 2>/dev/null || echo "PM2_STOP_WARN:process may not have been running"
       echo "PM2:stopped"
 
-      # Fetch + hard reset + clean
       sudo chown -R ubuntu:ubuntu ${esc.path}
       git fetch origin ${esc.branch}
       git reset --hard origin/${esc.branch}
@@ -263,7 +265,6 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
       echo "NEW_SHA:$NEW_SHA"
       echo "NEW_MSG:$NEW_MSG"
 
-      # npm install if package.json changed
       if ! git diff --quiet $PREV_SHA HEAD -- package.json package-lock.json 2>/dev/null; then
         echo "PACKAGES:changed"
         npm install --production 2>&1 | tail -5
@@ -273,7 +274,6 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
         echo "NPM:skipped"
       fi
 
-      # Fix permissions
       if [ -d client/build ]; then
         sudo chmod -R 755 client/build/ 2>/dev/null || true
         sudo chown -R www-data:www-data client/build/ 2>/dev/null || true
@@ -282,26 +282,21 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
         echo "PERMS:no-build-dir"
       fi
 
-      # Reload Nginx
       sudo nginx -s reload 2>/dev/null || sudo systemctl reload nginx 2>/dev/null || true
       echo "NGINX:reloaded"
 
-      # Start PM2 — try each method, fail loudly if all fail
       pm2 start ${esc.pm2} 2>/dev/null \
         || sudo -u ubuntu pm2 start ${esc.pm2} 2>/dev/null \
         || pm2 restart ${esc.pm2} 2>/dev/null \
         || { echo "PM2_START_FAILED:true"; exit 1; }
 
-      # Wait for PM2 to settle
       sleep 3
 
-      # ── FIX: Check specifically for THIS process, not all processes ──
       PM2_BACKEND_ONLINE=$(pm2 list 2>/dev/null | grep -E "${pm2Name}.*online" | wc -l | tr -d ' ')
       PM2_ALL_ONLINE=$(pm2 list 2>/dev/null | grep -c "online" || echo "0")
       echo "PM2_BACKEND_ONLINE:$PM2_BACKEND_ONLINE"
       echo "PM2_ALL_ONLINE:$PM2_ALL_ONLINE"
 
-      # Count build files
       PAGE_COUNT=$(find client/build -name 'index.html' 2>/dev/null | wc -l)
       CSS_COUNT=$(find client/build/static/css -name '*.css' 2>/dev/null | wc -l)
       JS_COUNT=$(find client/build/static/js -name '*.js' 2>/dev/null | wc -l)
@@ -322,7 +317,6 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
     const npm = get("NPM");
     const perms = get("PERMS");
     const nginx = get("NGINX");
-    // ── FIX: Use per-process check, not total count ──
     const pm2BackendOnline = parseInt(get("PM2_BACKEND_ONLINE") || "0");
     const pm2AllOnline = parseInt(get("PM2_ALL_ONLINE") || "0");
     const pm2StartFailed = output.includes("PM2_START_FAILED:true");
@@ -359,7 +353,6 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
       onLog(`[DEPLOY:${brand}]   Disk: ⚠ pages=${pages} css=${css} js=${js}`);
     }
 
-    // Give PM2 a second chance if not online yet
     let finalBackendOnline = pm2BackendOnline;
     if (finalBackendOnline === 0 && !pm2StartFailed) {
       onLog(
@@ -437,6 +430,8 @@ async function deployBuild(brand, opts = {}, onLog = console.log) {
     ssh.dispose();
   }
 }
+
+// ─── Rollback ────────────────────────────────────────────────
 
 async function rollbackBuild(brand, onLog = console.log) {
   const site = SITES[brand];
@@ -545,6 +540,8 @@ async function rollbackBuild(brand, onLog = console.log) {
   }
 }
 
+// ─── Check Remote ────────────────────────────────────────────
+
 async function checkRemote(brand) {
   const site = SITES[brand];
   if (!site || !site.host) return { ok: false, error: "not configured" };
@@ -594,7 +591,6 @@ async function checkRemote(brand) {
       diskFree: get("DISK"),
       nginx: get("NGINX"),
       pm2: get("PM2_ALL"),
-      // ── FIX: expose per-process status for dashboard ──
       pm2Backend:
         parseInt(get("PM2_BACKEND") || "0") > 0
           ? `${pm2Name}: online`
@@ -618,4 +614,99 @@ async function checkRemote(brand) {
   }
 }
 
-module.exports = { deployBuild, rollbackBuild, checkRemote, SITES };
+// ─── Mount deploy routes ─────────────────────────────────────
+
+function mountDeployRoutes(app) {
+  const { isValidSession } = require("./loginPanel");
+
+  // ── Deploy / Rollback / Restart ────────────────────────────
+  app.post("/panel/action", async (req, res) => {
+    if (!isValidSession(req)) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+
+    const { action, brand: rawBrand, commitMsg } = req.body || {};
+    const brand = (rawBrand || "").toLowerCase();
+
+    if (!brand || !SITES[brand]) {
+      return res.status(400).json({ ok: false, error: "Invalid brand" });
+    }
+
+    const logs = [];
+    const onLog = (line) => {
+      logs.push(line);
+      console.log(line);
+    };
+
+    try {
+      let result;
+
+      switch (action) {
+        case "deploy":
+          result = await deployBuild(
+            brand,
+            { commitMsg: commitMsg || null },
+            onLog,
+          );
+          break;
+
+        case "deploy-dry":
+          result = await deployBuild(
+            brand,
+            { dryRun: true, commitMsg: commitMsg || null },
+            onLog,
+          );
+          break;
+
+        case "restart":
+          const { NodeSSH: RestartSSH } = require("node-ssh");
+          const site = SITES[brand];
+          const ssh = new RestartSSH();
+          await ssh.connect({
+            host: site.host,
+            username: site.user,
+            privateKeyPath: site.pemPath,
+            readyTimeout: 30000,
+          });
+          const restartResult = await ssh.execCommand(
+            `sudo -u ubuntu pm2 restart ${site.pm2Process || "all"} && sudo -u ubuntu pm2 status || pm2 restart ${site.pm2Process || "all"} && pm2 status`,
+          );
+          ssh.dispose();
+          result = { ok: true, output: restartResult.stdout };
+          onLog(
+            `[RESTART:${brand}] ${restartResult.code === 0 ? "✓" : "✗"} PM2 restart`,
+          );
+          break;
+
+        case "rollback":
+          result = await rollbackBuild(brand, onLog);
+          break;
+
+        default:
+          return res.status(400).json({ ok: false, error: "Unknown action" });
+      }
+
+      res.json({ ok: true, result, logs });
+    } catch (err) {
+      res.json({ ok: false, error: err.message, logs });
+    }
+  });
+
+  // ── Remote status check ────────────────────────────────────
+  app.get("/panel/status/:brand", async (req, res) => {
+    if (!isValidSession(req)) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+    const brand = (req.params.brand || "").toLowerCase();
+    const info = await checkRemote(brand);
+    res.json(info);
+  });
+}
+
+module.exports = {
+  deployBuild,
+  rollbackBuild,
+  checkRemote,
+  mountDeployRoutes,
+  SITES,
+};

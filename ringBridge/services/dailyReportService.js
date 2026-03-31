@@ -140,7 +140,7 @@ async function generateAndSend(options = {}) {
         "transcription.status": "completed",
         "callScore.overall": { $exists: true },
         archivedAt: { $exists: false },
-        createdAt: { $lte: endOfDay },
+        createdAt: { $lte: dayEnd },
       },
       { $set: { archivedAt: new Date() } },
     );

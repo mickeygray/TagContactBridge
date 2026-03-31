@@ -60,7 +60,6 @@ function AppContent() {
 
       <Routes>
         {/* Login — fallback for JWT agents, nginx gate handles primary auth */}
-        <Route path="/login" element={<Login />} />
 
         {/* Main dashboard */}
         <Route
