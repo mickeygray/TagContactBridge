@@ -14,7 +14,7 @@ const express = require("express");
 const path = require("path");
 const config = require("./config/env");
 const log = require("./utils/logger");
-
+const { startCron } = require("./services/dailyReportService");
 // Shared MongoDB connection from parent TagContactBridge
 const connectDB = require("../config/db");
 
@@ -79,6 +79,11 @@ async function start() {
     await webhookManager.initializeAll();
   } catch (err) {
     log.warn("Webhook initialization failed:", err.message);
+  }
+  try {
+    startCron();
+  } catch (err) {
+    log.warn("Daily report cron failed to start:", err.message);
   }
 
   // Start server

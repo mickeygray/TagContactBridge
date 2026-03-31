@@ -393,7 +393,7 @@ async function findCaseByPhone(phone, domain = null) {
   if (digits.length < 10)
     return { ok: false, matches: [], error: "Invalid phone" };
 
-  // Logics wants the raw digits or formatted — try both header styles
+  const formatted = formatPhoneForLogics(digits);
   const domainsToSearch = domain ? [domain] : ["TAG", "WYNN"];
   const matches = [];
 
@@ -403,7 +403,7 @@ async function findCaseByPhone(phone, domain = null) {
 
     try {
       const resp = await axios.get(`${baseUrl}/Find/FindCaseByPhone`, {
-        headers: { phone: digits },
+        params: { phone: digits },
         auth: { username: apiKey, password: secret },
         timeout: 10000,
       });
@@ -439,12 +439,16 @@ async function findCaseByPhone(phone, domain = null) {
           state: r.State || "",
           taxAmount: r.TaxAmount || 0,
           createdDate: r.CreatedDate || null,
-          sourceName: r.SourceName || "", // ← add this
+          sourceName: r.SourceName || "",
         });
       }
     } catch (err) {
-      console.log(`[LOGICS] FindCaseByPhone failed for ${d}: ${err.message}`);
-      // Don't fail the whole search — try the next domain
+      const detail = err.response?.data
+        ? JSON.stringify(err.response.data)
+        : "no response body";
+      console.log(
+        `[LOGICS] FindCaseByPhone failed for ${d}: ${err.message} | ${detail}`,
+      );
     }
   }
 

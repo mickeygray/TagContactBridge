@@ -101,6 +101,13 @@ async function processPresenceEvent(event) {
       // If they were already available/away/offline, NoCall is just confirmation
       break;
 
+    case 'OnHold':
+      // Agent put the caller on hold — still on the call
+      if (!['onCall', 'ringing'].includes(agent.status)) {
+        newStatus = 'onCall';
+      }
+      break;
+
     default:
       // Unknown telephony status — log but don't change state
       if (telephonyStatus) {

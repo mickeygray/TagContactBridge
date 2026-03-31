@@ -13,72 +13,90 @@ const rcAuthService = require("./rcAuthService");
 const ContactActivity = require("../models/ContactActivity");
 
 // ─── Config ──────────────────────────────────────────────────
-// Pull from parent .env
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-
-// How long to wait after call ends for RC to process the recording
-const RECORDING_DELAY_MS = parseInt(process.env.RB_RECORDING_DELAY_MS) || 45000; // 45s default
-// Max retries to find the recording in call log
+const RECORDING_DELAY_MS = parseInt(process.env.RB_RECORDING_DELAY_MS) || 60000;
 const RECORDING_MAX_RETRIES =
-  parseInt(process.env.RB_RECORDING_MAX_RETRIES) || 4;
-const RECORDING_RETRY_INTERVAL_MS = 20000; // 20s between retries
+  parseInt(process.env.RB_RECORDING_MAX_RETRIES) || 6;
+const RECORDING_RETRY_INTERVAL_MS = 30000;
 
-// Temp dir for audio files
 const TEMP_DIR = path.join(os.tmpdir(), "ringbridge-recordings");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// ─── Main pipeline: called from logicsLookupService.onCallEnd ─
-// Only runs for outbound calls from monitored agents.
-// Fire-and-forget — don't block the webhook flow.
-// ─────────────────────────────────────────────────────────────
+// ─── Main pipeline ───────────────────────────────────────────
 
 async function processOutboundRecording(activityId) {
   const activity = await ContactActivity.findById(activityId);
   if (!activity) return;
 
-  // Guard: only outbound
-  if (activity.direction !== "Outbound") return;
+  const ph = activity.phoneFormatted || activity.phone || "?";
+  const agent = activity.agentName || "?";
 
-  // Guard: need a phone number for the report to be useful
-  if (!activity.phone) {
-    log.info(`[Transcribe] Skipping ${activityId} — no phone number`);
+  // Guards
+  if (activity.direction !== "Outbound") {
+    log.pipeSkip("REC-GUARD", agent, `${ph} — not outbound`);
     return;
   }
-
-  // Guard: check we have API keys
+  if (!activity.phone) {
+    log.pipeSkip("REC-GUARD", agent, `${ph} — no phone number`);
+    return;
+  }
   if (!OPENAI_API_KEY) {
-    log.warn("[Transcribe] OPENAI_API_KEY not set — skipping transcription");
+    log.pipeFail(
+      "REC-GUARD",
+      agent,
+      `${ph} — OPENAI_API_KEY not set, skipping`,
+    );
     activity.transcription = { status: "skipped", error: "No OPENAI_API_KEY" };
     await activity.save();
     return;
   }
 
+  log.pipe("REC-PIPELINE", agent, `${ph} — starting transcription pipeline`);
+
   try {
     activity.transcription = { status: "processing" };
     await activity.save();
 
-    // Step 1: Wait for recording to be available
-    log.info(
-      `[Transcribe] Waiting ${RECORDING_DELAY_MS / 1000}s for recording to land...`,
+    // Step 1: Wait for recording
+    log.pipe(
+      "REC-WAIT",
+      agent,
+      `${ph} — waiting ${RECORDING_DELAY_MS / 1000}s for RC to process recording...`,
     );
     await sleep(RECORDING_DELAY_MS);
 
-    // Step 2: Find the recording in RC call log
+    // Step 2: Find recording in call log
+    log.pipe(
+      "REC-SEARCH",
+      agent,
+      `${ph} — searching RC call log (session: ${activity.callSessionId || "?"})...`,
+    );
     const recording = await findRecording(activity);
     if (!recording) {
+      log.pipeFail(
+        "REC-SEARCH",
+        agent,
+        `${ph} — recording NOT FOUND after ${RECORDING_MAX_RETRIES} attempts`,
+      );
       activity.transcription = {
         status: "no_recording",
         error: "Recording not found in RC call log",
       };
       await activity.save();
-      log.warn(`[Transcribe] No recording found for activity ${activityId}`);
       return;
     }
+    log.pipeOk(
+      "REC-SEARCH",
+      agent,
+      `${ph} — found recording (${recording.duration}s, id: ${recording.id})`,
+    );
 
-    // Step 3: Download the audio
+    // Step 3: Download audio
+    log.pipe("REC-DOWNLOAD", agent, `${ph} — downloading audio...`);
     const audioPath = await downloadRecording(recording.contentUri, activityId);
     if (!audioPath) {
+      log.pipeFail("REC-DOWNLOAD", agent, `${ph} — download failed`);
       activity.transcription = {
         status: "download_failed",
         error: "Could not download recording",
@@ -86,12 +104,24 @@ async function processOutboundRecording(activityId) {
       await activity.save();
       return;
     }
+    const fileSize = (fs.statSync(audioPath).size / 1024 / 1024).toFixed(2);
+    log.pipeOk(
+      "REC-DOWNLOAD",
+      agent,
+      `${ph} — ${fileSize}MB saved to ${path.basename(audioPath)}`,
+    );
 
     // Step 4: Transcribe with Whisper
-    log.info(`[Transcribe] Sending to Whisper...`);
+    log.pipe(
+      "WHISPER",
+      agent,
+      `${ph} — sending ${fileSize}MB to OpenAI Whisper...`,
+    );
+    const whisperStart = Date.now();
     const transcript = await transcribeWithWhisper(audioPath);
+    const whisperMs = Date.now() - whisperStart;
 
-    // Step 5: Clean up temp file
+    // Clean up temp file
     try {
       fs.unlinkSync(audioPath);
     } catch {
@@ -99,6 +129,7 @@ async function processOutboundRecording(activityId) {
     }
 
     if (!transcript) {
+      log.pipeFail("WHISPER", agent, `${ph} — returned empty (${whisperMs}ms)`);
       activity.transcription = {
         status: "transcription_failed",
         error: "Whisper returned empty",
@@ -106,15 +137,48 @@ async function processOutboundRecording(activityId) {
       await activity.save();
       return;
     }
+    log.pipeOk(
+      "WHISPER",
+      agent,
+      `${ph} — ${transcript.length} chars in ${whisperMs}ms`,
+    );
 
-    // Step 6: Score with Claude (if key available)
+    // Step 5: Score with Claude
     let scoring = null;
     if (ANTHROPIC_API_KEY) {
-      log.info(`[Transcribe] Scoring with Claude...`);
+      log.pipe("CLAUDE-QC", agent, `${ph} — scoring with Claude Sonnet...`);
+      const claudeStart = Date.now();
       scoring = await scoreWithClaude(transcript, activity);
+      const claudeMs = Date.now() - claudeStart;
+      if (scoring) {
+        log.pipeOk(
+          "CLAUDE-QC",
+          agent,
+          `${ph} — score: ${scoring.overall}/10, verdict: ${scoring.lead_verdict} (${claudeMs}ms)`,
+        );
+        if (scoring.red_flags?.length > 0) {
+          log.pipe(
+            "CLAUDE-QC",
+            agent,
+            `${ph} — red flags: ${scoring.red_flags.join(", ")}`,
+          );
+        }
+      } else {
+        log.pipeFail(
+          "CLAUDE-QC",
+          agent,
+          `${ph} — scoring returned null (${claudeMs}ms)`,
+        );
+      }
+    } else {
+      log.pipeSkip(
+        "CLAUDE-QC",
+        agent,
+        `${ph} — ANTHROPIC_API_KEY not set, skipping scoring`,
+      );
     }
 
-    // Step 7: Save everything
+    // Step 6: Save everything
     activity.transcription = {
       status: "completed",
       text: transcript,
@@ -122,17 +186,18 @@ async function processOutboundRecording(activityId) {
       recordingUri: recording.contentUri,
       transcribedAt: new Date(),
     };
-
     if (scoring) {
       activity.callScore = scoring;
     }
-
     await activity.save();
-    log.success(
-      `[Transcribe] Completed for ${activity.phoneFormatted || activity.phone} — ${transcript.length} chars, score: ${scoring?.overall || "N/A"}`,
+
+    log.pipeOk(
+      "REC-PIPELINE",
+      agent,
+      `${ph} — COMPLETE | transcript: ${transcript.length} chars | score: ${scoring?.overall || "N/A"}/10 | verdict: ${scoring?.lead_verdict || "N/A"}`,
     );
 
-    // Broadcast update via SSE
+    // SSE broadcast
     try {
       const { broadcastSSE } = require("../engine/stateEngine");
       broadcastSSE("transcriptionComplete", {
@@ -145,45 +210,52 @@ async function processOutboundRecording(activityId) {
         transcriptPreview: transcript.slice(0, 200),
       });
     } catch {
-      /* SSE broadcast is best-effort */
+      /* best-effort */
     }
   } catch (err) {
-    log.error(`[Transcribe] Pipeline failed for ${activityId}: ${err.message}`);
+    log.pipeFail("REC-PIPELINE", agent, `${ph} — FATAL: ${err.message}`);
     activity.transcription = { status: "error", error: err.message };
     await activity.save();
   }
 }
 
-// ─── Step 2: Find recording in RC call log ───────────────────
+// ─── Find recording in RC call log ───────────────────────────
 
 async function findRecording(activity) {
   const platform = rcAuthService.getPlatform();
   if (!platform) {
-    log.warn("[Transcribe] RC not authenticated — cannot fetch recording");
+    log.pipeFail("REC-SEARCH", "", "RC not authenticated");
     return null;
   }
 
+  const ph = activity.phoneFormatted || activity.phone || "?";
+  const agent = activity.agentName || "?";
+  const agentLabel = `${agent} ${ph}`;
+
   for (let attempt = 0; attempt < RECORDING_MAX_RETRIES; attempt++) {
     try {
-      // Search call log for this extension around the call time
+      // Extension-level call-log does NOT support sessionId as a query param
+      // (RC rejects it when combined with type, direction, or dateFrom).
+      // Instead: query by time window + direction + type, match sessionId client-side.
+      // This is the pattern RC developer support recommends.
       const params = {
         direction: "Outbound",
         type: "Voice",
-        withRecording: true,
         perPage: 10,
         view: "Detailed",
       };
 
-      // If we have a session ID, use it
-      if (activity.callSessionId) {
-        params.sessionId = activity.callSessionId;
+      if (activity.callStartTime) {
+        params.dateFrom = new Date(
+          activity.callStartTime.getTime() - 30 * 60000,
+        ).toISOString();
       }
 
-      // Time window: 30 min before call start to now
-      if (activity.callStartTime) {
-        const from = new Date(activity.callStartTime.getTime() - 30 * 60000);
-        params.dateFrom = from.toISOString();
-      }
+      log.pipe(
+        "REC-SEARCH",
+        agent,
+        `${ph} — querying call log (attempt ${attempt + 1}/${RECORDING_MAX_RETRIES}, will match sessionId: ${activity.callSessionId || "none"} client-side)`,
+      );
 
       const resp = await rcAuthService.apiCall(
         "get",
@@ -191,24 +263,89 @@ async function findRecording(activity) {
         params,
       );
 
-      if (!resp?.ok) continue;
-      const records = resp.data?.records || [];
+      // ─── Verbose diagnostic logging ───────────────────────
+      if (!resp?.ok) {
+        const rawStatus = resp?.status || resp?.statusCode || "unknown";
+        const rawError = resp?.error || resp?.message || "";
+        const rawData = resp?.data
+          ? JSON.stringify(resp.data).slice(0, 500)
+          : "no data";
+        log.pipeFail(
+          "REC-SEARCH",
+          agent,
+          `${ph} — API returned ok:false (attempt ${attempt + 1}) | status: ${rawStatus} | error: ${rawError} | data: ${rawData}`,
+        );
 
-      // Try to match by session ID first
+        if (attempt < RECORDING_MAX_RETRIES - 1) {
+          await sleep(RECORDING_RETRY_INTERVAL_MS);
+        }
+        continue;
+      }
+
+      const records = resp.data?.records || [];
+      const totalRecords = resp.data?.paging?.totalElements ?? records.length;
+
+      log.pipe(
+        "REC-SEARCH",
+        agent,
+        `${ph} — API ok, ${records.length} records returned (total: ${totalRecords})`,
+      );
+
+      // Log each record's details
+      for (const r of records) {
+        const hasRecording = !!r.recording;
+        const recId = r.recording?.id || "none";
+        const rSessionId = r.sessionId || "none";
+        const rTo = r.to?.phoneNumber || r.to?.name || "?";
+        const rDuration = r.duration || 0;
+        const sessionMatch =
+          rSessionId === activity.callSessionId ? "✓ MATCH" : "✗ mismatch";
+        log.pipe(
+          "REC-SEARCH",
+          agent,
+          `  record: session=${rSessionId} (${sessionMatch}) to=${rTo} dur=${rDuration}s recording=${hasRecording ? `YES id:${recId}` : "NO — not yet attached"}`,
+        );
+      }
+
+      // Try to match by session ID
       if (activity.callSessionId) {
-        const match = records.find(
+        // Session match WITH recording — success
+        const matchWithRec = records.find(
           (r) => r.sessionId === activity.callSessionId && r.recording,
         );
-        if (match?.recording) {
+        if (matchWithRec?.recording) {
+          log.pipeOk(
+            "REC-SEARCH",
+            agent,
+            `${ph} — ✓ FOUND recording (session match) id:${matchWithRec.recording.id}`,
+          );
           return {
-            contentUri: match.recording.contentUri,
-            duration: match.duration,
-            id: match.recording.id,
+            contentUri: matchWithRec.recording.contentUri,
+            duration: matchWithRec.duration,
+            id: matchWithRec.recording.id,
           };
+        }
+
+        // Session match WITHOUT recording — RC still processing
+        const matchNoRec = records.find(
+          (r) => r.sessionId === activity.callSessionId && !r.recording,
+        );
+        if (matchNoRec) {
+          log.pipe(
+            "REC-SEARCH",
+            agent,
+            `${ph} — session match EXISTS but recording NOT YET ATTACHED (attempt ${attempt + 1}) — RC still processing`,
+          );
+        } else if (records.length === 0) {
+          log.pipe(
+            "REC-SEARCH",
+            agent,
+            `${ph} — zero records returned — call log entry not synced yet (attempt ${attempt + 1})`,
+          );
         }
       }
 
-      // Fallback: match by phone number and time proximity
+      // Fallback: match by phone number
       if (activity.phone) {
         const phoneDigits = activity.phone.replace(/\D/g, "");
         for (const r of records) {
@@ -218,6 +355,11 @@ async function findRecording(activity) {
             toDigits.endsWith(phoneDigits) ||
             phoneDigits.endsWith(toDigits.slice(-10))
           ) {
+            log.pipeOk(
+              "REC-SEARCH",
+              agent,
+              `${ph} — ✓ FOUND recording (phone fallback) id:${r.recording.id}`,
+            );
             return {
               contentUri: r.recording.contentUri,
               duration: r.duration,
@@ -227,17 +369,28 @@ async function findRecording(activity) {
         }
       }
 
-      // If no match yet and we have retries left, wait and try again
+      // No match yet — retry
       if (attempt < RECORDING_MAX_RETRIES - 1) {
-        log.info(
-          `[Transcribe] Recording not found yet, retry ${attempt + 1}/${RECORDING_MAX_RETRIES}...`,
+        log.pipe(
+          "REC-SEARCH",
+          agent,
+          `${ph} — no recording yet, waiting ${RECORDING_RETRY_INTERVAL_MS / 1000}s before retry...`,
         );
         await sleep(RECORDING_RETRY_INTERVAL_MS);
       }
     } catch (err) {
-      log.warn(
-        `[Transcribe] Call log query failed (attempt ${attempt + 1}): ${err.message}`,
+      log.pipeFail(
+        "REC-SEARCH",
+        agent,
+        `${ph} — EXCEPTION (attempt ${attempt + 1}): ${err.message}`,
       );
+      if (err.response) {
+        log.pipeFail(
+          "REC-SEARCH",
+          agent,
+          `  HTTP ${err.response.status} — ${JSON.stringify(err.response.data || "").slice(0, 300)}`,
+        );
+      }
       if (attempt < RECORDING_MAX_RETRIES - 1) {
         await sleep(RECORDING_RETRY_INTERVAL_MS);
       }
@@ -247,16 +400,15 @@ async function findRecording(activity) {
   return null;
 }
 
-// ─── Step 3: Download recording audio ────────────────────────
+// ─── Download recording ──────────────────────────────────────
 
 async function downloadRecording(contentUri, activityId) {
   try {
-    const platform = rcAuthService.getPlatform();
-    if (!platform) return null;
-
-    // RC content URIs need auth token
     const token = await rcAuthService.getAccessToken();
-    if (!token) return null;
+    if (!token) {
+      log.pipeFail("REC-DOWNLOAD", "", "No RC access token available");
+      return null;
+    }
 
     const axios = require("axios");
     const resp = await axios.get(contentUri, {
@@ -266,7 +418,6 @@ async function downloadRecording(contentUri, activityId) {
       maxRedirects: 5,
     });
 
-    // Determine extension from content-type
     const ct = resp.headers["content-type"] || "";
     const ext = ct.includes("mpeg")
       ? ".mp3"
@@ -274,19 +425,20 @@ async function downloadRecording(contentUri, activityId) {
         ? ".wav"
         : ".mp3";
     const filePath = path.join(TEMP_DIR, `${activityId}${ext}`);
-
     fs.writeFileSync(filePath, resp.data);
-    const sizeMB = (resp.data.length / 1024 / 1024).toFixed(2);
-    log.info(`[Transcribe] Downloaded recording: ${sizeMB}MB → ${filePath}`);
 
     return filePath;
   } catch (err) {
-    log.error(`[Transcribe] Download failed: ${err.message}`);
+    log.pipeFail(
+      "REC-DOWNLOAD",
+      "",
+      `HTTP error: ${err.response?.status || "?"} — ${err.message}`,
+    );
     return null;
   }
 }
 
-// ─── Step 4: Transcribe with OpenAI Whisper ──────────────────
+// ─── Whisper transcription ───────────────────────────────────
 
 async function transcribeWithWhisper(audioPath) {
   try {
@@ -307,31 +459,27 @@ async function transcribeWithWhisper(audioPath) {
           ...form.getHeaders(),
           Authorization: `Bearer ${OPENAI_API_KEY}`,
         },
-        timeout: 120000, // 2 min for long calls
+        timeout: 120000,
         maxContentLength: Infinity,
       },
     );
 
     const data = resp.data;
-
-    // Build a readable transcript with speaker segments
     if (data.segments && data.segments.length > 0) {
-      // Whisper doesn't do speaker diarization natively,
-      // but the segments give us timed chunks we can use
       return data.segments.map((s) => s.text.trim()).join(" ");
     }
-
     return data.text || "";
   } catch (err) {
-    log.error(
-      `[Transcribe] Whisper API failed: ${err.response?.data?.error?.message || err.message}`,
+    log.pipeFail(
+      "WHISPER",
+      "",
+      `API error: ${err.response?.data?.error?.message || err.message}`,
     );
     return null;
   }
 }
 
-// ─── Step 5: Score with Claude ───────────────────────────────
-// Produces a structured score for vendor lead quality reporting.
+// ─── Claude scoring ──────────────────────────────────────────
 
 async function scoreWithClaude(transcript, activity) {
   try {
@@ -403,18 +551,17 @@ ${transcript.slice(0, 12000)}`;
     );
 
     const text = resp.data?.content?.[0]?.text || "";
-
-    // Parse JSON — strip any markdown fences
     const clean = text
       .replace(/```json\s*/g, "")
       .replace(/```\s*/g, "")
       .trim();
     const score = JSON.parse(clean);
-
     return score;
   } catch (err) {
-    log.error(
-      `[Transcribe] Claude scoring failed: ${err.response?.data?.error?.message || err.message}`,
+    log.pipeFail(
+      "CLAUDE-QC",
+      "",
+      `API error: ${err.response?.data?.error?.message || err.message}`,
     );
     return null;
   }
@@ -426,22 +573,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ─── Manual transcription trigger (for dashboard retry) ──────
-
 async function retryTranscription(activityId) {
   const activity = await ContactActivity.findById(activityId);
   if (!activity) throw new Error("Activity not found");
   if (activity.direction !== "Outbound")
     throw new Error("Only outbound calls are transcribed");
 
-  // Reset and re-run
+  const ph = activity.phoneFormatted || activity.phone || "?";
+  log.pipe(
+    "REC-RETRY",
+    activity.agentName || "?",
+    `${ph} — manual retry triggered`,
+  );
+
   activity.transcription = { status: "retrying" };
   activity.callScore = undefined;
   await activity.save();
 
-  // Fire-and-forget
   processOutboundRecording(activityId).catch((err) =>
-    log.error(`[Transcribe] Retry failed for ${activityId}: ${err.message}`),
+    log.pipeFail(
+      "REC-RETRY",
+      activity.agentName || "?",
+      `${ph}: ${err.message}`,
+    ),
   );
 
   return { ok: true, message: "Transcription retry started" };

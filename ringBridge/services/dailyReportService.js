@@ -9,19 +9,12 @@
 // Also triggerable via POST /api/admin/report/send
 // ─────────────────────────────────────────────────────────────
 
-const sgMail = require("@sendgrid/mail");
+const sendEmail = require("../../utils/sendEmail");
 const ContactActivity = require("../models/ContactActivity");
 const log = require("../utils/logger");
 
 // ─── Config ──────────────────────────────────────────────────
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
-const REPORT_FROM_EMAIL =
-  process.env.RB_REPORT_FROM ||
-  process.env.SENDGRID_FROM_EMAIL ||
-  "reports@wynntaxsolutions.com";
-const REPORT_FROM_NAME =
-  process.env.RB_REPORT_FROM_NAME || "RingBridge Reports";
 const REPORT_TO_EMAILS = (process.env.RB_REPORT_TO || "")
   .split(",")
   .map((e) => e.trim())
@@ -30,23 +23,12 @@ const REPORT_CRON_HOUR = parseInt(process.env.RB_REPORT_HOUR) || 19;
 const REPORT_CRON_MINUTE = parseInt(process.env.RB_REPORT_MINUTE) || 0;
 const TIMEZONE = process.env.RB_REPORT_TZ || "America/Chicago";
 
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-}
-
 // ─── Cron ────────────────────────────────────────────────────
 // Interval-based — checks every minute. No extra dependency.
 
 let lastReportDate = null;
 
 function startCron() {
-  if (!SENDGRID_API_KEY || REPORT_TO_EMAILS.length === 0) {
-    log.warn(
-      "[Report] Daily report disabled — SENDGRID_API_KEY or RB_REPORT_TO not set",
-    );
-    return;
-  }
-
   log.info(
     `[Report] Scheduled ${REPORT_CRON_HOUR}:${String(REPORT_CRON_MINUTE).padStart(2, "0")} ${TIMEZONE} → ${REPORT_TO_EMAILS.join(", ")}`,
   );
@@ -75,8 +57,6 @@ function startCron() {
 
 async function generateAndSend(options = {}) {
   const { dateOverride = null, recipients = null } = options;
-
-  if (!SENDGRID_API_KEY) throw new Error("SENDGRID_API_KEY not configured");
 
   const toEmails = recipients || REPORT_TO_EMAILS;
   if (toEmails.length === 0)
@@ -133,22 +113,43 @@ async function generateAndSend(options = {}) {
   const html = buildHTML(reportDate, scored, unscored, stats);
   const csv = buildCSV(scored);
 
-  const msg = {
-    to: toEmails,
-    from: { email: REPORT_FROM_EMAIL, name: REPORT_FROM_NAME },
-    subject: `Lead Quality Report — ${reportDate} | ${scored.length} calls, avg ${stats.avgScore}/10`,
-    html,
-    attachments: [
-      {
-        content: Buffer.from(csv).toString("base64"),
-        filename: `vendor-lead-scores-${reportDate}.csv`,
-        type: "text/csv",
-        disposition: "attachment",
-      },
-    ],
-  };
+  const csvBuffer = Buffer.from(csv);
 
-  await sgMail.send(msg);
+  for (const recipient of toEmails) {
+    await sendEmail({
+      to: recipient,
+      from: "mgray@taxadvocategroup.com",
+      subject: `Lead Quality Report — ${reportDate} | ${scored.length} calls, avg ${stats.avgScore}/10`,
+      html,
+      text: `Vendor Lead Quality Report — ${reportDate}\n${scored.length} scored calls, avg ${stats.avgScore}/10\nSee attached CSV.`,
+      domain: "WYNN",
+      attachments: [
+        {
+          filename: `vendor-lead-scores-${reportDate}.csv`,
+          content: csvBuffer,
+          contentType: "text/csv",
+        },
+      ],
+    });
+  }
+  // Archive scored calls so the live dashboard clears
+  try {
+    const archiveResult = await ContactActivity.updateMany(
+      {
+        direction: "Outbound",
+        "transcription.status": "completed",
+        "callScore.overall": { $exists: true },
+        archivedAt: { $exists: false },
+        createdAt: { $lte: endOfDay },
+      },
+      { $set: { archivedAt: new Date() } },
+    );
+    log.info(
+      `[REPORT] Archived ${archiveResult.modifiedCount} scored calls after report`,
+    );
+  } catch (archiveErr) {
+    log.warn(`[REPORT] Archive after send failed: ${archiveErr.message}`);
+  }
   log.success(
     `[Report] Sent to ${toEmails.join(", ")} — ${scored.length} scored, ${unscored.length} unscored`,
   );

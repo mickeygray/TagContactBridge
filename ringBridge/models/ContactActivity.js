@@ -64,7 +64,7 @@ const contactActivitySchema = new mongoose.Schema(
     enrichmentAttempts: { type: Number, default: 0 },
     lastEnrichmentAt: Date,
     enrichmentError: String,
-
+    archivedAt: Date,
     // ─── Transcription (outbound calls only) ──────────────
     transcription: {
       status: {
