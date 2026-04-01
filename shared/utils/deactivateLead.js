@@ -23,7 +23,7 @@ let _removePbContact;
 function getRemovePbContact() {
   if (!_removePbContact) {
     try {
-      const pbService = require("../services/phoneBurnerService");
+      const pbService = require("../../leadBridge/services/phoneBurnerService");
       _removePbContact = pbService.removePbContact;
     } catch {
       _removePbContact = async () => ({ success: false, skipped: true });

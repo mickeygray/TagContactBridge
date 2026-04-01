@@ -15,6 +15,9 @@
     "clientbridge:debug": "nodemon clientBridge/server.js",
     "ringbridge:debug": "nodemon ringBridge/server.js",
 
+    "test": "node scripts/smoke-test-backend.js",
+    "test:live": "node scripts/smoke-test-live.js",
+
     "client": "npm start --prefix clientBridge/client",
     "client:build": "npm run build --prefix clientBridge/client",
     "client:install": "npm install --prefix clientBridge/client",
