@@ -28,6 +28,7 @@ const SITES = {
     pm2Process: process.env.DEPLOY_WYNN_PM2 || "backend",
     branch: process.env.DEPLOY_WYNN_BRANCH || "master",
     url: "https://www.wynntaxsolutions.com",
+    contentPath: "/var/www/WynnTax/content",
   },
   tag: {
     label: "Tax Advocate Group",
@@ -39,6 +40,18 @@ const SITES = {
     pm2Process: process.env.DEPLOY_TAG_PM2 || "backend",
     branch: process.env.DEPLOY_TAG_BRANCH || "master",
     url: "https://www.taxadvocategroup.com",
+    contentPath: "/var/www/TaxAdvocateGroup/content",
+  },
+  tcb: {
+    label: "TagContactBridge",
+    host: process.env.DEPLOY_TAG_HOST || "",
+    user: process.env.DEPLOY_TAG_USER || "ubuntu",
+    pemPath: process.env.DEPLOY_TAG_PEM || "",
+    remotePath: "/var/www/tagcontactbridge",
+    localRepoPath: "",
+    pm2Process: "all",
+    branch: process.env.DEPLOY_TAG_BRANCH || "master",
+    url: "",
   },
 };
 
@@ -701,12 +714,158 @@ function mountDeployRoutes(app) {
     const info = await checkRemote(brand);
     res.json(info);
   });
+
+  // ── Content push (blog posts, images — no restart) ────────
+  app.post("/panel/content", async (req, res) => {
+    if (!isValidSession(req)) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+
+    const { brand: rawBrand, files } = req.body || {};
+    const brand = (rawBrand || "").toLowerCase();
+
+    if (!brand || !SITES[brand]) {
+      return res.status(400).json({ ok: false, error: "Invalid brand" });
+    }
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ ok: false, error: "No files provided" });
+    }
+
+    const logs = [];
+    try {
+      const result = await pushContent(brand, files, (line) => {
+        logs.push(line);
+        console.log(line);
+      });
+      res.json({ ok: true, result, logs });
+    } catch (err) {
+      res.json({ ok: false, error: err.message, logs });
+    }
+  });
+
+  // ── List content files on remote ──────────────────────────
+  app.get("/panel/content/:brand", async (req, res) => {
+    if (!isValidSession(req)) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+    const brand = (req.params.brand || "").toLowerCase();
+    const result = await listContent(brand);
+    res.json(result);
+  });
+}
+
+// ─── Content Push (no restart, no git) ──────────────────────
+// Writes files to the site's content/ directory via SSH/SFTP.
+// Used for blog posts, images, and series content from the dashboard.
+// The marketing sites read from content/ at runtime — no rebuild needed.
+//
+// Content directory structure:
+//   /var/www/{site}/content/
+//   ├── blog/
+//   │   ├── 2026-04-01-irs-payment-plans.json
+//   │   └── 2026-03-15-tax-deadline.json
+//   ├── images/
+//   │   ├── blog/hero-irs-payment.jpg
+//   │   └── team/headshot-smith.jpg
+//   └── series/
+//       └── tax-tips-2026.json
+
+async function pushContent(brand, files, onLog = console.log) {
+  const site = SITES[brand];
+  if (!site) throw new Error(`Unknown brand: ${brand}`);
+  if (!site.host) throw new Error(`No host configured for ${brand}`);
+  if (!site.contentPath) throw new Error(`No contentPath for ${brand}`);
+
+  const ssh = new NodeSSH();
+  const startTime = Date.now();
+
+  try {
+    onLog(`[CONTENT:${brand}] Connecting to ${site.host}...`);
+    await ssh.connect({
+      host: site.host,
+      username: site.user,
+      privateKeyPath: site.pemPath,
+      readyTimeout: 30000,
+    });
+
+    // Ensure content directories exist
+    await ssh.execCommand(`mkdir -p ${shellEscape(site.contentPath)}/{blog,images,series}`);
+
+    const results = [];
+    for (const file of files) {
+      const remotePath = `${site.contentPath}/${file.path}`;
+      const remoteDir = remotePath.substring(0, remotePath.lastIndexOf("/"));
+
+      // Ensure subdirectory exists
+      await ssh.execCommand(`mkdir -p ${shellEscape(remoteDir)}`);
+
+      if (file.content) {
+        // Write text content (JSON, markdown, etc.)
+        await ssh.execCommand(`cat > ${shellEscape(remotePath)} << 'CONTENT_EOF'\n${file.content}\nCONTENT_EOF`);
+        onLog(`[CONTENT:${brand}] ✓ Wrote ${file.path} (${file.content.length} bytes)`);
+      } else if (file.localPath) {
+        // Upload binary file (images, PDFs)
+        await ssh.putFile(file.localPath, remotePath);
+        onLog(`[CONTENT:${brand}] ✓ Uploaded ${file.path}`);
+      }
+
+      results.push({ path: file.path, ok: true });
+    }
+
+    // Fix permissions
+    await ssh.execCommand(
+      `sudo chown -R www-data:www-data ${shellEscape(site.contentPath)} 2>/dev/null || true`
+    );
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    onLog(`[CONTENT:${brand}] ✓ Pushed ${results.length} file(s) in ${duration}s`);
+
+    logEvent(brand, { action: "content-push", files: results.length, duration });
+    return { ok: true, brand, files: results, duration: `${duration}s` };
+  } catch (err) {
+    onLog(`[CONTENT:${brand}] ✗ ${err.message}`);
+    throw err;
+  } finally {
+    ssh.dispose();
+  }
+}
+
+async function listContent(brand) {
+  const site = SITES[brand];
+  if (!site?.host || !site?.contentPath) return { ok: false, error: "Not configured" };
+
+  const ssh = new NodeSSH();
+  try {
+    await ssh.connect({
+      host: site.host,
+      username: site.user,
+      privateKeyPath: site.pemPath,
+      readyTimeout: 30000,
+    });
+
+    const result = await ssh.execCommand(
+      `find ${shellEscape(site.contentPath)} -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -50 | awk '{print $2}'`
+    );
+
+    const files = result.stdout.trim().split("\n").filter(Boolean).map((f) => {
+      const relative = f.replace(site.contentPath + "/", "");
+      return { path: relative, fullPath: f };
+    });
+
+    return { ok: true, brand, files };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  } finally {
+    ssh.dispose();
+  }
 }
 
 module.exports = {
   deployBuild,
   rollbackBuild,
   checkRemote,
+  pushContent,
+  listContent,
   mountDeployRoutes,
   SITES,
 };

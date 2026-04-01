@@ -251,7 +251,47 @@ All in `.env` at project root. See the spec document for the full list. Key grou
 
 ## Deployment (EC2)
 
-nginx terminates TLS and proxies to the three ports:
+### File system layout
+
+```
+/var/www/
+├── tagcontactbridge/         ← this repo (TCB platform)
+│   ├── leadBridge/
+│   ├── clientBridge/
+│   ├── ringBridge/
+│   ├── shared/
+│   └── ecosystem.config.js
+│
+├── TaxAdvocateGroup/         ← TAG marketing site (separate repo)
+│   ├── src/                  ← git-tracked source code
+│   ├── build/ or public/     ← built/static site
+│   └── content/              ← NOT in git — content pushed from TCB dashboard
+│       ├── blog/             ← JSON blog posts
+│       ├── images/           ← uploaded images
+│       └── series/           ← recurring content series
+│
+└── WynnTax/                  ← WYNN marketing site (separate repo)
+    ├── src/
+    ├── build/ or public/
+    └── content/              ← same pattern as TAG
+```
+
+### Two deploy modes
+
+**Full deploy** (layout changes, server code, component rewrites):
+- Push from your local machine to GitHub
+- Click "Deploy" in TCB dashboard → SSH → git pull → npm install → PM2 restart
+- Or let GitHub Actions handle it (future)
+
+**Content push** (blog posts, images, series — from TCB dashboard):
+- Write/generate content in the dashboard (AI-assisted)
+- Push to remote `content/` directory via SSH — no git, no restart
+- Marketing sites read from `content/` at runtime
+- Files appear instantly without rebuilding the site
+
+The `content/` directory lives outside git so your local repo doesn't conflict with dashboard-pushed content. When you do a full deploy from local, `git reset --hard` only touches git-tracked files — `content/` is untouched.
+
+### nginx config
 
 ```nginx
 # Auth check — clientBridge validates session
@@ -286,3 +326,32 @@ location / {
 location /api/auth/ { proxy_pass http://127.0.0.1:5000/api/auth/; }
 location /login { proxy_pass http://127.0.0.1:5000/login; }
 ```
+
+### Deploy targets
+
+| Target | Path | Full Deploy | Content Push | PM2 Process |
+|--------|------|-------------|-------------|-------------|
+| TCB | `/var/www/tagcontactbridge` | Yes | N/A | `all` (3 bridges) |
+| TAG site | `/var/www/TaxAdvocateGroup` | Yes | Yes (`content/`) | `backend` |
+| WYNN site | `/var/www/WynnTax` | Yes | Yes (`content/`) | `backend` |
+
+### Content file format (blog posts)
+
+```json
+{
+  "slug": "irs-payment-plans-2026",
+  "title": "Understanding IRS Payment Plans in 2026",
+  "date": "2026-04-01",
+  "author": "Tax Advocate Group",
+  "tags": ["irs", "payment-plans", "installment-agreement"],
+  "hero": "images/blog/hero-irs-payment.jpg",
+  "excerpt": "If you owe the IRS...",
+  "body": "Full markdown or HTML content...",
+  "seo": {
+    "title": "IRS Payment Plans 2026 | Tax Advocate Group",
+    "description": "Learn about IRS installment agreements..."
+  }
+}
+```
+
+The marketing sites read `content/blog/*.json` on request (or at build time if SSG) and render them. The TCB dashboard can create, edit, and push these files without touching the site's source code.
