@@ -1,29 +1,25 @@
 // utils/api.js — singleton Axios instance
-// New code should import { api } directly.
-// Legacy context providers use useApi() which returns the same instance.
 import axios from "axios";
 
 export const api = axios.create({ baseURL: "", withCredentials: true });
 
-// Global interceptors (set once)
+// 401 interceptor: redirect to loginPanel for session expiry.
+// Skip redirect for /api/auth/me (useAuth handles that gracefully).
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
-      // Avoid redirect loop if already on login
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
-      }
+    if (
+      err.response?.status === 401 &&
+      !err.config?.url?.includes("/api/auth/me")
+    ) {
+      window.location.href = "/login";
     }
     return Promise.reject(err);
   }
 );
 
-// Legacy compat: useApi() hook returns the singleton.
-// Existing context providers (EmailState, SmsState, etc.) call useApi().
-// The old version rebuilt the instance every render and wired loading/error
-// through MessageContext. This version just returns the singleton — the
-// loading overlay and toast behavior now come from the new hooks + toast.js.
+// Legacy compat: useApi() returns the singleton for components
+// that haven't been migrated yet (e.g. ListScrubber).
 export function useApi() {
   return api;
 }

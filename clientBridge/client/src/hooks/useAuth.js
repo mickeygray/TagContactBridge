@@ -1,4 +1,18 @@
-// hooks/useAuth.js — replaces AuthState + AuthContext
+// hooks/useAuth.js
+// ─────────────────────────────────────────────────────────────
+// Auth is handled by loginPanel (leadBridge) — email + pin code.
+// loginPanel sets a deploy_session cookie, nginx validates it via
+// auth_request to /auth-check, then sets X-Auth-Validated header.
+//
+// This hook just checks if the session is valid by calling
+// GET /api/auth/me (which passes through authMiddleware).
+// If the deploy_session cookie is valid → returns ADMIN_USER.
+// If not → user needs to go through /login (loginPanel HTML).
+//
+// There is no React-side login form — the loginPanel serves
+// its own HTML at /login with the email picker + code entry.
+// ─────────────────────────────────────────────────────────────
+
 import { useReducer, useCallback, useEffect, createContext, useContext } from "react";
 import { api } from "../utils/api";
 
@@ -8,12 +22,10 @@ const initialState = { user: null, isAuthenticated: false, loading: true };
 
 function authReducer(state, action) {
   switch (action.type) {
-    case "LOGIN_SUCCESS":
+    case "AUTHENTICATED":
       return { user: action.payload, isAuthenticated: true, loading: false };
-    case "LOGOUT":
+    case "NOT_AUTHENTICATED":
       return { user: null, isAuthenticated: false, loading: false };
-    case "AUTH_LOADED":
-      return { ...state, loading: false };
     default:
       return state;
   }
@@ -22,32 +34,27 @@ function authReducer(state, action) {
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
+  // On mount, check if the deploy_session cookie is valid
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const res = await api.get("/api/auth/me");
-        dispatch({ type: "LOGIN_SUCCESS", payload: res.data });
+        if (!cancelled) dispatch({ type: "AUTHENTICATED", payload: res.data });
       } catch {
-        dispatch({ type: "AUTH_LOADED" });
+        if (!cancelled) dispatch({ type: "NOT_AUTHENTICATED" });
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const res = await api.post("/api/auth/login", { email, password });
-    dispatch({ type: "LOGIN_SUCCESS", payload: res.data });
-    return res.data;
-  }, []);
-
-  const logout = useCallback(async () => {
-    try {
-      await api.post("/api/auth/logout");
-    } catch { /* ignore */ }
-    dispatch({ type: "LOGOUT" });
+  const logout = useCallback(() => {
+    // loginPanel handles logout at /logout (clears deploy_session cookie)
+    window.location.href = "/logout";
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>
+    <AuthContext.Provider value={{ ...state, logout }}>
       {children}
     </AuthContext.Provider>
   );
