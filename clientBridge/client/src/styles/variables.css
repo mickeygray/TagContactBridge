@@ -1,0 +1,39 @@
+/* styles/variables.css — Dark terminal design tokens */
+:root {
+  --bg-base: #0a0e14;
+  --bg-card: #12171f;
+  --bg-card-hover: #1a2029;
+  --bg-input: #0a0e14;
+  --bg-inset: rgba(0, 0, 0, 0.2);
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  --border-default: #1e2530;
+  --border-subtle: rgba(255, 255, 255, 0.04);
+  --border-focus: #3b82f6;
+
+  --text-primary: #e6ecf2;
+  --text-secondary: #c5cdd8;
+  --text-muted: #5c6775;
+
+  --accent-blue: #3b82f6;
+  --accent-green: #22c55e;
+  --accent-terminal: #00ff88;
+  --accent-cyan: #00d4ff;
+  --accent-yellow: #f59e0b;
+  --accent-red: #ef4444;
+  --accent-purple: #a855f7;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  --text-xs: 10px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-lg: 16px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --transition: 150ms ease;
+}

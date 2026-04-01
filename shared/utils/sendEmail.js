@@ -1,0 +1,93 @@
+const nodemailer = require("nodemailer");
+require("dotenv").config();
+
+// 🔧 Create a reusable transporter based on the domain
+const getTransporter = (domain) => {
+  let apiKey;
+  switch ((domain || "").toUpperCase()) {
+    case "WYNN":
+      apiKey = process.env.WYNN_API_KEY;
+      break;
+    case "AMITY":
+      apiKey = process.env.AMITY_API_KEY;
+      break;
+    case "TGC":
+      apiKey = process.env.TGC_API_KEY;
+      break;
+    case "TAG":
+    default:
+      apiKey = process.env.TAG_API_KEY;
+      break;
+  }
+
+  return nodemailer.createTransport({
+    host: process.env.SENDGRID_GATEWAY,
+    port: Number(process.env.SENDGRID_PORT),
+    secure: false, // TLS
+    auth: {
+      user: process.env.SENDGRID_USER,
+      pass: apiKey,
+    },
+  });
+
+  /*  return nodemailer.createTransport({
+        host: "send.smtp.com",
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.TGC_SMTP_USER,
+          pass: process.env.TGC_SMTP_PASS,
+        },
+      }); */
+};
+
+/**
+ * Send an email using SendGrid + Nodemailer
+ *
+ * @param {Object} options
+ * @param {string} options.to - Recipient email address
+ * @param {string} options.subject - Subject line
+ * @param {string} [options.text] - Fallback plain text content
+ * @param {string} [options.html] - Optional HTML content
+ * @param {string} [options.domain] - "TAG" (default) or "WYNN"
+ */
+const sendEmail = async ({
+  to,
+  subject,
+  text,
+  html,
+  domain,
+  from,
+  attachments,
+}) => {
+  const transporter = getTransporter(domain);
+
+  const fromMap = {
+    TAG: `${process.env.TAG_EMAIL_NAME} <${process.env.TAG_EMAIL_ADDRESS}>`,
+    WYNN: `${process.env.WYNN_EMAIL_NAME} <${process.env.WYNN_EMAIL_ADDRESS}>`,
+    AMITY: `${process.env.AMITY_EMAIL_NAME} <${process.env.AMITY_EMAIL_ADDRESS}>`,
+    TGC: `${process.env.TGC_EMAIL_NAME} <${process.env.TGC_EMAIL_ADDRESS}>`,
+  };
+  const fromEmail = fromMap[domain?.toUpperCase()] || from;
+  const mailOptions = {
+    from: fromEmail,
+    to,
+    subject,
+    text: text || "",
+    html: html || "",
+    attachments: attachments || [],
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`📤 Email sent to ${to} via ${domain}`);
+  } catch (err) {
+    console.error(
+      "❌ Email sending failed:",
+      err.response?.body || err.message
+    );
+    throw new Error("Email failed");
+  }
+};
+
+module.exports = sendEmail;

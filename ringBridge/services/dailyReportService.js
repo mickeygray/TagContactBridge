@@ -9,7 +9,7 @@
 // Also triggerable via POST /api/admin/report/send
 // ─────────────────────────────────────────────────────────────
 
-const sendEmail = require("../../utils/sendEmail");
+const sendEmail = require("../../shared/utils/sendEmail");
 const ContactActivity = require("../models/ContactActivity");
 const log = require("../utils/logger");
 

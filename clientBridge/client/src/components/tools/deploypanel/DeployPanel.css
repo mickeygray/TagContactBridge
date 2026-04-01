@@ -1,0 +1,317 @@
+/* client/src/components/tools/deploypanel/DeployPanel.css */
+/* ─────────────────────────────────────────────────────────── */
+/* All classes prefixed dp- to avoid conflicts with parent app */
+/* ─────────────────────────────────────────────────────────── */
+
+.dp-panel {
+  min-height: calc(100vh - 60px);
+  background: #0a0a0a;
+  color: #e0e0e0;
+  padding: 20px 24px;
+  font-family: "Inter", -apple-system, sans-serif;
+}
+
+/* ─── Header ──────────────────────────────────────────────── */
+
+.dp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #1a1a1a;
+  margin-bottom: 20px;
+}
+
+.dp-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 16px;
+  color: #00ff88;
+  letter-spacing: 3px;
+  margin: 0;
+}
+
+/* ─── Status Cards ────────────────────────────────────────── */
+
+.dp-status-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.dp-status-card {
+  background: #141414;
+  border: 1px solid #222;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.dp-card-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #1a1a1a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dp-brand-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dp-site-link {
+  font-size: 11px;
+  color: #555;
+  text-decoration: none;
+}
+
+.dp-site-link:hover {
+  color: #00ff88;
+}
+
+.dp-card-body {
+  padding: 12px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.dp-refresh-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #555;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  display: none;
+}
+
+.dp-status-card:hover .dp-refresh-btn {
+  display: block;
+}
+
+.dp-refresh-btn:hover {
+  color: #00ff88;
+  border-color: #00ff88;
+}
+
+.dp-stat {
+  display: flex;
+  justify-content: space-between;
+}
+
+.dp-stat-label {
+  color: #666;
+}
+
+.dp-stat-value {
+  color: #ccc;
+}
+
+.dp-stat-ok {
+  color: #00ff88;
+}
+
+.dp-stat-warn {
+  color: #ffaa00;
+}
+
+.dp-loading {
+  color: #444;
+}
+
+.dp-warn {
+  color: #ffaa00;
+}
+
+/* ─── Action Panel ────────────────────────────────────────── */
+
+.dp-action-panel {
+  background: #141414;
+  border: 1px solid #222;
+  border-radius: 10px;
+  padding: 20px;
+  max-width: 600px;
+}
+
+.dp-action-panel h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  color: #999;
+}
+
+.dp-form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.dp-select,
+.dp-commit-input {
+  padding: 10px 14px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #0a0a0a;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.dp-select {
+  width: 160px;
+}
+
+.dp-select:focus,
+.dp-commit-input:focus {
+  border-color: #00ff88;
+}
+
+.dp-commit-input {
+  flex: 1;
+}
+
+.dp-commit-input::placeholder {
+  color: #444;
+}
+
+.dp-action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dp-btn {
+  padding: 10px 20px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ccc;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.dp-btn:hover {
+  border-color: #555;
+  color: #fff;
+}
+
+.dp-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.dp-btn-deploy {
+  background: #00ff88;
+  color: #0a0a0a;
+  border-color: #00ff88;
+  font-weight: 600;
+}
+
+.dp-btn-deploy:hover {
+  background: #00cc6a;
+  border-color: #00cc6a;
+}
+
+.dp-btn-dry {
+  border-color: #00aaff;
+  color: #00aaff;
+}
+
+.dp-btn-dry:hover {
+  background: #00aaff;
+  color: #0a0a0a;
+}
+
+.dp-btn-rollback {
+  border-color: #ff4444;
+  color: #ff4444;
+}
+
+.dp-btn-rollback:hover {
+  background: #ff4444;
+  color: #0a0a0a;
+}
+
+/* ─── Log Panel ───────────────────────────────────────────── */
+
+.dp-log-panel {
+  margin-top: 20px;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.dp-log-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid #1a1a1a;
+  font-size: 12px;
+  color: #555;
+  font-family: "JetBrains Mono", monospace;
+  display: flex;
+  justify-content: space-between;
+}
+
+.dp-log-body {
+  padding: 12px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: #888;
+}
+
+.dp-log-ok {
+  color: #00ff88;
+}
+
+.dp-log-err {
+  color: #ff4444;
+}
+
+.dp-log-info {
+  color: #00aaff;
+}
+
+.dp-running-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #00ff88;
+  border-radius: 50%;
+  animation: dp-pulse 1s infinite;
+}
+
+@keyframes dp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ─── Responsive ──────────────────────────────────────────── */
+
+@media (max-width: 500px) {
+  .dp-form-row {
+    flex-direction: column;
+  }
+  .dp-select {
+    width: 100%;
+  }
+  .dp-action-buttons {
+    flex-direction: column;
+  }
+  .dp-btn {
+    width: 100%;
+    text-align: center;
+  }
+}

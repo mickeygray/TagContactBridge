@@ -24,7 +24,7 @@ function getTranscriptionService() {
 // Require parent's logics service (two dirs up from ringBridge/services/)
 let findCaseByPhone;
 try {
-  ({ findCaseByPhone } = require('../../services/logicsService'));
+  ({ findCaseByPhone } = require('../../shared/services/logicsService'));
   log.success('Logics service loaded for enrichment');
 } catch (err) {
   log.warn(`Logics service not available: ${err.message} — enrichment disabled`);

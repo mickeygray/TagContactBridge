@@ -1,0 +1,616 @@
+/* client/src/components/tools/ringcentral/RingBridgeDashboard.css */
+/* ─────────────────────────────────────────────────────────── */
+/* All classes prefixed rb- to avoid conflicts with parent app */
+/* ─────────────────────────────────────────────────────────── */
+
+.rb-dashboard {
+  min-height: calc(100vh - 60px);
+  background: #0a0e14;
+  color: #c5cdd8;
+  font-family: "Inter", -apple-system, sans-serif;
+}
+
+/* ─── Header ────────────────────────────────────────────── */
+
+.rb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid #1e2530;
+  background: #12171f;
+}
+
+.rb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rb-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rb-logo {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 17px;
+  font-weight: 700;
+  color: #e6ecf2;
+  letter-spacing: -0.5px;
+  margin: 0;
+}
+
+.rb-logo span {
+  color: #3b82f6;
+}
+
+.rb-connection-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.rb-connection-badge.connected {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.rb-connection-badge.disconnected {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.rb-connection-badge.offline-mode {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.rb-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: rb-pulse 2s ease-in-out infinite;
+}
+
+@keyframes rb-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.rb-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #1e2530;
+  background: #1a2029;
+  color: #c5cdd8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.rb-btn:hover {
+  background: #1e2530;
+  color: #e6ecf2;
+}
+
+.rb-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.rb-btn-sm {
+  padding: 4px 10px;
+  font-size: 10px;
+}
+
+.rb-btn-primary {
+  padding: 8px 18px;
+  border-radius: 6px;
+  border: none;
+  background: #3b82f6;
+  color: white;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.rb-btn-primary:hover { opacity: 0.85; }
+.rb-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── Tab Bar ───────────────────────────────────────────── */
+
+.rb-tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  background: #12171f;
+  border-bottom: 1px solid #1e2530;
+}
+
+.rb-tab {
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  color: #5c6775;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  margin-bottom: -1px;
+}
+
+.rb-tab:hover {
+  color: #c5cdd8;
+}
+
+.rb-tab.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+}
+
+/* ─── Stats Bar ─────────────────────────────────────────── */
+
+.rb-stats-bar {
+  display: flex;
+  gap: 1px;
+  background: #1e2530;
+  border-bottom: 1px solid #1e2530;
+}
+
+.rb-stat-cell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px;
+  background: #12171f;
+}
+
+.rb-stat-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: #e6ecf2;
+}
+
+.rb-stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #5c6775;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* ─── Agent Grid ────────────────────────────────────────── */
+
+.rb-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  padding: 20px 24px;
+}
+
+.rb-agent-card {
+  background: #12171f;
+  border: 1px solid #1e2530;
+  border-radius: 10px;
+  padding: 18px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.3s;
+}
+
+.rb-agent-card-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  transition: background 0.3s;
+}
+
+.rb-status-available { border-color: rgba(34, 197, 94, 0.25); background: rgba(34, 197, 94, 0.04); }
+.rb-status-onCall { border-color: rgba(239, 68, 68, 0.25); background: rgba(239, 68, 68, 0.04); }
+.rb-status-ringing { border-color: rgba(245, 158, 11, 0.25); background: rgba(245, 158, 11, 0.04); animation: rb-ring-pulse 1s ease-in-out infinite; }
+.rb-status-disposition { border-color: rgba(168, 85, 247, 0.25); background: rgba(168, 85, 247, 0.04); }
+
+@keyframes rb-ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 20px 2px rgba(245, 158, 11, 0.1); }
+}
+
+.rb-agent-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.rb-agent-name { font-size: 15px; font-weight: 700; color: #e6ecf2; line-height: 1.2; }
+.rb-agent-company {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+  background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); letter-spacing: 0.5px;
+}
+
+.rb-status-badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 6px;
+  font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px;
+}
+
+.rb-status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+/* ─── Call Info ──────────────────────────────────────────── */
+
+.rb-call-info { margin-top: 10px; padding: 10px; background: rgba(0, 0, 0, 0.2); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.04); }
+.rb-call-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.rb-call-row + .rb-call-row { margin-top: 4px; }
+.rb-call-label { color: #5c6775; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.rb-call-value { font-family: "JetBrains Mono", monospace; font-size: 12px; color: #c5cdd8; }
+.rb-call-timer { font-family: "JetBrains Mono", monospace; font-size: 14px; font-weight: 700; color: #ef4444; }
+
+/* ─── Agent Stats ───────────────────────────────────────── */
+
+.rb-agent-stats { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.rb-mini-stat {
+  display: flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", monospace; font-size: 11px; padding: 2px 7px;
+  border-radius: 4px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); font-weight: 600;
+}
+.rb-mini-stat .rb-stat-label { font-size: 9px; text-transform: uppercase; color: #5c6775; margin-top: 0; letter-spacing: 0; }
+.rb-agent-meta {
+  display: flex; align-items: center; gap: 12px; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: "JetBrains Mono", monospace; font-size: 10px; color: #5c6775;
+}
+
+/* ─── Override Buttons ──────────────────────────────────── */
+
+.rb-override-row { display: flex; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.04); }
+.rb-override-btn {
+  flex: 1; padding: 4px 0; border-radius: 4px; border: 1px solid; background: transparent;
+  font-family: "JetBrains Mono", monospace; font-size: 9px; font-weight: 600; cursor: pointer; transition: all 0.15s; letter-spacing: 0.5px;
+}
+.rb-override-btn:hover { opacity: 0.8; }
+
+/* ─── Empty State ───────────────────────────────────────── */
+
+.rb-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; text-align: center; }
+.rb-empty-state h2 { font-family: "JetBrains Mono", monospace; font-size: 15px; color: #e6ecf2; margin-bottom: 8px; }
+.rb-empty-state p { color: #5c6775; max-width: 400px; line-height: 1.6; font-size: 13px; }
+
+/* ─── Event Log ─────────────────────────────────────────── */
+
+.rb-event-section { padding: 0 24px 24px; }
+.rb-section-title {
+  font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: #5c6775; margin-bottom: 10px;
+}
+.rb-event-log {
+  background: #12171f; border: 1px solid #1e2530; border-radius: 8px;
+  max-height: 260px; overflow-y: auto; font-family: "JetBrains Mono", monospace; font-size: 11px;
+}
+.rb-event-log::-webkit-scrollbar { width: 5px; }
+.rb-event-log::-webkit-scrollbar-track { background: transparent; }
+.rb-event-log::-webkit-scrollbar-thumb { background: #1e2530; border-radius: 3px; }
+.rb-event-row { display: flex; align-items: center; gap: 12px; padding: 7px 14px; border-bottom: 1px solid #1e2530; }
+.rb-event-row:last-child { border-bottom: none; }
+.rb-event-time { color: #5c6775; min-width: 70px; }
+.rb-event-agent { color: #3b82f6; min-width: 100px; font-weight: 600; }
+.rb-event-msg { color: #c5cdd8; flex: 1; }
+
+/* ─── Modal ─────────────────────────────────────────────── */
+
+.rb-modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.rb-modal { background: #12171f; border: 1px solid #1e2530; border-radius: 12px; padding: 24px; width: 440px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
+.rb-modal h3 { font-family: "JetBrains Mono", monospace; font-size: 14px; color: #e6ecf2; margin: 0 0 18px; }
+.rb-field { margin-bottom: 12px; }
+.rb-field label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #5c6775; margin-bottom: 5px; }
+.rb-field input, .rb-field select { width: 100%; padding: 8px 12px; background: #0a0e14; border: 1px solid #1e2530; border-radius: 6px; color: #e6ecf2; font-family: "JetBrains Mono", monospace; font-size: 13px; }
+.rb-field input:focus, .rb-field select:focus { outline: none; border-color: #3b82f6; }
+.rb-extensions-list { margin-top: 14px; padding-top: 14px; border-top: 1px solid #1e2530; }
+.rb-extensions-list label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #5c6775; margin-bottom: 8px; }
+.rb-ext-grid { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+.rb-ext-btn { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #0a0e14; border: 1px solid #1e2530; border-radius: 6px; color: #c5cdd8; cursor: pointer; transition: all 0.15s; font-size: 12px; }
+.rb-ext-btn:hover { border-color: #3b82f6; background: rgba(59, 130, 246, 0.05); }
+.rb-ext-name { font-weight: 600; }
+.rb-ext-num { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #5c6775; }
+.rb-loading-text { font-size: 12px; color: #5c6775; margin-top: 8px; }
+.rb-modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+
+/* ═══════════════════════════════════════════════════════════ */
+/*  CONTACT ACTIVITY PANEL                                    */
+/* ═══════════════════════════════════════════════════════════ */
+
+.rb-contacts-panel {
+  padding: 0 24px 24px;
+}
+
+/* ─── Filter Bar ────────────────────────────────────────── */
+
+.rb-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  flex-wrap: wrap;
+}
+
+.rb-filter-input {
+  padding: 6px 12px;
+  background: #12171f;
+  border: 1px solid #1e2530;
+  border-radius: 6px;
+  color: #e6ecf2;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  width: 180px;
+  transition: border-color 0.15s;
+}
+
+.rb-filter-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.rb-filter-input::placeholder {
+  color: #5c6775;
+}
+
+.rb-filter-select {
+  padding: 6px 10px;
+  background: #12171f;
+  border: 1px solid #1e2530;
+  border-radius: 6px;
+  color: #c5cdd8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.rb-filter-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* ─── Table ─────────────────────────────────────────────── */
+
+.rb-table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #1e2530;
+}
+
+.rb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.rb-table thead {
+  background: #12171f;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.rb-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #5c6775;
+  border-bottom: 1px solid #1e2530;
+  white-space: nowrap;
+}
+
+.rb-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(30, 37, 48, 0.5);
+  vertical-align: middle;
+}
+
+.rb-table-row {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.rb-table-row:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.rb-table-empty {
+  text-align: center;
+  padding: 40px 12px !important;
+  color: #5c6775;
+}
+
+/* Table cell helpers */
+.rb-td-time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+  color: #5c6775;
+  font-size: 10px;
+}
+
+.rb-td-agent {
+  font-weight: 600;
+  color: #e6ecf2;
+  display: block;
+}
+
+.rb-td-sub {
+  font-size: 9px;
+  color: #5c6775;
+  display: block;
+}
+
+.rb-td-phone {
+  color: #c5cdd8;
+  white-space: nowrap;
+}
+
+.rb-td-case {
+  max-width: 200px;
+  font-size: 10px;
+}
+
+.rb-td-case strong {
+  color: #3b82f6;
+}
+
+.rb-td-expand {
+  color: #5c6775;
+  font-size: 10px;
+  text-align: center;
+  width: 30px;
+}
+
+/* Direction badges */
+.rb-dir-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.rb-dir-inbound {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+
+.rb-dir-outbound {
+  background: rgba(168, 85, 247, 0.12);
+  color: #a855f7;
+}
+
+/* Disposition badges */
+.rb-disp-good {
+  color: #22c55e;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.rb-disp-bad {
+  color: #ef4444;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.rb-disp-none {
+  color: #5c6775;
+}
+
+/* Enrichment badge */
+.rb-enrich-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ─── Expanded Row ──────────────────────────────────────── */
+
+.rb-expanded-row td {
+  padding: 0 !important;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.rb-expanded-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.rb-expanded-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rb-expanded-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #5c6775;
+  margin-top: 6px;
+}
+
+.rb-expanded-label:first-child {
+  margin-top: 0;
+}
+
+.rb-expanded-value {
+  font-size: 11px;
+  color: #c5cdd8;
+  word-break: break-all;
+}
+
+.rb-expanded-error {
+  color: #ef4444;
+}
+
+/* ─── Pagination ────────────────────────────────────────── */
+
+.rb-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 0;
+}
+
+.rb-page-info {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: #5c6775;
+}
+
+/* ─── Responsive ────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .rb-stats-bar { flex-wrap: wrap; }
+  .rb-stat-cell { min-width: 33.33%; }
+  .rb-agent-grid { grid-template-columns: 1fr; padding: 14px; }
+  .rb-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .rb-filter-bar { flex-direction: column; align-items: stretch; }
+  .rb-filter-input { width: 100%; }
+  .rb-table-wrap { font-size: 10px; }
+  .rb-expanded-grid { grid-template-columns: 1fr; }
+}

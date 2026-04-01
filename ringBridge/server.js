@@ -16,7 +16,7 @@ const config = require("./config/env");
 const log = require("./utils/logger");
 const { startCron } = require("./services/dailyReportService");
 // Shared MongoDB connection from parent TagContactBridge
-const connectDB = require("../config/db");
+const connectDB = require("../shared/config/db");
 
 // Routes
 const webhookRoutes = require("./routes/webhookRoutes");
