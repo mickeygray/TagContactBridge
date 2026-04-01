@@ -68,7 +68,7 @@ const sendEmail = async ({
     AMITY: `${process.env.AMITY_EMAIL_NAME} <${process.env.AMITY_EMAIL_ADDRESS}>`,
     TGC: `${process.env.TGC_EMAIL_NAME} <${process.env.TGC_EMAIL_ADDRESS}>`,
   };
-  const fromEmail = fromMap[domain?.toUpperCase()] || from;
+  const fromEmail = fromMap[domain?.toUpperCase()] || from || fromMap.TAG;
   const mailOptions = {
     from: fromEmail,
     to,
@@ -86,7 +86,7 @@ const sendEmail = async ({
       "❌ Email sending failed:",
       err.response?.body || err.message
     );
-    throw new Error("Email failed");
+    throw new Error(`Email failed: ${err.message}`);
   }
 };
 

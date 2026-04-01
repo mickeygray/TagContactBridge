@@ -132,7 +132,7 @@ async function createZeroInvoice(domain, caseNumber) {
 async function createActivityLoop(domain, caseId, comment) {
   const activities = await fetchActivities(domain, caseId);
   const existing = activities.find((act) => act.Subject === "PB CALL LOG");
-  const { baseUrl, apiKey, secret } = config[domain];
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
   if (!existing || !existing.ActivityID) {
     await axios.post(
       `${baseUrl}/CaseActivity/Activity`,
@@ -154,7 +154,7 @@ async function createActivityLoop(domain, caseId, comment) {
 }
 
 async function fetchCaseAccountContact(domain, caseId) {
-  const { baseUrl, apiKey, secret } = config[domain];
+  const { baseUrl, apiKey, secret } = config[domain] || config.TAG;
   const url = `${baseUrl}/Billing/CaseAccount`;
   let resp;
   try {

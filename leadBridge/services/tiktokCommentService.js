@@ -20,7 +20,7 @@
 
 const axios = require("axios");
 const { getValidToken } = require("./tiktokAuthService");
-const TiktokCommentReply = require("../../shared/models/tiktokCommentReply");
+const TiktokCommentReply = require("../../shared/models/TiktokCommentReply");
 
 const GRAPH = "https://open.tiktokapis.com/v2";
 const COMPANIES = ["TAG", "WYNN"];

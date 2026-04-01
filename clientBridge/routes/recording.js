@@ -7,7 +7,7 @@ const {
   requireAdmin,
 } = require("../../shared/middleware/authMiddleware");
 
-router.get("/:callId", async (req, res) => {
+router.get("/:callId", authMiddleware, async (req, res) => {
   const { callId } = req.params;
   try {
     const response = await axios.get(

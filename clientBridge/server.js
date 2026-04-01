@@ -42,13 +42,12 @@ app.use("/api/clients", clientRoutes);
 app.use("/api/templates", require("./routes/templates"));
 
 // Metrics placeholder
-const auth = require("../shared/middleware/authMiddleware");
-app.get("/api/metrics/daily-summary", auth, async (req, res) => {
+const { authMiddleware: metricsAuth } = require("../shared/middleware/authMiddleware");
+app.get("/api/metrics/daily-summary", metricsAuth, async (req, res) => {
   res.json({ message: "Metrics endpoint placeholder" });
 });
 
 app.post("/sms/inbound", smsInbound);
-const buildDir = path.join(__dirname, "client", "build");
 // Serve React build
 app.use(express.static(path.join(__dirname, "client", "build")));
 

@@ -87,6 +87,11 @@ async function deactivateLead({
 
   // ── 2. MONGO → deactivate + DNC flags ─────────────────────────────────
   try {
+    if (!mongoId && !phone) {
+      console.log(`[DEACTIVATE] ○ Mongo skipped — no phone or mongoId`);
+      result.mongo.ok = false;
+      return result;
+    }
     const query = mongoId
       ? { _id: mongoId }
       : { phone: phone.replace(/\D/g, ""), company };

@@ -16,8 +16,23 @@
 // ─────────────────────────────────────────────────────────────
 
 const LeadCadence = require("../../shared/models/LeadCadence");
-const { businessDaysSinceCreation } = require("./cadenceEngine");
 const { updateCaseStatus } = require("../../shared/services/logicsService");
+
+/**
+ * Calculate business days (Mon-Fri) between a date and now.
+ */
+function businessDaysSinceCreation(createdAt) {
+  const start = new Date(createdAt);
+  const now = new Date();
+  let count = 0;
+  const d = new Date(start);
+  while (d < now) {
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
 
 const WEEKLY_DIAL_MIN_AGE_DAYS = 10;
 const WEEKLY_DIAL_PACE_MS = 7000; // 7s between calls (RC Heavy limit)

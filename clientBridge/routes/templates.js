@@ -1,8 +1,9 @@
 // clientBridge/routes/templates.js
 // AI-powered template generation endpoint
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const router = express.Router();
-const auth = require("../../shared/middleware/authMiddleware");
+const { authMiddleware } = require("../../shared/middleware/authMiddleware");
 
 let claudeComplete;
 try {
@@ -28,15 +29,36 @@ const BRAND_VOICE = {
 
 const MERGE_TOKENS = ["{name}", "{first_name}", "{last_name}", "{phone}", "{email}", "{case_number}", "{amount}", "{date}", "{schedule_url}"];
 
-router.post("/generate", auth, async (req, res) => {
+// Rate limit: 10 generations per minute per IP
+const generateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: "Rate limit exceeded. Try again in a minute." },
+});
+
+const MAX_PURPOSE_LENGTH = 500;
+const ALLOWED_TYPES = ["email", "sms"];
+const ALLOWED_TONES = ["professional", "friendly", "urgent", "empathetic"];
+
+router.post("/generate", authMiddleware, generateLimiter, async (req, res) => {
   try {
     if (!claudeComplete) {
       return res.status(503).json({ error: "AI service not available" });
     }
 
     const { type, purpose, brand = "TAG", tone = "professional" } = req.body;
-    if (!purpose) {
+
+    if (!purpose || typeof purpose !== "string") {
       return res.status(400).json({ error: "Purpose is required" });
+    }
+    if (purpose.length > MAX_PURPOSE_LENGTH) {
+      return res.status(400).json({ error: `Purpose must be under ${MAX_PURPOSE_LENGTH} characters` });
+    }
+    if (!ALLOWED_TYPES.includes(type)) {
+      return res.status(400).json({ error: "Type must be 'email' or 'sms'" });
+    }
+    if (!ALLOWED_TONES.includes(tone)) {
+      return res.status(400).json({ error: `Tone must be one of: ${ALLOWED_TONES.join(", ")}` });
     }
 
     const brandInfo = BRAND_VOICE[brand] || BRAND_VOICE.TAG;
@@ -62,16 +84,22 @@ ${isEmail
   : '{ "body": "...", "tokens": ["..."] }'
 }`;
 
-    const prompt = `Create a ${type} template for: ${purpose}`;
+    const prompt = `Create a ${type} template for: ${purpose.slice(0, MAX_PURPOSE_LENGTH)}`;
 
     const text = await claudeComplete({ system, prompt, maxTokens: 1024 });
     const clean = text.replace(/```json\n?|```/g, "").trim();
-    const result = JSON.parse(clean);
+
+    let result;
+    try {
+      result = JSON.parse(clean);
+    } catch {
+      return res.status(502).json({ error: "AI returned invalid JSON. Try again." });
+    }
 
     res.json(result);
   } catch (err) {
     console.error("[TEMPLATE-GEN] Error:", err.message);
-    res.status(500).json({ error: "Template generation failed: " + err.message });
+    res.status(500).json({ error: "Template generation failed" });
   }
 });
 

@@ -1,7 +1,11 @@
 // routes/admin.js
 const express = require("express");
 const router = express.Router();
+const { authMiddleware } = require("../../shared/middleware/authMiddleware");
 const ConsentRecord = require("../../shared/models/ConsentRecord");
+
+// All admin routes require auth
+router.use(authMiddleware);
 
 // ─── GET /api/admin/consent-records ──────────────────────────
 // Search consent records by email, phone, caseId, or date range

@@ -69,7 +69,6 @@ const COMPANIES = {
       process.env.WYNN_DROP_TRANSFER_NUMBER ||
       process.env.DROP_TRANSFER_NUMBER ||
       "",
-    ttAdvertiserId: process.env.WYNN_TT_ADVERTISER_ID,
     ttAccessToken: process.env.TT_ACCESS_TOKEN,
     // Facebook
     fbPageId: process.env.WYNN_FB_PAGE_ID || "",
@@ -201,7 +200,6 @@ function resolveCompanyFromFbPageId(pageId) {
   console.warn(
     `[COMPANY] Unknown FB page_id: ${pageId} → defaulting to ${DEFAULT_COMPANY}`,
   );
-  console.log(`[IG] Event for pageId ${pageId} → company: ${company}`);
   return DEFAULT_COMPANY;
 }
 
