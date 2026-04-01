@@ -1,159 +1,309 @@
 // components/ringBridge/cx/AgentWidget.js
 // ─────────────────────────────────────────────────────────────
-// Minimal agent-facing widget for CX platform control.
-// Two modes:
-//   1. Embedded in main dashboard (/dashboard with agent's extensionId)
-//   2. Standalone page (/agent/:extensionId) for Chrome extension iframe
+// Standalone agent control panel. Designed to be:
+//   - Pinned as a Chrome tab (bookmark yoursite.com/agent)
+//   - Popped out as a narrow window
+//   - Embedded in a Chrome extension iframe
 //
-// Shows:
-//   - EX state (on call, available, DND)
-//   - CX state (available for leads, unavailable)
-//   - Available / Unavailable toggle
-//   - DNC / Freeze buttons (after a call)
-//   - Last call info
+// No navbar. Same auth cookie as the main app.
+// Agent picks their extension on first use (saved to localStorage).
 // ─────────────────────────────────────────────────────────────
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useCxAgent } from "../../../hooks/useCxAgent";
+import { api } from "../../../utils/api";
 
 const STATE_COLORS = {
-  Available: "var(--accent-green)",
-  Unavailable: "var(--accent-yellow)",
-  InboundContact: "var(--accent-blue)",
-  OutboundContact: "var(--accent-cyan)",
-  AfterCallWork: "var(--accent-purple)",
-  LoggedOff: "var(--text-muted)",
-  OnCall: "var(--accent-blue)",
-  Ringing: "var(--accent-yellow)",
-  Idle: "var(--accent-green)",
-  Unknown: "var(--text-muted)",
+  Available: "#22c55e",
+  Unavailable: "#f59e0b",
+  InboundContact: "#3b82f6",
+  OutboundContact: "#00d4ff",
+  AfterCallWork: "#a855f7",
+  LoggedOff: "#5c6775",
+  OnCall: "#3b82f6",
+  Ringing: "#f59e0b",
+  Idle: "#22c55e",
+  Unknown: "#5c6775",
 };
 
-export default function AgentWidget({ extensionId }) {
-  const { status, loading, setAvailable, setUnavailable, markDnc, freezeProspect } = useCxAgent(extensionId);
+export default function AgentWidget() {
+  const [extensionId, setExtensionId] = useState(
+    () => localStorage.getItem("tcb_agent_ext") || ""
+  );
+  const [agents, setAgents] = useState([]);
   const [dncPhone, setDncPhone] = useState("");
-  const [showControls, setShowControls] = useState(false);
+  const [lastAction, setLastAction] = useState(null);
 
-  if (!extensionId) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>
-        No extension ID — configure agent mapping
-      </div>
-    );
-  }
+  const { status, loading, setAvailable, setUnavailable, markDnc, freezeProspect } = useCxAgent(extensionId);
 
-  if (!status) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>
-        Agent not mapped to CX platform
-      </div>
-    );
-  }
+  // Fetch available agents for the picker
+  useEffect(() => {
+    api.get("/ringbridge/api/admin/agents")
+      .then((res) => setAgents(res.data?.agents || res.data || []))
+      .catch(() => {});
+  }, []);
 
-  const isAvailable = status.cxState === "Available" && !status.widgetOverride;
+  const selectAgent = (ext) => {
+    setExtensionId(ext);
+    localStorage.setItem("tcb_agent_ext", ext);
+  };
+
+  const handleDnc = async () => {
+    if (!dncPhone) return;
+    await markDnc(dncPhone, "WYNN");
+    setLastAction({ type: "dnc", phone: dncPhone, time: new Date() });
+    setDncPhone("");
+  };
+
+  const handleFreeze = async () => {
+    if (!dncPhone) return;
+    await freezeProspect(dncPhone, "WYNN");
+    setLastAction({ type: "freeze", phone: dncPhone, time: new Date() });
+    setDncPhone("");
+  };
+
+  const isAvailable = status?.cxState === "Available" && !status?.widgetOverride;
 
   return (
-    <div className="card">
-      <div className="card-header">
-        <span className="card-title">Agent: {status.agentName || extensionId}</span>
-        <div className="flex gap-2 items-center">
-          <span style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: STATE_COLORS[status.cxState] || "var(--text-muted)",
-          }} />
-          <span className="text-xs text-mono" style={{ color: STATE_COLORS[status.cxState] }}>
-            CX: {status.cxState}
-          </span>
-        </div>
+    <div style={{
+      minHeight: "100vh",
+      background: "#0a0e14",
+      color: "#e6ecf2",
+      fontFamily: "'Inter', -apple-system, sans-serif",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      padding: "20px 12px",
+    }}>
+      {/* Header */}
+      <div style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 14,
+        fontWeight: 700,
+        color: "#00ff88",
+        letterSpacing: 2,
+        marginBottom: 4,
+      }}>
+        TCB
+      </div>
+      <div style={{ fontSize: 10, color: "#5c6775", marginBottom: 20, fontFamily: "'JetBrains Mono', monospace" }}>
+        AGENT CONTROL
       </div>
 
-      {/* State indicators */}
-      <div className="stats-grid" style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 12 }}>
-        <div className="stat-box">
-          <div className="stat-value" style={{ fontSize: 14, color: STATE_COLORS[status.exState] }}>
-            {status.exState || "Unknown"}
+      <div style={{ width: "100%", maxWidth: 320 }}>
+        {/* Agent Picker */}
+        {!extensionId && (
+          <div style={{
+            background: "#12171f",
+            border: "1px solid #1e2530",
+            borderRadius: 8,
+            padding: 20,
+            textAlign: "center",
+          }}>
+            <div style={{ fontSize: 12, color: "#5c6775", marginBottom: 12, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>
+              Select Your Extension
+            </div>
+            {agents.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {agents.map((a) => (
+                  <button
+                    key={a.extensionId || a._id}
+                    onClick={() => selectAgent(a.extensionId || a._id)}
+                    style={{
+                      padding: "10px 14px",
+                      background: "#0a0e14",
+                      border: "1px solid #1e2530",
+                      borderRadius: 6,
+                      color: "#e6ecf2",
+                      cursor: "pointer",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 12,
+                      textAlign: "left",
+                    }}
+                  >
+                    {a.name || a.agentName || a.extensionId}
+                    <span style={{ float: "right", color: "#5c6775" }}>ext:{a.extensionId || a._id}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#5c6775", fontSize: 12 }}>
+                Loading agents...
+              </div>
+            )}
           </div>
-          <div className="stat-label">EX Status</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-value" style={{ fontSize: 14, color: STATE_COLORS[status.cxState] }}>
-            {status.cxState || "Unknown"}
-          </div>
-          <div className="stat-label">CX Status</div>
-        </div>
+        )}
+
+        {/* Status + Controls */}
+        {extensionId && (
+          <>
+            {/* Agent name + change */}
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16,
+            }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {status?.agentName || `Ext ${extensionId}`}
+              </div>
+              <button
+                onClick={() => { setExtensionId(""); localStorage.removeItem("tcb_agent_ext"); }}
+                style={{
+                  background: "none", border: "none", color: "#5c6775",
+                  fontSize: 10, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                SWITCH
+              </button>
+            </div>
+
+            {/* Big status indicator */}
+            <div style={{
+              background: "#12171f",
+              border: "1px solid #1e2530",
+              borderRadius: 12,
+              padding: 24,
+              textAlign: "center",
+              marginBottom: 16,
+            }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: "50%",
+                background: STATE_COLORS[status?.cxState] || "#5c6775",
+                margin: "0 auto 12px",
+                boxShadow: `0 0 20px ${STATE_COLORS[status?.cxState] || "#5c6775"}40`,
+              }} />
+              <div style={{
+                fontSize: 18, fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                color: STATE_COLORS[status?.cxState] || "#5c6775",
+                marginBottom: 4,
+              }}>
+                {status?.cxState || "NOT CONNECTED"}
+              </div>
+              <div style={{ fontSize: 10, color: "#5c6775", fontFamily: "'JetBrains Mono', monospace" }}>
+                EX: {status?.exState || "?"} {status?.widgetOverride ? `| OVERRIDE: ${status.widgetOverride}` : ""}
+              </div>
+            </div>
+
+            {/* Availability toggle */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <button
+                onClick={async () => { await setAvailable(); setLastAction({ type: "available", time: new Date() }); }}
+                disabled={loading || isAvailable}
+                style={{
+                  flex: 1, padding: 14, border: "none", borderRadius: 8,
+                  fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  background: isAvailable ? "#22c55e" : "#12171f",
+                  color: isAvailable ? "#0a0e14" : "#22c55e",
+                  border: `1px solid ${isAvailable ? "#22c55e" : "#1e2530"}`,
+                }}
+              >
+                AVAILABLE
+              </button>
+              <button
+                onClick={async () => { await setUnavailable(); setLastAction({ type: "unavailable", time: new Date() }); }}
+                disabled={loading || (status?.widgetOverride === "unavailable")}
+                style={{
+                  flex: 1, padding: 14, border: "none", borderRadius: 8,
+                  fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  background: !isAvailable && status?.widgetOverride ? "#f59e0b" : "#12171f",
+                  color: !isAvailable && status?.widgetOverride ? "#0a0e14" : "#f59e0b",
+                  border: `1px solid ${!isAvailable && status?.widgetOverride ? "#f59e0b" : "#1e2530"}`,
+                }}
+              >
+                UNAVAILABLE
+              </button>
+            </div>
+
+            {/* Lead controls */}
+            <div style={{
+              background: "#12171f",
+              border: "1px solid #1e2530",
+              borderRadius: 8,
+              padding: 16,
+              marginBottom: 16,
+            }}>
+              <div style={{
+                fontSize: 10, color: "#5c6775", marginBottom: 10,
+                fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase", letterSpacing: 1,
+              }}>
+                Lead Controls
+              </div>
+              <input
+                type="tel"
+                placeholder="Phone number"
+                value={dncPhone}
+                onChange={(e) => setDncPhone(e.target.value)}
+                style={{
+                  width: "100%", padding: 10, marginBottom: 8,
+                  background: "#0a0e14", border: "1px solid #1e2530", borderRadius: 6,
+                  color: "#e6ecf2", fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 14, letterSpacing: 1, textAlign: "center",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleDnc}
+                  disabled={!dncPhone || loading}
+                  style={{
+                    flex: 1, padding: 10, borderRadius: 6, border: "1px solid #ef4444",
+                    background: "transparent", color: "#ef4444", fontWeight: 600,
+                    fontSize: 11, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  DNC
+                </button>
+                <button
+                  onClick={handleFreeze}
+                  disabled={!dncPhone || loading}
+                  style={{
+                    flex: 1, padding: 10, borderRadius: 6, border: "1px solid #f59e0b",
+                    background: "transparent", color: "#f59e0b", fontWeight: 600,
+                    fontSize: 11, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  FREEZE
+                </button>
+              </div>
+              <div style={{ fontSize: 9, color: "#5c6775", marginTop: 8, lineHeight: 1.4 }}>
+                DNC = permanent removal from all contact lists.
+                Freeze = pause automated outreach, keep lead for manual follow-up.
+              </div>
+            </div>
+
+            {/* Last action feedback */}
+            {lastAction && (
+              <div style={{
+                background: lastAction.type === "dnc" ? "rgba(239,68,68,0.08)" :
+                  lastAction.type === "freeze" ? "rgba(245,158,11,0.08)" :
+                  lastAction.type === "available" ? "rgba(34,197,94,0.08)" :
+                  "rgba(245,158,11,0.08)",
+                border: `1px solid ${
+                  lastAction.type === "dnc" ? "#ef4444" :
+                  lastAction.type === "freeze" ? "#f59e0b" :
+                  lastAction.type === "available" ? "#22c55e" : "#f59e0b"
+                }`,
+                borderRadius: 6,
+                padding: "8px 12px",
+                fontSize: 11,
+                fontFamily: "'JetBrains Mono', monospace",
+                color: "#c5cdd8",
+              }}>
+                {lastAction.type === "dnc" && `DNC: ${lastAction.phone}`}
+                {lastAction.type === "freeze" && `Frozen: ${lastAction.phone}`}
+                {lastAction.type === "available" && "Set to Available"}
+                {lastAction.type === "unavailable" && "Set to Unavailable"}
+                <span style={{ float: "right", color: "#5c6775" }}>
+                  {lastAction.time.toLocaleTimeString()}
+                </span>
+              </div>
+            )}
+          </>
+        )}
       </div>
-
-      {status.widgetOverride && (
-        <div style={{
-          padding: "6px 10px", marginBottom: 12, borderRadius: "var(--radius-sm)",
-          background: "rgba(245, 158, 11, 0.08)", border: "1px solid var(--accent-yellow)",
-          fontSize: "var(--text-xs)", color: "var(--accent-yellow)", fontFamily: "var(--font-mono)",
-        }}>
-          Manual override: {status.widgetOverride}
-        </div>
-      )}
-
-      {/* Primary toggle */}
-      <div className="flex gap-2" style={{ marginBottom: 12 }}>
-        <button
-          className={`btn ${isAvailable ? "btn-green" : ""}`}
-          style={{ flex: 1 }}
-          onClick={setAvailable}
-          disabled={loading || isAvailable}
-        >
-          Available
-        </button>
-        <button
-          className={`btn ${!isAvailable ? "btn-yellow" : ""}`}
-          style={{ flex: 1 }}
-          onClick={setUnavailable}
-          disabled={loading || (!isAvailable && status.widgetOverride === "unavailable")}
-        >
-          Unavailable
-        </button>
-      </div>
-
-      {/* Lead controls */}
-      <button
-        className="btn btn-sm w-full"
-        onClick={() => setShowControls(!showControls)}
-        style={{ marginBottom: showControls ? 12 : 0 }}
-      >
-        {showControls ? "Hide" : "Lead Controls"}
-      </button>
-
-      {showControls && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <input
-            type="text"
-            placeholder="Phone number"
-            value={dncPhone}
-            onChange={(e) => setDncPhone(e.target.value)}
-            style={{ fontFamily: "var(--font-mono)" }}
-          />
-          <div className="flex gap-2">
-            <button
-              className="btn btn-sm btn-red"
-              style={{ flex: 1 }}
-              onClick={() => { markDnc(dncPhone, "WYNN"); setDncPhone(""); }}
-              disabled={!dncPhone || loading}
-            >
-              DNC
-            </button>
-            <button
-              className="btn btn-sm btn-yellow"
-              style={{ flex: 1 }}
-              onClick={() => { freezeProspect(dncPhone, "WYNN"); setDncPhone(""); }}
-              disabled={!dncPhone || loading}
-            >
-              Freeze
-            </button>
-          </div>
-          <div className="text-xs text-muted">
-            DNC = remove from all contact. Freeze = pause outreach, keep lead active.
-          </div>
-        </div>
-      )}
     </div>
   );
 }
