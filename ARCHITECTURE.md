@@ -247,6 +247,7 @@ All in `.env` at project root. See the spec document for the full list. Key grou
 - `PB_*` — PhoneBurner
 - `DROP_*` — RVM
 - `CALL_RAIL_*` — call tracking
+- `CX_*` — RingCentral CX (CXone) platform
 - `ALLOWED_EMAILS` — auth whitelist
 
 ## Deployment (EC2)
