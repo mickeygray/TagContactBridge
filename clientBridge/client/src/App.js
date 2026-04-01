@@ -1,14 +1,12 @@
 // client/src/App.js
 // ─────────────────────────────────────────────────────────────
-// Auth: email + pin code via React Login component.
-// Session cookie shared across all three bridges (4000/5000/6000).
-//
 // Routing:
-//   /login        → email picker + pin code entry
-//   /dashboard    → main app (auth-gated)
-//   /ringbridge   → RingBridge agent status (auth-gated)
-//   /metrics      → Metrics dashboard (auth-gated)
-//   /deploy       → deploy panel (auth-gated)
+//   /login        → email + pin code
+//   /dashboard    → main tools (auth-gated)
+//   /ringbridge   → agent phone monitoring (auth-gated)
+//   /metrics      → ops dashboard (auth-gated)
+//   /debug        → system log viewer (auth-gated)
+//   /deploy       → build & deploy panel (auth-gated)
 //   /             → redirects to /dashboard
 // ─────────────────────────────────────────────────────────────
 
@@ -24,6 +22,7 @@ import AgentDashboard from "./components/interface/AgentDashboard";
 import RingBridgeDashboard from "./components/tools/ringcentral/RingBridgeDashboard";
 import DeployPanel from "./components/tools/deploypanel/DeployPanel";
 import MetricsDashboard from "./components/clientBridge/metrics/MetricsDashboard";
+import SystemDebugPanel from "./components/clientBridge/debug/SystemDebugPanel";
 
 export default function App() {
   return (
@@ -58,6 +57,15 @@ export default function App() {
             element={
               <PrivateRoute>
                 <MetricsDashboard />
+              </PrivateRoute>
+            }
+          />
+
+          <Route
+            path="/debug"
+            element={
+              <PrivateRoute>
+                <SystemDebugPanel />
               </PrivateRoute>
             }
           />

@@ -51,6 +51,23 @@ app.get("/api/metrics/daily-summary", metricsAuth, async (req, res) => {
 const { checkSession } = require("./routes/auth");
 app.get("/auth-check", checkSession);
 
+// System log SSE + query endpoints
+const { addSSEClient, queryLogs, getLogStats } = require("../shared/utils/systemLog");
+const { authMiddleware: logAuth } = require("../shared/middleware/authMiddleware");
+
+app.get("/api/logs/stream", logAuth, (req, res) => addSSEClient(res));
+
+app.get("/api/logs", logAuth, async (req, res) => {
+  const { bridge, level, category, limit, before } = req.query;
+  const logs = await queryLogs({ bridge, level, category, limit: Number(limit) || 100, before });
+  res.json(logs);
+});
+
+app.get("/api/logs/stats", logAuth, async (req, res) => {
+  const stats = await getLogStats();
+  res.json(stats);
+});
+
 app.post("/sms/inbound", smsInbound);
 // Serve React build
 app.use(express.static(path.join(__dirname, "client", "build")));

@@ -28,6 +28,9 @@ export default function Navbar() {
         <button className={isActive("/metrics")} onClick={() => navigate("/metrics")}>
           Metrics
         </button>
+        <button className={isActive("/debug")} onClick={() => navigate("/debug")}>
+          Debug
+        </button>
         <button className={isActive("/deploy")} onClick={() => navigate("/deploy")}>
           Deploy
         </button>
