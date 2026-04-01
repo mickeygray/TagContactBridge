@@ -47,6 +47,13 @@ app.get("/api/metrics/daily-summary", metricsAuth, async (req, res) => {
   res.json({ message: "Metrics endpoint placeholder" });
 });
 
+// Auth check for nginx auth_request (used by all three bridges)
+const { isValidSession } = require("./routes/auth");
+app.get("/auth-check", (req, res) => {
+  if (isValidSession(req)) return res.sendStatus(200);
+  return res.sendStatus(401);
+});
+
 app.post("/sms/inbound", smsInbound);
 // Serve React build
 app.use(express.static(path.join(__dirname, "client", "build")));

@@ -1,4 +1,5 @@
 import React from "react";
+import { Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
 export default function PrivateRoute({ children }) {
@@ -13,9 +14,7 @@ export default function PrivateRoute({ children }) {
   }
 
   if (!isAuthenticated) {
-    // Redirect to loginPanel's server-rendered login page (not a React route)
-    window.location.href = "/login";
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   return children;

@@ -1,16 +1,15 @@
 // hooks/useAuth.js
 // ─────────────────────────────────────────────────────────────
-// Auth is handled by loginPanel (leadBridge) — email + pin code.
-// loginPanel sets a deploy_session cookie, nginx validates it via
-// auth_request to /auth-check, then sets X-Auth-Validated header.
+// Auth is email + pin code, managed by clientBridge's auth routes.
 //
-// This hook just checks if the session is valid by calling
-// GET /api/auth/me (which passes through authMiddleware).
-// If the deploy_session cookie is valid → returns ADMIN_USER.
-// If not → user needs to go through /login (loginPanel HTML).
+// Flow:
+//   1. React Login component calls POST /api/auth/send-code
+//   2. User gets 6-digit pin via SendGrid email
+//   3. Login component calls POST /api/auth/verify → server sets session cookie
+//   4. Hard redirect to /dashboard → useAuth calls GET /api/auth/me → authenticated
 //
-// There is no React-side login form — the loginPanel serves
-// its own HTML at /login with the email picker + code entry.
+// Session cookie (deploy_session) is shared across all three bridges
+// via the same domain. nginx auth_request validates at /auth-check.
 // ─────────────────────────────────────────────────────────────
 
 import { useReducer, useCallback, useEffect, createContext, useContext } from "react";
@@ -34,7 +33,7 @@ function authReducer(state, action) {
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
-  // On mount, check if the deploy_session cookie is valid
+  // Check session on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -48,9 +47,12 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true; };
   }, []);
 
-  const logout = useCallback(() => {
-    // loginPanel handles logout at /logout (clears deploy_session cookie)
-    window.location.href = "/logout";
+  const logout = useCallback(async () => {
+    try {
+      await api.post("/api/auth/logout");
+    } catch { /* ignore */ }
+    dispatch({ type: "NOT_AUTHENTICATED" });
+    window.location.href = "/login";
   }, []);
 
   return (
