@@ -1,6 +1,6 @@
-import React, { useMemo, useState, useContext } from "react";
+import React, { useMemo, useState } from "react";
 import { csv } from "csvtojson";
-import TextContext from "../../../context/text/textContext";
+import { useText } from "../../../hooks/useText";
 
 const DOMAIN_OPTIONS = ["TAG", "WYNN", "AMITY", "PROSPECTS"];
 
@@ -43,7 +43,7 @@ const formatFirstName = (name) =>
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
 export default function TextMessageSenderSimple() {
-  const { sendTextMessage } = useContext(TextContext);
+  const { sendTextMessage } = useText();
 
   const [domain, setDomain] = useState("TAG");
   const [uploadedList, setUploadedList] = useState([]);

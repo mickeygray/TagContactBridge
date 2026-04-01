@@ -1,7 +1,7 @@
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
-import ListContext from "../../../context/list/listContext";
+import { useList } from "../../../hooks/useList";
 import SftpDownloadEmailButton from "./SftpDownloadEmailButton";
 
 const NCOAUploader = () => {
@@ -11,7 +11,7 @@ const NCOAUploader = () => {
   const [error, setError] = useState("");
 
   // Context functions for processing data
-  const { postNCOAList } = useContext(ListContext);
+  const { postNCOAList } = useList();
 
   // File upload handler
   const handleFileUpload = (e) => {

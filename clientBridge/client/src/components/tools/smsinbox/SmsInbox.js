@@ -1,5 +1,5 @@
-import React, { useContext, useEffect, useState } from "react";
-import SmsContext from "../../../context/sms/smsContext";
+import React, { useEffect, useState } from "react";
+import { useSms } from "../../../hooks/useSms";
 import SmsConversationCard from "./SmsConversationCard";
 import SmsThread from "./SmsThread";
 
@@ -21,7 +21,7 @@ export default function SmsInbox() {
     setFilter,
     startPolling,
     stopPolling,
-  } = useContext(SmsContext);
+  } = useSms();
 
   const [showSettings, setShowSettings] = useState(false);
   const [delayValue, setDelayValue] = useState(300); // seconds

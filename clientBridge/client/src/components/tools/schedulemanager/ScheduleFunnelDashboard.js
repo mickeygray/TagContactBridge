@@ -1,5 +1,4 @@
-import React, { useContext, useState } from "react";
-import ScheduleContext from "../../../context/schedule/scheduleContext";
+import React from "react";
 import NewClientCreationForm from "./NewClientCreationForm";
 import DailyScheduleManager from "./DailyScheduleManager";
 

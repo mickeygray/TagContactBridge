@@ -1,11 +1,10 @@
-import React, { useContext, useState } from "react";
-import ListContext from "../../../context/list/listContext";
-import MessageContext from "../../../context/message/messageContext";
+import React, { useState } from "react";
+import { useList } from "../../../hooks/useList";
+import { toast } from "../../../utils/toast";
 import UnifiedClientAnalysisList from "../lists/UnifiedClientAnalysisList";
 
 export default function UnifiedClientListManager() {
-  const { searchedClients, searchUnifiedClients } = useContext(ListContext);
-  const { showError } = useContext(MessageContext);
+  const { searchedClients, searchUnifiedClients } = useList();
 
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({
@@ -25,7 +24,7 @@ export default function UnifiedClientListManager() {
     try {
       await searchUnifiedClients({ query, ...filters });
     } catch (err) {
-      showError("Search", err.message);
+      toast.error("Error", err.message);
     }
   };
 

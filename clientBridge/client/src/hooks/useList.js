@@ -54,6 +54,19 @@ function listReducer(state, action) {
       return { ...state, contactAppendRows: action.payload, loading: false };
     case "SET_FILTERED":
       return { ...state, filteredClients: action.payload, loading: false };
+    case "SKIP_CLIENT":
+      return {
+        ...state,
+        toReview: state.toReview.filter(
+          (c) => !(c.caseNumber === action.payload.caseNumber && c.domain === action.payload.domain)
+        ),
+        partial: state.partial.filter(
+          (c) => !(c.caseNumber === action.payload.caseNumber && c.domain === action.payload.domain)
+        ),
+        verified: state.verified.filter(
+          (c) => !(c.caseNumber === action.payload.caseNumber && c.domain === action.payload.domain)
+        ),
+      };
     case "SET_LOADING":
       return { ...state, loading: true, error: null };
     case "SET_ERROR":
@@ -195,6 +208,10 @@ export function useList() {
     }
   }, []);
 
+  const skipClient = useCallback((client) => {
+    dispatch({ type: "SKIP_CLIENT", payload: client });
+  }, []);
+
   const clearPeriod = useCallback(() => dispatch({ type: "CLEAR_PERIOD" }), []);
   const clearLexDataArray = useCallback(() => dispatch({ type: "CLEAR_LEXARRAY" }), []);
   const addToLexArray = useCallback((data) => dispatch({ type: "ADD_TO_LEXARRAY", payload: data }), []);
@@ -212,6 +229,7 @@ export function useList() {
     buildDialerList,
     filterList,
     searchUnifiedClients,
+    skipClient,
     clearPeriod,
     clearLexDataArray,
     addToLexArray,

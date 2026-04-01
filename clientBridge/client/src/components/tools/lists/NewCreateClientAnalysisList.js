@@ -1,14 +1,12 @@
 // src/components/clientreview/NewCreateClientAnalysisList.jsx
-import React, { useContext } from "react";
-import ListContext from "../../../context/list/listContext";
-import MessageContext from "../../../context/message/messageContext";
+import React from "react";
+import { useList } from "../../../hooks/useList";
+import { toast } from "../../../utils/toast";
 import ClientAnalysisList from "../../common/ClientAnalysisList";
 import NewCreateClientAnalysisCard from "../cards/NewCreateClientAnalysisCard";
 
 export default function NewCreateClientAnalysisList() {
-  const { toReview, addCreateDateClients, skipClient } =
-    useContext(ListContext);
-  const { showMessage, showError } = useContext(MessageContext);
+  const { toReview, addCreateDateClients, skipClient } = useList();
 
   // define the two buttons on each card
   const actions = [
@@ -22,16 +20,15 @@ export default function NewCreateClientAnalysisList() {
       if (action === "add") {
         // wrap in array because the bulk API expects an array
         await addCreateDateClients([client]);
-        showMessage("Client", `Added ${client.caseNumber}`, 200);
+        toast.success("Client", `Added ${client.caseNumber}`);
       } else {
         skipClient(client.caseNumber);
-        showMessage("Client", `Removed ${client.caseNumber}`, 200);
+        toast.success("Client", `Removed ${client.caseNumber}`);
       }
     } catch (err) {
-      showError(
-        "Client",
-        `Failed to ${action}: ${err.response?.data?.message || err.message}`,
-        err.response?.status
+      toast.error(
+        "Error",
+        `Failed to ${action}: ${err.response?.data?.message || err.message}`
       );
     }
   };
@@ -46,7 +43,7 @@ export default function NewCreateClientAnalysisList() {
         onReview: handleReview,
         onSkip: (client) => {
           skipClient(client.caseNumber);
-          showMessage("Client", `Removed ${client.caseNumber}`, 200);
+          toast.success("Client", `Removed ${client.caseNumber}`);
         },
       }}
     />

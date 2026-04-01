@@ -1,8 +1,8 @@
-import React, { useState, useContext } from "react";
+import React, { useState } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
-import ListContext from "../../../context/list/listContext";
-import MessageContext from "../../../context/message/messageContext";
+import { useList } from "../../../hooks/useList";
+import { toast } from "../../../utils/toast";
 import NewCreateClientAnalysisList from "../lists/NewCreateClientAnalysisList";
 
 const LogicsFileReader = () => {
@@ -22,9 +22,7 @@ const LogicsFileReader = () => {
     appendContactInfo,
     contactAppendRows,
     contactAppendLoading,
-  } = useContext(ListContext);
-  const { startLoading, stopLoading, showMessage, showError } =
-    useContext(MessageContext);
+  } = useList();
 
   // 1. Bulk Upload CSV Handler
   const handleBulkUploadCsv = (file) => {
@@ -489,10 +487,9 @@ const LogicsFileReader = () => {
           : contactAppendRows; // fallback to reducer if you still rely on it somewhere
 
       if (!rows || rows.length === 0) {
-        showError(
-          "Export",
-          "No contact info to export. Run Append Contact Info first.",
-          400
+        toast.error(
+          "Error",
+          "No contact info to export. Run Append Contact Info first."
         );
         return;
       }
@@ -528,46 +525,41 @@ const LogicsFileReader = () => {
   // run the selected tool (no action for advanceScrape)
   const handleAction = async () => {
     if (clients.length === 0) {
-      showError("Upload", "No clients to process.", 400);
+      toast.error("Error", "No clients to process.");
       return;
     }
-    startLoading();
     try {
       if (mode === "bulkUpload") {
         const res = await addCreateDateClients(clients);
         const count = Array.isArray(res.added) ? res.added.length : 0;
-        showMessage("Bulk Upload", `Saved ${count} clients.`, 200);
+        toast.success("Bulk Upload", `Saved ${count} clients.`);
       } else if (mode === "zeroInvoice") {
         await parseZeros(clients);
-        showMessage(
+        toast.success(
           "Zero Invoice",
-          `Found ${zeroInvoiceList.length} zero‐amount invoices.`,
-          200
+          `Found ${zeroInvoiceList.length} zero‐amount invoices.`
         );
       } else if (mode === "prospectDialer") {
         await buildDialerList(clients);
-        showMessage(
+        toast.success(
           "Dialer Builder",
-          `Built dialer list with ${prospectDialerList.length} entries.`,
-          200
+          `Built dialer list with ${prospectDialerList.length} entries.`
         );
       } else if (mode === "contactAppend") {
         const caseIds = clients.map((c) => c.caseNumber).filter(Boolean);
         if (caseIds.length === 0) {
-          showError("Contact Append", "No CaseIDs found to query.", 400);
+          toast.error("Error", "No CaseIDs found to query.");
         } else {
           const res = await appendContactInfo(clients);
           // reducer stores rows in contactAppendRows; res.count is returned from API
-          showMessage("Contact Append", `Fetched ${res.count} records.`, 200);
+          toast.success("Contact Append", `Fetched ${res.count} records.`);
         }
       }
 
       // No action for advanceScrape
     } catch (err) {
       const msg = err.response?.data?.message || err.message;
-      showError("Error", msg, err.response?.status);
-    } finally {
-      stopLoading();
+      toast.error("Error", msg);
     }
   };
   console.log(zeroInvoiceList);

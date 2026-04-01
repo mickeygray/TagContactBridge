@@ -1,5 +1,5 @@
-import React, { useState, useContext, useEffect, useRef } from "react";
-import SmsContext from "../../../context/sms/smsContext";
+import React, { useState, useEffect, useRef } from "react";
+import { useSms } from "../../../hooks/useSms";
 
 export default function SmsThread() {
   const {
@@ -9,7 +9,7 @@ export default function SmsThread() {
     approveResponse,
     cancelResponse,
     regenerateResponse,
-  } = useContext(SmsContext);
+  } = useSms();
 
   const [reply, setReply] = useState("");
   const bottomRef = useRef(null);

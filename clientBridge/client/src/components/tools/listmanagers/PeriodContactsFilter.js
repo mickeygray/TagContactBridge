@@ -1,7 +1,7 @@
 // src/components/tools/listManagers/PeriodContactsFilter.jsx
 
-import React, { useState, useContext } from "react";
-import ListContext from "../../../context/list/listContext";
+import React, { useState } from "react";
+import { useList } from "../../../hooks/useList";
 import PeriodClientAnalysisList from "../lists/PeriodClientAnalysisList";
 
 const STAGE_OPTIONS = [
@@ -16,7 +16,7 @@ const STAGE_OPTIONS = [
 ];
 
 export default function PeriodContactsFilter() {
-  const { buildPeriod, periodInfo, clearPeriod } = useContext(ListContext);
+  const { buildPeriod, periodInfo, clearPeriod } = useList();
   const [stage, setStage] = useState("");
 
   const fetchPeriodContacts = () => {

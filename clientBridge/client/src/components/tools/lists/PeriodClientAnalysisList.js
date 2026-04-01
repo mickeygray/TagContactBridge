@@ -1,10 +1,10 @@
-import React, { useContext } from "react";
-import ListContext from "../../../context/list/listContext";
+import React from "react";
+import { useList } from "../../../hooks/useList";
 import ClientAnalysisList from "../../common/ClientAnalysisList";
 import PeriodClientAnalysisCard from "../cards/PeriodClientAnalysisCard";
 
 export default function PeriodClientAnalysisList() {
-  const { toReview, partial, verified, periodInfo } = useContext(ListContext);
+  const { toReview, partial, verified, periodInfo } = useList();
 
   if (!periodInfo) return null;
 

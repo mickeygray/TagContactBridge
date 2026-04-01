@@ -1,6 +1,6 @@
 // client/src/components/tools/admin/ConsentVault.jsx
-import React, { useState, useEffect, useContext } from "react";
-import AdminContext from "../../../context/admin/adminContext";
+import React, { useState, useEffect } from "react";
+import { useAdmin } from "../../../hooks/useAdmin";
 
 const ConsentVault = () => {
   const {
@@ -12,7 +12,7 @@ const ConsentVault = () => {
     getConsentRecord,
     getConsentStats,
     clearConsentRecord,
-  } = useContext(AdminContext);
+  } = useAdmin();
 
   const [filters, setFilters] = useState({
     email: "",

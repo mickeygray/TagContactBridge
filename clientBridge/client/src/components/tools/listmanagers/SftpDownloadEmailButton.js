@@ -1,9 +1,9 @@
 // components/SftpDownloadEmailButton.jsx
-import React, { useState, useContext } from "react";
-import ListContext from "../../../context/list/listContext";
+import React, { useState } from "react";
+import { useList } from "../../../hooks/useList";
 
 export default function SftpDownloadEmailButton() {
-  const { downloadAndEmailDaily } = useContext(ListContext);
+  const { downloadAndEmailDaily } = useList();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);

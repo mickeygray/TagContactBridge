@@ -1,7 +1,7 @@
-import React, { useState, useContext, useEffect } from "react";
-import ScheduleContext from "../../../context/schedule/scheduleContext";
-import EmailContext from "../../../context/email/emailContext";
-import TextContext from "../../../context/text/textContext";
+import React, { useState, useEffect } from "react";
+import { useDailySchedule } from "../../../hooks/useDailySchedule";
+import { useEmail } from "../../../hooks/useEmail";
+import { useText } from "../../../hooks/useText";
 import DailyClientAnalysisList from "../lists/DailyClientAnalysisList";
 
 const DailyScheduleManager = () => {
@@ -12,12 +12,12 @@ const DailyScheduleManager = () => {
     buildDailySchedule,
     processReviewActions,
     refreshDailyQueues,
-    pace, // current pace from context
-    updateScheduleSettings, // helper to PUT new pace
-  } = useContext(ScheduleContext);
+    pace,
+    updateScheduleSettings,
+  } = useDailySchedule();
 
-  const { sendEmailBatch } = useContext(EmailContext);
-  const { sendTextBatch } = useContext(TextContext);
+  const { sendEmailBatch } = useEmail();
+  const { sendTextBatch } = useText();
 
   const [activeQueue, setActiveQueue] = useState("email");
   const [loading, setLoading] = useState(false);

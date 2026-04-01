@@ -16,6 +16,8 @@ function clientReducer(state, action) {
       return { ...state, enrichedClient: action.payload, loading: false };
     case "CLEAR_ENRICHMENT":
       return { ...state, enrichedClient: null };
+    case "RESET_NEW_CLIENT":
+      return { ...state, newClient: null };
     case "ADD_CLIENT":
       return { ...state, newClient: action.payload, loading: false };
     case "SET_LOADING":
@@ -44,6 +46,10 @@ export function useClients() {
 
   const clearEnrichedClient = useCallback(() => {
     dispatch({ type: "CLEAR_ENRICHMENT" });
+  }, []);
+
+  const resetNewClient = useCallback(() => {
+    dispatch({ type: "RESET_NEW_CLIENT" });
   }, []);
 
   const uploadFileToCase = useCallback(async (formData) => {
@@ -141,6 +147,7 @@ export function useClients() {
     ...state,
     enrichClient,
     clearEnrichedClient,
+    resetNewClient,
     uploadFileToCase,
     postZeroInvoice,
     createTaskForClient,

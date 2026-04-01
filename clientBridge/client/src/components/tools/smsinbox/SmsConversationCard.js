@@ -1,5 +1,5 @@
-import React, { useState, useContext, useEffect } from "react";
-import SmsContext from "../../../context/sms/smsContext";
+import React, { useState, useEffect } from "react";
+import { useSms } from "../../../hooks/useSms";
 
 function timeLeft(autoSendAt) {
   if (!autoSendAt) return null;
@@ -20,7 +20,7 @@ export default function SmsConversationCard({ conversation }) {
     sleepBot,
     wakeBot,
     fetchConversation,
-  } = useContext(SmsContext);
+  } = useSms();
 
   const [editMode, setEditMode] = useState(false);
   const [editText, setEditText] = useState("");

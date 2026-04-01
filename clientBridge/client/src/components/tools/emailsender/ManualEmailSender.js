@@ -1,6 +1,6 @@
-import React, { useState, useContext, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { csv } from "csvtojson";
-import EmailContext from "../../../context/email/emailContext";
+import { useEmail } from "../../../hooks/useEmail";
 
 const DOMAIN_OPTIONS = ["TAG", "WYNN", "AMITY", "TGC"];
 
@@ -37,7 +37,7 @@ const TEMPLATE_SERIES = {
 };
 
 export default function ManualEmailSender() {
-  const { sendEmails } = useContext(EmailContext);
+  const { sendEmails } = useEmail();
 
   const [domain, setDomain] = useState("TAG");
   const [baseEmailName, setBaseEmailName] = useState("");

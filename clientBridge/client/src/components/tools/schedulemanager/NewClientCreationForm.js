@@ -1,10 +1,9 @@
-import React, { useState, useContext } from "react";
-import ClientContext from "../../../context/client/clientContext";
+import React, { useState } from "react";
+import { useClients } from "../../../hooks/useClients";
 import NewSaleClientAnalysisCard from "../cards/NewSaleClientAnalysisCard";
 
 const NewClientCreationForm = () => {
-  const { addScheduledClient, newClient, clearNewClient } =
-    useContext(ClientContext);
+  const { addScheduledClient, newClient, resetNewClient } = useClients();
 
   const [inputFocused, setInputFocused] = useState(false);
 
@@ -43,7 +42,7 @@ const NewClientCreationForm = () => {
       domain: "TAG",
       autoPOA: false,
     });
-    clearNewClient();
+    resetNewClient();
   };
 
   const handleSubmit = (e) => {
