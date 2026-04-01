@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import AuthContext from "../../context/auth/authContext";
+import { api } from "../../utils/api";
 
 const Register = () => {
   const { token } = useParams();
   const navigate = useNavigate();
-  const { validateInvite, completeInvite } = useContext(AuthContext);
 
   const [formData, setFormData] = useState({
     email: "",
@@ -15,125 +14,73 @@ const Register = () => {
   });
   const [passwordError, setPasswordError] = useState("");
   const [matchError, setMatchError] = useState("");
-
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [inviteValid, setInviteValid] = useState(false);
 
   useEffect(() => {
-    const checkInvite = async () => {
+    (async () => {
       try {
-        const data = await validateInvite(token);
-        console.log(data);
-        setFormData((prev) => ({
-          ...prev,
-          email: data.email,
-          name: data.name,
-        }));
+        const res = await api.get(`/api/invite/validate/${token}`);
+        setFormData((prev) => ({ ...prev, email: res.data.email, name: res.data.name }));
         setInviteValid(true);
       } catch {
         setError("Invalid or expired invite link.");
       }
-    };
-    checkInvite();
+    })();
   }, [token]);
+
+  const validatePassword = (pw) =>
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/.test(pw);
 
   const onChange = (e) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });
 
     if (name === "password") {
-      if (!validatePassword(value)) {
-        setPasswordError(
-          "❌ Must include uppercase, lowercase, number, symbol, 8+ characters"
-        );
-      } else {
-        setPasswordError("");
-      }
+      setPasswordError(
+        validatePassword(value) ? "" : "Must include uppercase, lowercase, number, symbol, 8+ characters"
+      );
     }
-
     if (name === "confirmPassword" || name === "password") {
       const pw = name === "password" ? value : formData.password;
-      const confirm =
-        name === "confirmPassword" ? value : formData.confirmPassword;
-
-      if (confirm && pw !== confirm) {
-        setMatchError("❌ Passwords do not match");
-      } else {
-        setMatchError("");
-      }
+      const confirm = name === "confirmPassword" ? value : formData.confirmPassword;
+      setMatchError(confirm && pw !== confirm ? "Passwords do not match" : "");
     }
-  };
-
-  const validatePassword = (pw) => {
-    const strongRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
-    return strongRegex.test(pw);
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
     const { password, confirmPassword } = formData;
-
-    if (password !== confirmPassword) {
-      return setError("Passwords do not match.");
-    }
-
-    if (!validatePassword(password)) {
-      return setError(
-        "Password must be 8+ characters with uppercase, lowercase, number, and symbol."
-      );
-    }
+    if (password !== confirmPassword) return setError("Passwords do not match.");
+    if (!validatePassword(password))
+      return setError("Password must be 8+ characters with uppercase, lowercase, number, and symbol.");
 
     try {
-      await completeInvite(token, password);
-      setMessage("✅ Account created! You can now log in.");
+      await api.post(`/api/invite/complete/${token}`, { password });
+      setMessage("Account created! You can now log in.");
       setTimeout(() => navigate("/login"), 1500);
     } catch (err) {
       setError(err.response?.data?.message || "Error registering.");
     }
   };
 
-  if (!inviteValid && !error) return <p>Verifying your invite...</p>;
+  if (!inviteValid && !error) return <div className="loading-overlay"><div className="spinner" /></div>;
 
   return (
-    <div className="container">
-      <div className="card">
-        <h2 className="mb-1">Complete Your Registration</h2>
-        {message && <p style={{ color: "green" }}>{message}</p>}
-        {error && <p style={{ color: "red" }}>{error}</p>}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh" }}>
+      <div className="card" style={{ width: 400 }}>
+        <div className="card-header"><span className="card-title">Complete Registration</span></div>
+        {message && <div style={{ color: "var(--accent-green)", marginBottom: 12 }}>{message}</div>}
+        {error && <div style={{ color: "var(--accent-red)", marginBottom: 12 }}>{error}</div>}
         {inviteValid && (
-          <form onSubmit={onSubmit}>
-            <p>
-              Registering for: <strong>{formData.email}</strong>
-            </p>
-            <label>Password</label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={onChange}
-              required
-            />
-            {passwordError && (
-              <p style={{ color: "red", marginTop: "0.25rem" }}>
-                {passwordError}
-              </p>
-            )}
-
-            <label>Confirm Password</label>
-            <input
-              type="password"
-              name="confirmPassword"
-              value={formData.confirmPassword}
-              onChange={onChange}
-              required
-            />
-            {matchError && (
-              <p style={{ color: "red", marginTop: "0.25rem" }}>{matchError}</p>
-            )}
-            <button type="submit" className="btn mt-1">
-              Create Account
-            </button>
+          <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="text-sm text-secondary">Registering as: <strong>{formData.email}</strong></div>
+            <div><label>Password</label><input type="password" name="password" value={formData.password} onChange={onChange} required style={{ width: "100%", marginTop: 4 }} /></div>
+            {passwordError && <div style={{ color: "var(--accent-red)", fontSize: "var(--text-xs)" }}>{passwordError}</div>}
+            <div><label>Confirm Password</label><input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={onChange} required style={{ width: "100%", marginTop: 4 }} /></div>
+            {matchError && <div style={{ color: "var(--accent-red)", fontSize: "var(--text-xs)" }}>{matchError}</div>}
+            <button type="submit" className="btn btn-solid" style={{ width: "100%" }}>Create Account</button>
           </form>
         )}
       </div>

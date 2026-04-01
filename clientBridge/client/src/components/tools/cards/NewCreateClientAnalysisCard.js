@@ -1,13 +1,11 @@
 // src/components/clientreview/NewCreateClientAnalysisCard.jsx
-import React, { useContext } from "react";
+import React from "react";
 import ClientAnalysisCard from "../../common/ClientAnalysisCard";
-import ListContext from "../../../context/list/listContext";
-import MessageContext from "../../../context/message/messageContext";
+import { useList } from "../../../hooks/useList";
+import { toast } from "../../../utils/toast";
 
 export default function NewCreateClientAnalysisCard({ client }) {
-  const { addCreateDateClients } = useContext(ListContext);
-  const { skipClient } = useContext(ListContext);
-  const { showMessage, showError } = useContext(MessageContext);
+  const { addCreateDateClients, skipClient } = useList();
 
   const actions = [{ key: "add", label: "Add to Period", variant: "primary" }];
 
@@ -15,14 +13,10 @@ export default function NewCreateClientAnalysisCard({ client }) {
     try {
       if (action === "add") {
         await addCreateDateClients([client]);
-        showMessage("Client", `Added ${client.caseNumber}`, 200);
+        toast.success("Client", `Added ${client.caseNumber}`);
       }
     } catch (err) {
-      showError(
-        "Client",
-        `Failed to ${action}: ${err.message}`,
-        err.response?.status
-      );
+      toast.error("Client", `Failed to ${action}: ${err.message}`);
     }
   };
 
@@ -33,7 +27,7 @@ export default function NewCreateClientAnalysisCard({ client }) {
       onReview={handleReview}
       onSkip={() => {
         skipClient(client);
-        showMessage("Client", `Removed ${client.caseNumber}`, 200);
+        toast.success("Client", `Removed ${client.caseNumber}`);
       }}
     />
   );

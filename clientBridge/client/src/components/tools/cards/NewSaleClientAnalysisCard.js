@@ -1,13 +1,12 @@
 // src/components/tools/cards/NewSaleClientAnalysisCard.jsx
-import React, { useContext } from "react";
+import React from "react";
 import PropTypes from "prop-types";
 import ClientAnalysisCard from "../../common/ClientAnalysisCard";
-import ClientContext from "../../../context/client/clientContext";
-import MessageContext from "../../../context/message/messageContext";
+import { useClients } from "../../../hooks/useClients";
+import { toast } from "../../../utils/toast";
 
 export default function NewSaleClientAnalysisCard({ client, onHide }) {
-  const { processReviewedSaleDateClient } = useContext(ClientContext);
-  const { showMessage, showError } = useContext(MessageContext);
+  const { processReviewedSaleDateClient } = useClients();
 
   // these are the buttons we want to show when a new client is flagged
   const actions = [
@@ -22,15 +21,14 @@ export default function NewSaleClientAnalysisCard({ client, onHide }) {
   const handleReview = async (c, action) => {
     try {
       await processReviewedSaleDateClient(c, action);
-      showMessage("Client", `${action} applied to ${c.caseNumber}`, 200);
+      toast.success("Client", `${action} applied to ${c.caseNumber}`);
       // after a delete or delay you probably want to hide the review card
       if (["delete", "delay"].includes(action)) {
         onHide();
       }
     } catch (err) {
-      const status = err.response?.status;
       const msg = err.response?.data?.message || err.message;
-      showError("Client", `Failed to ${action}: ${msg}`, status);
+      toast.error("Client", `Failed to ${action}: ${msg}`);
     }
   };
 

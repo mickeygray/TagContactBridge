@@ -1,14 +1,12 @@
-import React, { useContext, useState } from "react";
+import React, { useState } from "react";
 import ClientAnalysisCard from "../../common/ClientAnalysisCard";
-import ClientContext from "../../../context/client/clientContext";
-import ScheduleContext from "../../../context/schedule/scheduleContext";
-import MessageContext from "../../../context/message/messageContext";
+import { useClients } from "../../../hooks/useClients";
+import { useDailySchedule } from "../../../hooks/useDailySchedule";
+import { toast } from "../../../utils/toast";
 
 export default function DailySalesClientAnalysisCard({ client }) {
-  const { processReviewedSaleDateClient } = useContext(ClientContext);
-  const { skipDailyClientProcessing, refreshDailyQueues } =
-    useContext(ScheduleContext);
-  const { showMessage, showError } = useContext(MessageContext);
+  const { processReviewedSaleDateClient } = useClients();
+  const { skipDailyClientProcessing, refreshDailyQueues } = useDailySchedule();
 
   // Simple state to prevent double-clicking
   const [isProcessing, setIsProcessing] = useState(false);
@@ -27,18 +25,14 @@ export default function DailySalesClientAnalysisCard({ client }) {
     try {
       await processReviewedSaleDateClient(c, action);
       skipDailyClientProcessing(c);
-      showMessage("Client", `${action} applied to ${c.caseNumber}`, 200);
+      toast.success("Client", `${action} applied to ${c.caseNumber}`);
 
       // Only refresh if you have this method, otherwise remove this line
       if (refreshDailyQueues) {
         await refreshDailyQueues();
       }
     } catch (err) {
-      showError(
-        "Client",
-        `Failed to ${action}: ${err.message}`,
-        err.response?.status
-      );
+      toast.error("Client", `Failed to ${action}: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }
@@ -49,7 +43,7 @@ export default function DailySalesClientAnalysisCard({ client }) {
 
     processReviewedSaleDateClient(client, "removeFromQueue");
     skipDailyClientProcessing(client);
-    showMessage("Client", `Skipped ${client.caseNumber} for today`, 200);
+    toast.success("Client", `Skipped ${client.caseNumber} for today`);
   };
 
   return (

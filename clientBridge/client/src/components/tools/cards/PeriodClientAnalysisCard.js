@@ -1,14 +1,13 @@
 // src/components/clientreview/PeriodClientAnalysisCard.jsx
-import React, { useContext } from "react";
+import React from "react";
 import ClientAnalysisCard from "../../common/ClientAnalysisCard";
-import ClientContext from "../../../context/client/clientContext";
-import ListContext from "../../../context/list/listContext";
-import MessageContext from "../../../context/message/messageContext";
+import { useClients } from "../../../hooks/useClients";
+import { useList } from "../../../hooks/useList";
+import { toast } from "../../../utils/toast";
 
 export default function PeriodClientAnalysisCard({ client }) {
-  const { processReviewedCreateDateClient } = useContext(ClientContext);
-  const { skipClient } = useContext(ListContext);
-  const { showMessage, showError } = useContext(MessageContext);
+  const { processReviewedCreateDateClient } = useClients();
+  const { skipClient } = useList();
 
   const actions = [
     { key: "schedulePeriod", label: "Add to Period", variant: "primary" },
@@ -20,13 +19,9 @@ export default function PeriodClientAnalysisCard({ client }) {
     try {
       await processReviewedCreateDateClient(client, action);
       skipClient(client);
-      showMessage("Client", `${action} applied to ${client.caseNumber}`, 200);
+      toast.success("Client", `${action} applied to ${client.caseNumber}`);
     } catch (err) {
-      showError(
-        "Client",
-        `Failed to ${action}: ${err.message}`,
-        err.response?.status
-      );
+      toast.error("Client", `Failed to ${action}: ${err.message}`);
     }
   };
   return (
@@ -36,7 +31,7 @@ export default function PeriodClientAnalysisCard({ client }) {
       onReview={handleReview}
       onSkip={() => {
         skipClient(client);
-        showMessage("Client", `Removed ${client.caseNumber}`, 200);
+        toast.success("Client", `Removed ${client.caseNumber}`);
       }}
     />
   );

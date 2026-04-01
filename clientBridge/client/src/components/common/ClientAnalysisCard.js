@@ -1,6 +1,6 @@
-import React, { useState, useContext } from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
-import ClientContext from "../../context/client/clientContext";
+import { useClients } from "../../hooks/useClients";
 import CollapsibleNote from "../layout/CollapsibleNote";
 
 export default function ClientAnalysisCard({
@@ -17,7 +17,7 @@ export default function ClientAnalysisCard({
     enrichedClient,
     deleteScheduledClient,
     clearEnrichedClient,
-  } = useContext(ClientContext);
+  } = useClients();
 
   const [showEnriched, setShowEnriched] = useState(false);
 
