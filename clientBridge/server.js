@@ -41,12 +41,7 @@ app.use("/api/texts", require("./routes/texts"));
 app.use("/api/schedule", require("./routes/schedule"));
 app.use("/api/clients", clientRoutes);
 app.use("/api/templates", require("./routes/templates"));
-
-// Metrics placeholder
-const { authMiddleware: metricsAuth } = require("../shared/middleware/authMiddleware");
-app.get("/api/metrics/daily-summary", metricsAuth, async (req, res) => {
-  res.json({ message: "Metrics endpoint placeholder" });
-});
+app.use("/api/metrics", require("./routes/metrics"));
 
 // Auth check for nginx auth_request (used by all three bridges)
 const { checkSession } = require("./routes/auth");
