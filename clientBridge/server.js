@@ -48,11 +48,8 @@ app.get("/api/metrics/daily-summary", metricsAuth, async (req, res) => {
 });
 
 // Auth check for nginx auth_request (used by all three bridges)
-const { isValidSession } = require("./routes/auth");
-app.get("/auth-check", (req, res) => {
-  if (isValidSession(req)) return res.sendStatus(200);
-  return res.sendStatus(401);
-});
+const { checkSession } = require("./routes/auth");
+app.get("/auth-check", checkSession);
 
 app.post("/sms/inbound", smsInbound);
 // Serve React build

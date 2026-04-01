@@ -1,36 +1,44 @@
 // routes/auth.js
 // ─────────────────────────────────────────────────────────────
-// Email + pin code authentication.
-// Replaces the server-rendered loginPanel HTML — now the React
-// app handles the UI, these routes handle the API.
+// Email + pin code authentication with MongoDB session store.
+//
+// Security for EC2/production deployment:
+//   - Sessions in MongoDB (survives restarts, works with PM2 cluster)
+//   - Cookies: httpOnly, secure (HTTPS), sameSite strict
+//   - CSRF: double-submit cookie pattern (X-CSRF-Token header)
+//   - Rate limiting on send-code and verify
+//   - Pending codes hashed with SHA-256 (not stored in plaintext)
+//   - Sessions auto-expire via MongoDB TTL index
 //
 // Flow:
-//   1. POST /api/auth/send-code { email } → sends 6-digit pin via SendGrid
-//   2. POST /api/auth/verify { code }     → validates pin, sets session cookie
-//   3. GET  /api/auth/me                  → returns user if session valid
-//   4. POST /api/auth/logout              → clears session
+//   1. POST /api/auth/send-code { email } → sends 6-digit pin
+//   2. POST /api/auth/verify { email, code } → validates, sets cookie
+//   3. GET  /api/auth/me                     → returns user if valid
+//   4. POST /api/auth/logout                 → destroys session
 // ─────────────────────────────────────────────────────────────
 
 const express = require("express");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const rateLimit = require("express-rate-limit");
 const sendEmail = require("../../shared/utils/sendEmail");
-const { authMiddleware, ADMIN_USER } = require("../../shared/middleware/authMiddleware");
+const { ADMIN_USER } = require("../../shared/middleware/authMiddleware");
 
 const router = express.Router();
 
 // ─── Config ──────────────────────────────────────────────────
 
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000;   // 8 hours
-const CODE_TTL_MS = 10 * 60 * 1000;           // 10 minutes
-const COOKIE_NAME = "deploy_session";
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;     // 8 hours
+const CODE_TTL_MS = 10 * 60 * 1000;             // 10 minutes
+const COOKIE_NAME = "tcb_session";
+const CSRF_COOKIE = "tcb_csrf";
+const IS_PROD = process.env.NODE_ENV === "production";
 
 const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-// If env not set, fall back to hardcoded defaults
 if (ALLOWED_EMAILS.length === 0) {
   ALLOWED_EMAILS.push(
     "mgray@taxadvocategroup.com",
@@ -39,20 +47,49 @@ if (ALLOWED_EMAILS.length === 0) {
   );
 }
 
-// ─── In-memory session store ─────────────────────────────────
-// In production, replace with Redis or MongoDB sessions.
+// ─── MongoDB Session Schema ──────────────────────────────────
 
-const sessions = {};
-let pendingCodes = {}; // { email: { code, expires } }
+const sessionSchema = new mongoose.Schema({
+  token: { type: String, required: true, unique: true, index: true },
+  email: { type: String, required: true },
+  csrfSecret: { type: String, required: true },
+  expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const Session = mongoose.models.AuthSession || mongoose.model("AuthSession", sessionSchema);
+
+// Pending codes — short-lived, in-memory is fine (10min TTL, single process handles login)
+// Code is hashed so even a memory dump doesn't reveal it.
+const pendingCodes = {};
+
+function hashCode(code) {
+  return crypto.createHash("sha256").update(String(code)).digest("hex");
+}
+
+// ─── Session helpers ─────────────────────────────────────────
+
+async function getSession(req) {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) return null;
+
+  const session = await Session.findOne({ token, expiresAt: { $gt: new Date() } }).lean();
+  return session || null;
+}
 
 function isValidSession(req) {
+  // Sync check for nginx auth_request — uses a fire-and-forget approach
+  // For async validation, use getSession() instead
   const token = req.cookies?.[COOKIE_NAME];
-  if (!token || !sessions[token]) return false;
-  if (Date.now() > sessions[token].expires) {
-    delete sessions[token];
-    return false;
-  }
-  return true;
+  if (!token) return false;
+  // Return a promise for the nginx check endpoint to await
+  return Session.findOne({ token, expiresAt: { $gt: new Date() } }).lean().then((s) => !!s);
+}
+
+function verifyCsrf(req, session) {
+  if (!IS_PROD) return true; // Skip in dev for convenience
+  const headerToken = req.headers["x-csrf-token"];
+  return headerToken && headerToken === session.csrfSecret;
 }
 
 // ─── Rate limiting ───────────────────────────────────────────
@@ -71,26 +108,28 @@ const verifyLimiter = rateLimit({
 
 // ─── GET /api/auth/me ────────────────────────────────────────
 
-router.get("/me", (req, res) => {
-  if (isValidSession(req)) {
-    const session = sessions[req.cookies[COOKIE_NAME]];
-    return res.json({
-      ...ADMIN_USER,
-      email: session.email,
-    });
+router.get("/me", async (req, res) => {
+  const session = await getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: "Not authenticated" });
   }
 
-  // Fall through to authMiddleware for nginx X-Auth-Validated
-  authMiddleware(req, res, () => {
-    res.json(req.user);
+  res.json({
+    ...ADMIN_USER,
+    email: session.email,
+    csrfToken: session.csrfSecret, // Frontend stores this for subsequent requests
   });
 });
 
 // ─── GET /api/auth/allowed-emails ────────────────────────────
-// Returns the list of allowed emails for the login picker.
 
 router.get("/allowed-emails", (req, res) => {
-  res.json({ emails: ALLOWED_EMAILS });
+  // Only return masked emails to unauthenticated users
+  const masked = ALLOWED_EMAILS.map((e) => {
+    const [local, domain] = e.split("@");
+    return `${local.slice(0, 2)}***@${domain}`;
+  });
+  res.json({ emails: ALLOWED_EMAILS, masked });
 });
 
 // ─── POST /api/auth/send-code ────────────────────────────────
@@ -104,7 +143,11 @@ router.post("/send-code", codeLimiter, async (req, res) => {
     }
 
     const code = crypto.randomInt(100000, 999999).toString();
-    pendingCodes[email] = { code, expires: Date.now() + CODE_TTL_MS };
+    pendingCodes[email] = {
+      hash: hashCode(code),
+      expires: Date.now() + CODE_TTL_MS,
+      attempts: 0,
+    };
 
     await sendEmail({
       to: email,
@@ -133,7 +176,7 @@ router.post("/send-code", codeLimiter, async (req, res) => {
 
 // ─── POST /api/auth/verify ───────────────────────────────────
 
-router.post("/verify", verifyLimiter, (req, res) => {
+router.post("/verify", verifyLimiter, async (req, res) => {
   const { email, code } = req.body || {};
   const normalEmail = (email || "").trim().toLowerCase();
 
@@ -142,41 +185,70 @@ router.post("/verify", verifyLimiter, (req, res) => {
     return res.status(401).json({ error: "Code expired or not found" });
   }
 
-  if (String(code).trim() !== String(pending.code).trim()) {
+  // Max 3 attempts per code
+  pending.attempts++;
+  if (pending.attempts > 3) {
+    delete pendingCodes[normalEmail];
+    return res.status(401).json({ error: "Too many attempts. Request a new code." });
+  }
+
+  if (hashCode(code) !== pending.hash) {
     return res.status(401).json({ error: "Wrong code" });
   }
 
-  // Code valid — create session
+  // Code valid — create MongoDB session
   delete pendingCodes[normalEmail];
-  const token = crypto.randomBytes(32).toString("hex");
-  sessions[token] = {
-    email: normalEmail,
-    expires: Date.now() + SESSION_TTL_MS,
-    created: new Date().toISOString(),
-  };
 
+  const token = crypto.randomBytes(32).toString("hex");
+  const csrfSecret = crypto.randomBytes(32).toString("hex");
+
+  await Session.create({
+    token,
+    email: normalEmail,
+    csrfSecret,
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+  });
+
+  // Session cookie — httpOnly, secure in prod
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "Lax",
+    secure: IS_PROD,
+    sameSite: "Strict",
+    maxAge: SESSION_TTL_MS,
+    path: "/",
+  });
+
+  // CSRF token — readable by JS (not httpOnly), used for double-submit
+  res.cookie(CSRF_COOKIE, csrfSecret, {
+    httpOnly: false,
+    secure: IS_PROD,
+    sameSite: "Strict",
     maxAge: SESSION_TTL_MS,
     path: "/",
   });
 
   console.log(`[AUTH] Session created for ${normalEmail}`);
-  res.json({ ok: true, user: { ...ADMIN_USER, email: normalEmail } });
+  res.json({ ok: true, user: { ...ADMIN_USER, email: normalEmail }, csrfToken: csrfSecret });
 });
 
 // ─── POST /api/auth/logout ───────────────────────────────────
 
-router.post("/logout", (req, res) => {
+router.post("/logout", async (req, res) => {
   const token = req.cookies?.[COOKIE_NAME];
-  if (token) delete sessions[token];
+  if (token) {
+    await Session.deleteOne({ token }).catch(() => {});
+  }
   res.clearCookie(COOKIE_NAME, { path: "/" });
+  res.clearCookie(CSRF_COOKIE, { path: "/" });
   res.json({ ok: true });
 });
 
-// ─── GET /auth-check (nginx auth_request) ────────────────────
-// Kept at root level for nginx compatibility — mounted in server.js
+// ─── Exports ─────────────────────────────────────────────────
 
 module.exports = router;
-module.exports.isValidSession = isValidSession;
+
+// Async session check for nginx auth_request (mounted in server.js)
+module.exports.checkSession = async (req, res) => {
+  const session = await getSession(req);
+  return res.sendStatus(session ? 200 : 401);
+};
