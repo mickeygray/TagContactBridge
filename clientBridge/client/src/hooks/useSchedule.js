@@ -1,5 +1,5 @@
 // hooks/useSchedule.js — replaces ScheduleState + ScheduleContext
-import { useReducer, useCallback, useRef } from "react";
+import { useReducer, useCallback, useRef, useEffect } from "react";
 import { api } from "../utils/api";
 import { toast } from "../utils/toast";
 
@@ -162,6 +162,9 @@ export function useSchedule() {
       pollRef.current = null;
     }
   }
+
+  // Cleanup polling on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   return {
     ...state,

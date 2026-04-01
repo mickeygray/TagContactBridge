@@ -1,5 +1,5 @@
 // hooks/useSms.js — replaces SmsState + SmsContext
-import { useReducer, useCallback, useRef } from "react";
+import { useReducer, useCallback, useRef, useEffect } from "react";
 import { api } from "../utils/api";
 import { toast } from "../utils/toast";
 
@@ -198,6 +198,9 @@ export function useSms() {
       pollingRef.current = null;
     }
   }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => () => { if (pollingRef.current) clearInterval(pollingRef.current); }, []);
 
   return {
     ...state,
