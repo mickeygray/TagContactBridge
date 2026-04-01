@@ -1,3 +1,5 @@
+require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
+require("../shared/utils/processGuard")("clientBridge");
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -8,7 +10,6 @@ const listRoutes = require("./routes/list");
 const callRoutes = require("./routes/recording");
 const clientRoutes = require("./routes/clients");
 const path = require("path");
-require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
 const { inbound: smsInbound } = require("./controllers/smsController");
 const { startAutoSendLoop } = require("./services/smsService");
 const connectDB = require("../shared/config/db");
@@ -69,6 +70,11 @@ app.get("/api/logs/stats", logAuth, async (req, res) => {
 });
 
 app.post("/sms/inbound", smsInbound);
+
+// Health check (before static/catch-all)
+const { expressErrorHandler, healthCheck } = require("../shared/utils/processGuard");
+app.get("/health", healthCheck("clientBridge"));
+
 // Serve React build
 app.use(express.static(path.join(__dirname, "client", "build")));
 
@@ -76,6 +82,10 @@ app.use(express.static(path.join(__dirname, "client", "build")));
 app.get("*", (req, res) => {
   res.sendFile(path.resolve(__dirname, "client", "build", "index.html"));
 });
+
+// Express error handler (must be after all routes including catch-all)
+app.use(expressErrorHandler("clientBridge"));
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {

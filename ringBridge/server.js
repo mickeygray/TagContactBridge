@@ -10,6 +10,7 @@
 // Shares parent .env, node_modules, and Mongo connection.
 // ─────────────────────────────────────────────────────────────
 
+require("../shared/utils/processGuard")("ringBridge");
 const express = require("express");
 const path = require("path");
 const config = require("./config/env");
@@ -56,6 +57,11 @@ app.use("/api", apiRoutes);
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "dashboard.html"));
 });
+
+// Error handler + health check
+const { expressErrorHandler, healthCheck } = require("../shared/utils/processGuard");
+app.get("/health", healthCheck("ringBridge"));
+app.use(expressErrorHandler("ringBridge"));
 
 // ─── Startup ─────────────────────────────────────────────────
 

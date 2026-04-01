@@ -1,5 +1,6 @@
 // leadBridge/server.js
 require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
+require("../shared/utils/processGuard")("leadBridge");
 const PrePing = require("../shared/models/PrePing");
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -1194,6 +1195,11 @@ cron.schedule(
   },
   { timezone: "America/Los_Angeles" },
 );
+
+// Error handler + health check (must be after all routes)
+const { expressErrorHandler, healthCheck } = require("../shared/utils/processGuard");
+app.get("/health", healthCheck("leadBridge"));
+app.use(expressErrorHandler("leadBridge"));
 
 /* -------------------------------------------------------------------------- */
 /*                          START SERVER                                      */
