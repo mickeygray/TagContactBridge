@@ -267,48 +267,34 @@ async function generateResponse(
     { role: "user", content: inboundMessage },
   ];
 
-  console.log(
-    `[SMS-AI] Sending to OpenAI: ${messages.length} messages (model: ${process.env.SMS_AI_MODEL || "gpt-4o-mini"})`,
-  );
+  const model = process.env.SMS_AI_MODEL || "claude-sonnet-4-20250514";
+  console.log(`[SMS-AI] Sending to Claude: ${history.length + 1} messages (model: ${model})`);
 
   try {
-    const OpenAI = require("openai");
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { claudeComplete } = require("../../shared/services/aiService");
 
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("[SMS-AI] ✗ OPENAI_API_KEY not set in .env");
-      return {
-        ok: false,
-        response: null,
-        error: "OPENAI_API_KEY missing",
-        leadInfo: lead,
-      };
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error("[SMS-AI] ✗ ANTHROPIC_API_KEY not set in .env");
+      return { ok: false, response: null, error: "ANTHROPIC_API_KEY missing", leadInfo: lead };
     }
 
-    const resp = await openai.chat.completions.create({
-      model: process.env.SMS_AI_MODEL || "gpt-5-mini",
-      messages,
-      max_tokens: 200,
-      temperature: 0.7,
+    // Claude uses a separate system parameter + alternating user/assistant messages
+    const claudeMessages = [
+      ...history,
+      { role: "user", content: inboundMessage },
+    ];
+
+    const text = await claudeComplete({
+      system: systemPrompt,
+      messages: claudeMessages,
+      maxTokens: 200,
+      model,
     });
 
-    const text = resp.choices?.[0]?.message?.content?.trim() || "";
-    const tokens = resp.usage;
     console.log(`[SMS-AI] ✓ Response: "${text}"`);
-    if (tokens) {
-      console.log(
-        `[SMS-AI] Tokens: prompt=${tokens.prompt_tokens} completion=${tokens.completion_tokens} total=${tokens.total_tokens}`,
-      );
-    }
-    return { ok: true, response: text, leadInfo: lead };
+    return { ok: true, response: text.trim(), leadInfo: lead };
   } catch (err) {
-    console.error("[SMS-AI] ✗ OpenAI error:", err.message);
-    if (err.response?.data) {
-      console.error(
-        "[SMS-AI] ✗ OpenAI detail:",
-        JSON.stringify(err.response.data),
-      );
-    }
+    console.error("[SMS-AI] ✗ Claude error:", err.message);
     return { ok: false, response: null, error: err.message, leadInfo: lead };
   }
 }

@@ -9,14 +9,46 @@ const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
- * Claude completion — used for scoring, analysis, content generation
+ * Claude completion — used for scoring, analysis, content generation, SMS responses.
+ *
+ * Two calling patterns:
+ *   1. Simple: { system, prompt } — single user message
+ *   2. Conversation: { system, messages } — multi-turn history (for SMS threads)
+ *      messages format: [{ role: "user"|"assistant", content: "..." }, ...]
  */
-async function claudeComplete({ system, prompt, maxTokens = 1024, model = "claude-sonnet-4-20250514" }) {
+async function claudeComplete({ system, prompt, messages, maxTokens = 1024, model = "claude-sonnet-4-20250514" }) {
+  // Build messages array — either from explicit messages or a single prompt
+  let msgArray;
+  if (messages && messages.length > 0) {
+    msgArray = messages;
+  } else if (prompt) {
+    msgArray = [{ role: "user", content: prompt }];
+  } else {
+    throw new Error("claudeComplete requires either `prompt` or `messages`");
+  }
+
+  // Claude requires alternating user/assistant roles starting with user.
+  // Clean up any consecutive same-role messages by merging them.
+  const cleaned = [];
+  for (const msg of msgArray) {
+    const last = cleaned[cleaned.length - 1];
+    if (last && last.role === msg.role) {
+      last.content += "\n" + msg.content;
+    } else {
+      cleaned.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  // Ensure first message is from user (Claude requirement)
+  if (cleaned.length > 0 && cleaned[0].role !== "user") {
+    cleaned.unshift({ role: "user", content: "(conversation start)" });
+  }
+
   const response = await claude.messages.create({
     model,
     max_tokens: maxTokens,
     system,
-    messages: [{ role: "user", content: prompt }],
+    messages: cleaned,
   });
 
   const textBlock = response.content?.find((b) => b.type === "text");
